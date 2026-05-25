@@ -1,0 +1,50 @@
+services:
+  9router:
+    image: ${NODE_IMAGE:-node:22-alpine}
+    container_name: ${CONTAINER_NAME:-9router}
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.js"]
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${PORT:-20128}:${PORT:-20128}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+      PORT: "${PORT:-20128}"
+      HOSTNAME: 0.0.0.0
+      DATA_DIR: /app/data
+      INITIAL_PASSWORD: "${INITIAL_PASSWORD:-123456}"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      API_KEY_SECRET: "${API_KEY_SECRET:-}"
+      MACHINE_ID_SALT: "${MACHINE_ID_SALT:-}"
+      ENABLE_REQUEST_LOGS: "${ENABLE_REQUEST_LOGS:-false}"
+      OBSERVABILITY_ENABLED: "${OBSERVABILITY_ENABLED:-true}"
+      AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
+      REQUIRE_API_KEY: "${REQUIRE_API_KEY:-false}"
+      BASE_URL: "${BASE_URL:-http://localhost:${PORT:-20128}}"
+      CLOUD_URL: "${CLOUD_URL:-https://9router.com}"
+      NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL:-http://localhost:${PORT:-20128}}"
+      NEXT_PUBLIC_CLOUD_URL: "${NEXT_PUBLIC_CLOUD_URL:-https://9router.com}"
+      NEXT_TELEMETRY_DISABLED: "1"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      ALL_PROXY: "${ALL_PROXY:-}"
+      http_proxy: "${http_proxy:-}"
+      https_proxy: "${https_proxy:-}"
+      all_proxy: "${all_proxy:-}"
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1}"
+      no_proxy: "${no_proxy:-localhost,127.0.0.1}"
+    volumes:
+      - ${STANDALONE_DIR:-./.next/standalone}:/app:ro
+      - ${HOST_DATA_DIR:-./data}:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:${PORT:-20128}/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
