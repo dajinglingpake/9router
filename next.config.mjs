@@ -11,6 +11,7 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  allowedDevOrigins: ["192.168.1.217"],
   output: "standalone",
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite"],
   turbopack: {
