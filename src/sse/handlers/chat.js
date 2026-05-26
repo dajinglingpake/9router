@@ -17,6 +17,7 @@ import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
+import { extractClientIp } from "../utils/clientIp.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 
@@ -40,8 +41,11 @@ export async function handleChat(request, clientRawRequest = null) {
     clientRawRequest = {
       endpoint: url.pathname,
       body,
-      headers: Object.fromEntries(request.headers.entries())
+      headers: Object.fromEntries(request.headers.entries()),
+      clientIp: extractClientIp(request)
     };
+  } else if (!clientRawRequest.clientIp) {
+    clientRawRequest.clientIp = extractClientIp(request);
   }
   cacheClaudeHeaders(clientRawRequest.headers);
 

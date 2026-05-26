@@ -111,6 +111,7 @@ export const TABLES = {
       connectionId: "TEXT",
       apiKey: "TEXT",
       endpoint: "TEXT",
+      clientIp: "TEXT",
       promptTokens: "INTEGER DEFAULT 0",
       completionTokens: "INTEGER DEFAULT 0",
       cost: "REAL DEFAULT 0",
@@ -123,6 +124,7 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_uh_provider ON usageHistory(provider)",
       "CREATE INDEX IF NOT EXISTS idx_uh_model ON usageHistory(model)",
       "CREATE INDEX IF NOT EXISTS idx_uh_conn ON usageHistory(connectionId)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_client_ip ON usageHistory(clientIp)",
     ],
   },
   usageDaily: {
@@ -138,6 +140,7 @@ export const TABLES = {
       provider: "TEXT",
       model: "TEXT",
       connectionId: "TEXT",
+      clientIp: "TEXT",
       status: "TEXT",
       data: "TEXT NOT NULL",
     },
@@ -146,6 +149,7 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
+      "CREATE INDEX IF NOT EXISTS idx_rd_client_ip ON requestDetails(clientIp)",
     ],
   },
 };
