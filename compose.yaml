@@ -27,17 +27,17 @@ services:
       NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL:-http://localhost:${PORT:-20128}}"
       NEXT_PUBLIC_CLOUD_URL: "${NEXT_PUBLIC_CLOUD_URL:-https://9router.com}"
       NEXT_TELEMETRY_DISABLED: "1"
-      HTTP_PROXY: "${HTTP_PROXY:-}"
-      HTTPS_PROXY: "${HTTPS_PROXY:-}"
-      ALL_PROXY: "${ALL_PROXY:-}"
-      http_proxy: "${http_proxy:-}"
-      https_proxy: "${https_proxy:-}"
-      all_proxy: "${all_proxy:-}"
-      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1}"
-      no_proxy: "${no_proxy:-localhost,127.0.0.1}"
+      HTTP_PROXY: "${CONTAINER_HTTP_PROXY:-http://host.docker.internal:7890}"
+      HTTPS_PROXY: "${CONTAINER_HTTPS_PROXY:-http://host.docker.internal:7890}"
+      ALL_PROXY: "${CONTAINER_ALL_PROXY:-http://host.docker.internal:7890}"
+      http_proxy: "${CONTAINER_HTTP_PROXY:-http://host.docker.internal:7890}"
+      https_proxy: "${CONTAINER_HTTPS_PROXY:-http://host.docker.internal:7890}"
+      all_proxy: "${CONTAINER_ALL_PROXY:-http://host.docker.internal:7890}"
+      NO_PROXY: "${CONTAINER_NO_PROXY:-localhost,127.0.0.1,host.docker.internal}"
+      no_proxy: "${CONTAINER_NO_PROXY:-localhost,127.0.0.1,host.docker.internal}"
     volumes:
       - ${STANDALONE_DIR:-./.next/standalone}:/app:ro
-      - ${HOST_DATA_DIR:-./data}:/app/data
+      - ${HOST_DATA_DIR:-${DATA_DIR:-./data}}:/app/data
     healthcheck:
       test:
         [
