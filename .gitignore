@@ -69,6 +69,7 @@ package-lock.json
 README1.md
 deploy*.sh
 ecosystem.config.*
+scripts/upgrade-remote-9router.local.env
 
 scripts/agSniffer/*
 gitbooks/*
