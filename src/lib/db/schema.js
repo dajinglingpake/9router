@@ -133,6 +133,17 @@ export const TABLES = {
       data: "TEXT NOT NULL",
     },
   },
+  clientIpAliases: {
+    columns: {
+      ip: "TEXT PRIMARY KEY",
+      alias: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_cia_alias ON clientIpAliases(alias)",
+    ],
+  },
   requestDetails: {
     columns: {
       id: "TEXT PRIMARY KEY",

@@ -1,0 +1,38 @@
+[
+  {
+    "name": "claude-sonnet-4-6",
+    "models": ["cx/gpt-5.5"]
+  },
+  {
+    "name": "claude-haiku-4-5-20251001",
+    "models": ["oc/deepseek-v4-flash-free"]
+  },
+  {
+    "name": "gpt-5.5",
+    "models": ["cx/gpt-5.5"]
+  },
+  {
+    "name": "gpt-5.4",
+    "models": ["cx/gpt-5.4"]
+  },
+  {
+    "name": "claude-sonnet-4-7",
+    "models": ["cx/gpt-5.5"]
+  },
+  {
+    "name": "claude-opus-4-7",
+    "models": ["cx/gpt-5.5"]
+  },
+  {
+    "name": "claude-opus-4-6",
+    "models": ["cx/gpt-5.5"]
+  },
+  {
+    "name": "claude-sonnet-4-5-20250929",
+    "models": ["cx/gpt-5.5"]
+  },
+  {
+    "name": "gpt-5.3-codex",
+    "models": ["cx/gpt-5.3-codex"]
+  }
+]

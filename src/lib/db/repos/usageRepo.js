@@ -101,6 +101,62 @@ async function getConnectionMapCached() {
   return connCache.map;
 }
 
+async function getClientIpAliasMapCached() {
+  try {
+    const { getClientIpAliasMap } = await import("./clientIpAliasesRepo.js");
+    return await getClientIpAliasMap();
+  } catch {
+    return {};
+  }
+}
+
+function mergeClientAliasStats(stats, aliasMap) {
+  stats.byClientAlias = {};
+
+  for (const [key, row] of Object.entries(stats.byClientIp || {})) {
+    const clientIp = row.clientIp || "unknown";
+    const clientAlias = aliasMap[clientIp] || "";
+    const clientName = clientAlias || clientIp;
+    row.clientAlias = clientAlias;
+    row.clientName = clientName;
+
+    const rawModel = row.rawModel || "";
+    const provider = row.provider || "";
+    const apiKeyKey = row.apiKeyKey || row.apiKey || "local-no-key";
+    const aliasKey = `${clientName}|${apiKeyKey}|${rawModel}|${provider}`;
+    if (!stats.byClientAlias[aliasKey]) {
+      stats.byClientAlias[aliasKey] = {
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cost: 0,
+        clientName,
+        clientAlias,
+        clientIps: [],
+        rawModel,
+        provider,
+        apiKey: row.apiKey || null,
+        keyName: row.keyName,
+        apiKeyKey,
+        lastUsed: row.lastUsed,
+      };
+    }
+
+    const target = stats.byClientAlias[aliasKey];
+    target.requests += row.requests || 0;
+    target.promptTokens += row.promptTokens || 0;
+    target.completionTokens += row.completionTokens || 0;
+    target.cost += row.cost || 0;
+    if (!target.clientIps.includes(clientIp)) target.clientIps.push(clientIp);
+    if (row.lastUsed && (!target.lastUsed || new Date(row.lastUsed) > new Date(target.lastUsed))) {
+      target.lastUsed = row.lastUsed;
+    }
+
+    // Preserve the stable per-IP key on each row for UI editing.
+    row.clientIpKey = key;
+  }
+}
+
 async function ensureRingInitialized() {
   if (recentRing.initialized) return;
   recentRing.initialized = true;
@@ -347,6 +403,7 @@ export async function getUsageStats(period = "all") {
   try { allApiKeys = await getApiKeys(); } catch {}
   const apiKeyMap = {};
   for (const k of allApiKeys) apiKeyMap[k.key] = { name: k.name, id: k.id, createdAt: k.createdAt };
+  const clientIpAliasMap = await getClientIpAliasMapCached();
 
   // recentRequests from live history (last 100 entries enough for 20 deduped)
   const recentRows = db.all(`SELECT timestamp, provider, model, clientIp, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
@@ -374,7 +431,7 @@ export async function getUsageStats(period = "all") {
   const stats = {
     totalRequests: 0,
     totalPromptTokens: 0, totalCompletionTokens: 0, totalCost: 0,
-    byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {}, byClientIp: {},
+    byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {}, byClientIp: {}, byClientAlias: {},
     last10Minutes: [],
     pending: pendingRequests,
     activeRequests: [],
@@ -656,6 +713,7 @@ export async function getUsageStats(period = "all") {
     }
   }
 
+  mergeClientAliasStats(stats, clientIpAliasMap);
   stats.totalRequests = Object.values(stats.byProvider).reduce((sum, p) => sum + (p.requests || 0), 0);
   return stats;
 }

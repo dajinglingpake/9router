@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { LEGACY_FILES, DB_DIR, DATA_FILE } from "./paths.js";
 import { TABLES, buildCreateTableSql } from "./schema.js";
 import { MIGRATIONS, latestVersion } from "./migrations/index.js";
@@ -7,6 +8,7 @@ import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
+import defaultCombos from "../../../default-combos.json" with { type: "json" };
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -41,6 +43,34 @@ function importWithAssertion(adapter, tableName, rows, insertFn, rowMeta) {
 function readJsonSafe(file) {
   if (!fs.existsSync(file)) return null;
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
+}
+
+function seedDefaultCombos(adapter) {
+  if (!Array.isArray(defaultCombos) || defaultCombos.length === 0) return 0;
+
+  const now = new Date().toISOString();
+  let inserted = 0;
+  for (const combo of defaultCombos) {
+    if (!combo?.name || !Array.isArray(combo.models)) continue;
+
+    const res = adapter.run(
+      `INSERT OR IGNORE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+      [
+        combo.id || randomUUID(),
+        combo.name,
+        combo.kind || null,
+        stringifyJson(combo.models),
+        combo.createdAt || now,
+        combo.updatedAt || combo.createdAt || now,
+      ]
+    );
+    inserted += res?.changes ?? 0;
+  }
+
+  if (inserted > 0) {
+    console.log(`[DB][seed] inserted ${inserted} default combo(s)`);
+  }
+  return inserted;
 }
 
 function isFreshDb(adapter) {
@@ -247,6 +277,7 @@ export async function runMigrationOnce(adapter) {
         importLegacyUsage(adapter, legacyUsage);
         importLegacyDisabled(adapter, legacyDisabled);
         importLegacyDetails(adapter, legacyDetails);
+        seedDefaultCombos(adapter);
         setMetaSync(adapter, "appVersion", getAppVersion());
         setMetaSync(adapter, "migratedAt", new Date().toISOString());
       });
@@ -265,9 +296,12 @@ export async function runMigrationOnce(adapter) {
   }
 
   if (fresh) {
+    seedDefaultCombos(adapter);
     setMetaSync(adapter, "appVersion", getAppVersion());
     return;
   }
+
+  seedDefaultCombos(adapter);
 
   // 4. App version bump → backup data.sqlite (safety net before user-side upgrade)
   const oldVer = getMetaSync(adapter, "appVersion", null);

@@ -37,6 +37,36 @@ function TimeAgo({ timestamp }) {
   return <>{timeAgo(timestamp)}</>;
 }
 
+function AliasInput({ clientIp, value, onSave }) {
+  const [draft, setDraft] = useState(value || "");
+
+  useEffect(() => {
+    setDraft(value || "");
+  }, [value]);
+
+  const save = useCallback(() => {
+    const next = draft.trim();
+    if (clientIp && clientIp !== "unknown" && next !== (value || "")) {
+      onSave(clientIp, next);
+    }
+  }, [clientIp, draft, onSave, value]);
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+      placeholder="Alias"
+      disabled={!clientIp || clientIp === "unknown"}
+      className="h-8 w-36 rounded-md border border-border bg-surface px-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
+    />
+  );
+}
+
 function RecentRequests({ requests = [] }) {
   return (
     <Card className="flex min-w-0 flex-col overflow-hidden" padding="sm" style={{ height: 480 }}>
@@ -113,6 +143,7 @@ function getGroupKey(item, keyField) {
     case "keyName": return item.keyName || "Unknown Key";
     case "endpoint": return item.endpoint || "Unknown Endpoint";
     case "clientIp": return item.clientIp || "Unknown IP";
+    case "clientName": return item.clientName || item.clientAlias || item.clientIp || "Unknown";
     default: return item[keyField] || "Unknown";
   }
 }
@@ -171,6 +202,17 @@ const API_KEY_COLUMNS = [
 
 const CLIENT_IP_COLUMNS = [
   { field: "clientIp", label: "Client IP" },
+  { field: "clientAlias", label: "Alias" },
+  { field: "keyName", label: "API Key Name" },
+  { field: "rawModel", label: "Model" },
+  { field: "provider", label: "Provider" },
+  { field: "requests", label: "Requests", align: "right" },
+  { field: "lastUsed", label: "Last Used", align: "right" },
+];
+
+const CLIENT_ALIAS_COLUMNS = [
+  { field: "clientName", label: "Person / Alias" },
+  { field: "clientIps", label: "Client IPs" },
   { field: "keyName", label: "API Key Name" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
@@ -191,6 +233,7 @@ const TABLE_OPTIONS = [
   { value: "account", label: "Usage by Account" },
   { value: "apiKey", label: "Usage by API Key" },
   { value: "clientIp", label: "Usage by IP" },
+  { value: "clientAlias", label: "Usage by Person" },
   { value: "endpoint", label: "Usage by Endpoint" },
 ];
 
@@ -220,6 +263,26 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
+  const loadStats = useCallback(() => {
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      setLoading(true);
+    } else {
+      setFetching(true);
+    }
+
+    return fetch(`/api/usage/stats?period=${period}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data) setStats((prev) => ({ ...prev, ...data }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        setLoading(false);
+        setFetching(false);
+      });
+  }, [period]);
+
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
   useEffect(() => {
@@ -244,25 +307,8 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
-    // First load: show full spinner; subsequent: show subtle fetching indicator
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
-      setLoading(true);
-    } else {
-      setFetching(true);
-    }
-
-    fetch(`/api/usage/stats?period=${period}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data) setStats((prev) => ({ ...prev, ...data }));
-      })
-      .catch(() => {})
-      .finally(() => {
-        setLoading(false);
-        setFetching(false);
-      });
-  }, [period]); // eslint-disable-line react-hooks/exhaustive-deps
+    loadStats();
+  }, [loadStats]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests only
   useEffect(() => {
@@ -300,6 +346,15 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     }
     router.replace(`?${params.toString()}`, { scroll: false });
   }, [searchParams, router]);
+
+  const saveClientIpAlias = useCallback(async (clientIp, alias) => {
+    const res = await fetch("/api/usage/client-ip-aliases", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ip: clientIp, alias }),
+    });
+    if (res.ok) await loadStats();
+  }, [loadStats]);
 
   // Compute active table data
   const activeTableConfig = useMemo(() => {
@@ -400,6 +455,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">—</td>
               <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
             </>
@@ -407,6 +463,36 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           renderDetailCells: (item) => (
             <>
               <td className="px-6 py-3 font-mono text-sm font-medium">{item.clientIp || "unknown"}</td>
+              <td className="px-6 py-3"><AliasInput clientIp={item.clientIp} value={item.clientAlias} onSave={saveClientIpAlias} /></td>
+              <td className="px-6 py-3 font-medium">{item.keyName}</td>
+              <td className="px-6 py-3">{item.rawModel}</td>
+              <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
+              <td className="px-6 py-3 text-right">{fmt(item.requests)}</td>
+              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(item.lastUsed)}</td>
+            </>
+          ),
+        };
+      }
+      case "clientAlias": {
+        return {
+          columns: CLIENT_ALIAS_COLUMNS,
+          groupedData: groupDataByKey(sortData(stats.byClientAlias, {}, sortBy, sortOrder), "clientName"),
+          storageKey: "usage-stats:expanded-client-aliases",
+          emptyMessage: "No person usage recorded yet.",
+          renderSummaryCells: (group) => (
+            <>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+            </>
+          ),
+          renderDetailCells: (item) => (
+            <>
+              <td className="px-6 py-3 font-medium">{item.clientName}</td>
+              <td className="px-6 py-3 max-w-[260px] truncate font-mono text-sm text-text-muted" title={(item.clientIps || []).join(", ")}>{(item.clientIps || []).join(", ")}</td>
               <td className="px-6 py-3 font-medium">{item.keyName}</td>
               <td className="px-6 py-3">{item.rawModel}</td>
               <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
@@ -443,7 +529,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         };
       }
     }
-  }, [stats, tableView, sortBy, sortOrder]);
+  }, [stats, tableView, sortBy, sortOrder, saveClientIpAlias]);
 
   if (!stats && !loading) return <div className="text-text-muted">Failed to load usage statistics.</div>;
 
