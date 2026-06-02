@@ -11,8 +11,8 @@ const PROVIDER_RULES = {
 
 // Model-level rules: matched by predicate against model id
 const MODEL_RULES = [
-  { match: m => m?.startsWith?.("kimi-"), scope: "toolCalls" },
-  { match: m => m?.startsWith?.("deepseek-"), scope: "all" }
+  { match: m => /^kimi-/i.test(m || ""), scope: "toolCalls" },
+  { match: m => /deepseek/i.test(m || ""), scope: "all" }
 ];
 
 const REASONING_REPLAY_RULES = [
