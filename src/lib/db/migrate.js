@@ -8,6 +8,7 @@ import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
+import { serializeAllowedIps } from "../apiKeys/accessPolicy.js";
 import defaultCombos from "../../../default-combos.json" with { type: "json" };
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
@@ -38,6 +39,10 @@ function importWithAssertion(adapter, tableName, rows, insertFn, rowMeta) {
     console.warn(`[DB][migrate] ${tableName} row-count mismatch: expected ${rows.length}, got ${inserted}. Dropped:`, dropped);
     throw new MigrationAborted(`${tableName} row-count mismatch: expected ${rows.length}, got ${inserted}`, dropped);
   }
+}
+
+function serializeImportedAllowedIps(value) {
+  return serializeAllowedIps(value);
 }
 
 function readJsonSafe(file) {
@@ -172,8 +177,8 @@ function importLegacyMain(adapter, data) {
 
   importWithAssertion(adapter, "apiKeys", data.apiKeys || [], (k) => {
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, claimedAt, allowedIps) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), k.claimedAt || null, serializeImportedAllowedIps(k.allowedIps)]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 

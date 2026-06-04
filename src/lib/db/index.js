@@ -1,6 +1,11 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
+import { serializeAllowedIps } from "../apiKeys/accessPolicy.js";
+
+function serializeImportedAllowedIps(value) {
+  return serializeAllowedIps(value);
+}
 
 // Settings
 export {
@@ -29,8 +34,11 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, getApiKeyById, getApiKeyByName, claimApiKeyByName, createApiKey, updateApiKey,
+  deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
+
+export { findInvalidAllowedIps, parseAllowedIps } from "../apiKeys/accessPolicy.js";
 
 // Combos
 export {
@@ -83,7 +91,7 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, claimedAt: r.claimedAt || null, allowedIps: r.allowedIps || null })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     clientIpAliases: db.all(`SELECT ip, alias, createdAt, updatedAt FROM clientIpAliases`),
     modelAliases: {},
@@ -145,8 +153,8 @@ export async function importDb(payload) {
     }
     for (const k of payload.apiKeys || []) {
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, claimedAt, allowedIps) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), k.claimedAt || null, serializeImportedAllowedIps(k.allowedIps)]
       );
     }
     for (const c of payload.combos || []) {

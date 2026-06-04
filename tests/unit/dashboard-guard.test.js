@@ -54,6 +54,19 @@ describe("dashboard guard public LLM API access", () => {
     mocks.verifyDashboardAuthToken.mockResolvedValue(false);
   });
 
+  it("keeps API key management endpoints protected", async () => {
+    const response = await proxy(request("/api/keys", { host: "router.example.com" }));
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe("Unauthorized");
+  });
+
+  it("allows public API key claim endpoint without dashboard login", async () => {
+    const response = await proxy(request("/api/keys/claim", { host: "router.example.com" }));
+
+    expect(response).toBe(mocks.nextResponse);
+  });
+
   it("allows loopback public LLM API without API key", async () => {
     const response = await proxy(request("/v1/chat/completions", { host: "localhost:20128" }));
 
@@ -98,7 +111,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote public LLM API with valid x-api-key", async () => {
@@ -110,7 +123,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote rewritten beta public LLM API with valid API key", async () => {
@@ -122,7 +135,20 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
+  });
+
+  it("passes forwarded client IP to API key validation", async () => {
+    mocks.validateApiKey.mockResolvedValue(true);
+
+    const response = await proxy(request("/api/v1/chat/completions", {
+      host: "router.example.com",
+      authorization: "Bearer sk-valid",
+      "x-forwarded-for": "192.168.3.165, 10.0.0.1",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "192.168.3.165");
   });
 });
 

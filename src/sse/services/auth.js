@@ -1,4 +1,5 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
+import { extractClientIp } from "@/sse/utils/clientIp";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -302,7 +303,7 @@ export function extractApiKey(request) {
 /**
  * Validate API key (optional - for local use can skip)
  */
-export async function isValidApiKey(apiKey) {
+export async function isValidApiKey(apiKey, request) {
   if (!apiKey) return false;
-  return await validateApiKey(apiKey);
+  return await validateApiKey(apiKey, extractClientIp(request));
 }

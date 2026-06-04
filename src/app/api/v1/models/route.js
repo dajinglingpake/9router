@@ -47,6 +47,7 @@ const UPSTREAM_CONNECTION_RE = /[-_][0-9a-f]{8,}$/i;
 
 // LLM kind sentinel — combos/models with no explicit kind default to LLM
 const LLM_KIND = "llm";
+const CLAUDE_CODE_ALIAS = "cc";
 
 // Map per-model `type` field (in PROVIDER_MODELS) to service kind.
 // Models without `type` are treated as LLM.
@@ -210,6 +211,14 @@ export async function buildModelsList(kindFilter) {
       entry.kind = combo.kind;
     }
     models.push(entry);
+
+    if (!combo.name.includes("/")) {
+      models.push({
+        ...entry,
+        id: `${CLAUDE_CODE_ALIAS}/${combo.name}`,
+        owned_by: CLAUDE_CODE_ALIAS,
+      });
+    }
   }
 
   if (connections.length === 0) {

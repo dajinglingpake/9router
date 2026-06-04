@@ -147,9 +147,6 @@ export async function POST(request) {
 const RESET_ENV_KEYS = [
   "ANTHROPIC_BASE_URL",
   "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
   "API_TIMEOUT_MS",
 ];
 
@@ -200,4 +197,3 @@ export async function DELETE() {
     );
   }
 }
-

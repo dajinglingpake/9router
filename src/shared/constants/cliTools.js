@@ -81,17 +81,9 @@ export const CLI_TOOLS = {
     envVars: {
       baseUrl: "ANTHROPIC_BASE_URL",
       model: "ANTHROPIC_MODEL",
-      opusModel: "ANTHROPIC_DEFAULT_OPUS_MODEL",
-      sonnetModel: "ANTHROPIC_DEFAULT_SONNET_MODEL",
-      haikuModel: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     },
     modelAliases: ["default", "sonnet", "opus", "haiku", "opusplan"],
     settingsFile: "~/.claude/settings.json",
-    defaultModels: [
-      { id: "opus", name: "Claude Opus", alias: "opus", envKey: "ANTHROPIC_DEFAULT_OPUS_MODEL", defaultValue: "cc/claude-opus-4-6" },
-      { id: "sonnet", name: "Claude Sonnet", alias: "sonnet", envKey: "ANTHROPIC_DEFAULT_SONNET_MODEL", defaultValue: "cc/claude-sonnet-4-6" },
-      { id: "haiku", name: "Claude Haiku", alias: "haiku", envKey: "ANTHROPIC_DEFAULT_HAIKU_MODEL", defaultValue: "cc/claude-haiku-4-5-20251001" },
-    ],
   },
   openclaw: {
     id: "openclaw",
@@ -381,4 +373,3 @@ export const getProviderModelsForMapping = (providers) => {
   });
   return result;
 };
-

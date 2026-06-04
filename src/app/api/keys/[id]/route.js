@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { deleteApiKey, findInvalidAllowedIps, getApiKeyById, updateApiKey } from "@/lib/localDb";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive } = body;
+    const { isActive, allowedIps } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -30,6 +30,13 @@ export async function PUT(request, { params }) {
 
     const updateData = {};
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (allowedIps !== undefined) {
+      const invalidAllowedIps = findInvalidAllowedIps(allowedIps);
+      if (invalidAllowedIps.length) {
+        return NextResponse.json({ error: "Allowed IPs contain invalid addresses", invalidAllowedIps }, { status: 400 });
+      }
+      updateData.allowedIps = allowedIps;
+    }
 
     const updated = await updateApiKey(id, updateData);
 

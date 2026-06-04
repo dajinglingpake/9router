@@ -60,6 +60,9 @@ export default function APIPageClient({ machineId }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
+  const [editingAllowedIpsKey, setEditingAllowedIpsKey] = useState(null);
+  const [allowedIpsText, setAllowedIpsText] = useState("");
+  const [allowedIpsError, setAllowedIpsError] = useState("");
   const [confirmState, setConfirmState] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
@@ -738,6 +741,34 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const openAllowedIpsModal = (key) => {
+    setEditingAllowedIpsKey(key);
+    setAllowedIpsText((key.allowedIps || []).join("\n"));
+    setAllowedIpsError("");
+  };
+
+  const handleSaveAllowedIps = async () => {
+    if (!editingAllowedIpsKey) return;
+    setAllowedIpsError("");
+    try {
+      const res = await fetch(`/api/keys/${editingAllowedIpsKey.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowedIps: allowedIpsText }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAllowedIpsError(data.error || "Failed to update allowed IPs");
+        return;
+      }
+      setKeys(prev => prev.map(k => k.id === editingAllowedIpsKey.id ? data.key : k));
+      setEditingAllowedIpsKey(null);
+      setAllowedIpsText("");
+    } catch (error) {
+      setAllowedIpsError(error.message || "Failed to update allowed IPs");
+    }
+  };
+
   const maskKey = (fullKey) => {
     if (!fullKey) return "";
     return fullKey.length > 8 ? fullKey.slice(0, 8) + "..." : fullKey;
@@ -1163,6 +1194,21 @@ export default function APIPageClient({ machineId }) {
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
+                    <span>Allowed IPs:</span>
+                    {(key.allowedIps || []).length > 0 ? (
+                      <span className="font-mono">{key.allowedIps.join(", ")}</span>
+                    ) : (
+                      <span>Any</span>
+                    )}
+                    <button
+                      onClick={() => openAllowedIpsModal(key)}
+                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                      title="Edit allowed IPs"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">edit</span>
+                    </button>
+                  </div>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
@@ -1224,6 +1270,48 @@ export default function APIPageClient({ machineId }) {
               onClick={() => {
                 setShowAddModal(false);
                 setNewKeyName("");
+              }}
+              variant="ghost"
+              fullWidth
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Allowed IPs Modal */}
+      <Modal
+        isOpen={!!editingAllowedIpsKey}
+        title="Allowed IPs"
+        onClose={() => {
+          setEditingAllowedIpsKey(null);
+          setAllowedIpsText("");
+          setAllowedIpsError("");
+        }}
+      >
+        <div className="flex flex-col gap-4">
+          <textarea
+            value={allowedIpsText}
+            onChange={(e) => setAllowedIpsText(e.target.value)}
+            className="min-h-32 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-main outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 font-mono"
+            placeholder="One IP per line. Leave empty to allow any IP."
+          />
+          <p className="text-xs text-text-muted">
+            Empty means no IP restriction. Multiple IPs can be separated by commas, spaces, or new lines.
+          </p>
+          {allowedIpsError && (
+            <p className="text-sm text-red-500">{allowedIpsError}</p>
+          )}
+          <div className="flex gap-2">
+            <Button onClick={handleSaveAllowedIps} fullWidth>
+              Save
+            </Button>
+            <Button
+              onClick={() => {
+                setEditingAllowedIpsKey(null);
+                setAllowedIpsText("");
+                setAllowedIpsError("");
               }}
               variant="ghost"
               fullWidth

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSettings, validateApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { verifyDashboardAuthToken } from "@/lib/auth/dashboardSession";
+import { extractClientIp } from "@/sse/utils/clientIp";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
 const CLI_TOKEN_SALT = "9r-cli-auth";
@@ -27,6 +28,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/logout",
   "/api/auth/status",
   "/api/auth/oidc",
+  "/api/keys/claim",
   "/api/version",
   "/api/settings/require-login",
 ];
@@ -112,7 +114,7 @@ function extractApiKey(request) {
 async function hasValidApiKey(request) {
   const apiKey = extractApiKey(request);
   if (!apiKey) return false;
-  return await validateApiKey(apiKey);
+  return await validateApiKey(apiKey, extractClientIp(request));
 }
 
 async function canAccessPublicLlmApi(request) {

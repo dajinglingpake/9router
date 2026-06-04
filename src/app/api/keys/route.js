@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getApiKeys, createApiKey } from "@/lib/localDb";
+import { createApiKey, getApiKeyByName, getApiKeys } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 export const dynamic = "force-dynamic";
@@ -19,10 +19,19 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name } = body;
+    const name = typeof body.name === "string" ? body.name.trim().replace(/\s+/g, " ") : "";
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
+    }
+
+    if (name.length > 64) {
+      return NextResponse.json({ error: "Name must be 64 characters or fewer" }, { status: 400 });
+    }
+
+    const existing = await getApiKeyByName(name);
+    if (existing) {
+      return NextResponse.json({ error: "Name already has an API key" }, { status: 409 });
     }
 
     // Always get machineId from server
@@ -34,9 +43,13 @@ export async function POST(request) {
       name: apiKey.name,
       id: apiKey.id,
       machineId: apiKey.machineId,
+      created: true,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);
+    if (error?.message === "api key name already exists") {
+      return NextResponse.json({ error: "Name already has an API key" }, { status: 409 });
+    }
     return NextResponse.json({ error: "Failed to create key" }, { status: 500 });
   }
 }

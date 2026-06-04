@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Card, Button, ModelSelectModal, ManualConfigModal, Tooltip } from "@/shared/components";
+import { useState, useEffect } from "react";
+import { Card, Button, ManualConfigModal, Tooltip } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
@@ -13,11 +13,7 @@ export default function ClaudeToolCard({
   tool,
   isExpanded,
   onToggle,
-  activeProviders,
-  modelMappings,
-  onModelMappingChange,
   baseUrl,
-  hasActiveProviders,
   apiKeys,
   cloudEnabled,
   initialStatus,
@@ -32,14 +28,10 @@ export default function ClaudeToolCard({
   const [restoring, setRestoring] = useState(false);
   const [message, setMessage] = useState(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
-  const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [ccFilterNaming, setCcFilterNaming] = useState(false);
-  const hasInitializedModels = useRef(false);
 
   const getConfigStatus = () => {
     if (!claudeStatus?.installed) return null;
@@ -64,9 +56,7 @@ export default function ClaudeToolCard({
   useEffect(() => {
     if (isExpanded && !claudeStatus) {
       checkClaudeStatus();
-      fetchModelAliases();
     }
-    if (isExpanded) fetchModelAliases();
   }, [isExpanded]);
 
   useEffect(() => {
@@ -85,37 +75,15 @@ export default function ClaudeToolCard({
     }).catch(() => {});
   };
 
-  const fetchModelAliases = async () => {
-    try {
-      const res = await fetch("/api/models/alias");
-      const data = await res.json();
-      if (res.ok) setModelAliases(data.aliases || {});
-    } catch (error) {
-      console.log("Error fetching model aliases:", error);
-    }
-  };
-
   useEffect(() => {
-    if (claudeStatus?.installed && !hasInitializedModels.current) {
-      hasInitializedModels.current = true;
+    if (claudeStatus?.installed) {
       const env = claudeStatus.settings?.env || {};
-
-      tool.defaultModels.forEach((model) => {
-        if (model.envKey) {
-          const value = env[model.envKey] || model.defaultValue || "";
-          // Only sync initial values from file once
-          if (value) {
-            onModelMappingChange(model.alias, value);
-          }
-        }
-      });
-      // Only set selectedApiKey if it exists in apiKeys list
       const tokenFromFile = env.ANTHROPIC_AUTH_TOKEN;
       if (tokenFromFile && apiKeys?.some(k => k.key === tokenFromFile)) {
         setSelectedApiKey(tokenFromFile);
       }
     }
-  }, [claudeStatus, apiKeys, tool.defaultModels, onModelMappingChange]);
+  }, [claudeStatus, apiKeys]);
 
   const checkClaudeStatus = async () => {
     setCheckingClaude(true);
@@ -155,10 +123,6 @@ export default function ClaudeToolCard({
         env.ANTHROPIC_AUTH_TOKEN = keyToUse;
       }
 
-      tool.defaultModels.forEach((model) => {
-        const targetModel = modelMappings[model.alias];
-        if (targetModel && model.envKey) env[model.envKey] = targetModel;
-      });
       const res = await fetch("/api/cli-tools/claude-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -186,7 +150,6 @@ export default function ClaudeToolCard({
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
-        tool.defaultModels.forEach((model) => onModelMappingChange(model.alias, model.defaultValue || ""));
         setSelectedApiKey("");
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -198,26 +161,12 @@ export default function ClaudeToolCard({
     }
   };
 
-  const openModelSelector = (alias) => {
-    setCurrentEditingAlias(alias);
-    setModalOpen(true);
-  };
-
-  const handleModelSelect = (model) => {
-    if (currentEditingAlias) onModelMappingChange(currentEditingAlias, model.value);
-  };
-
   // Generate settings.json content for manual copy
   const getManualConfigs = () => {
     const keyToUse = (selectedApiKey && selectedApiKey.trim())
       ? selectedApiKey
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
     const env = { ANTHROPIC_BASE_URL: getEffectiveBaseUrl(), ANTHROPIC_AUTH_TOKEN: keyToUse };
-    tool.defaultModels.forEach((model) => {
-      const targetModel = modelMappings[model.alias];
-      if (targetModel && model.envKey) env[model.envKey] = targetModel;
-    });
-
     return [
       {
         filename: "~/.claude/settings.json",
@@ -327,19 +276,6 @@ export default function ClaudeToolCard({
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                {/* Model Mappings */}
-                {tool.defaultModels.map((model) => (
-                  <div key={model.alias} className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                    <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">{model.name}</span>
-                    <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                    <div className="relative w-full min-w-0">
-                      <input type="text" value={modelMappings[model.alias] || ""} onChange={(e) => onModelMappingChange(model.alias, e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                      {modelMappings[model.alias] && <button onClick={() => onModelMappingChange(model.alias, "")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
-                    </div>
-                    <button onClick={() => openModelSelector(model.alias)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
-                  </div>
-                ))}
-
                 {/* CC Filter Naming */}
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Filter naming</span>
@@ -362,7 +298,7 @@ export default function ClaudeToolCard({
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={!hasActiveProviders} loading={applying}>
+                <Button variant="primary" size="sm" onClick={handleApplySettings} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleResetSettings} disabled={!claudeStatus?.has9Router} loading={restoring}>
@@ -376,8 +312,6 @@ export default function ClaudeToolCard({
           )}
         </div>
       )}
-
-      <ModelSelectModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSelect={handleModelSelect} selectedModel={currentEditingAlias ? modelMappings[currentEditingAlias] : null} activeProviders={activeProviders} modelAliases={modelAliases} title={`Select model for ${currentEditingAlias}`} />
 
       <ManualConfigModal
         isOpen={showManualConfigModal}

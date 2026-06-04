@@ -58,11 +58,39 @@ describe("DB SQLite layer — public API parity", () => {
     expect(all.find((x) => x.id === k.id)).toBeDefined();
 
     expect(await sqliteDb.validateApiKey(k.key)).toBeTruthy();
+    expect(await sqliteDb.validateApiKey("test-key")).toBeFalsy();
+    expect((await sqliteDb.getApiKeyByName("TEST-KEY"))?.id).toBe(k.id);
+
+    await sqliteDb.updateApiKey(k.id, { allowedIps: ["192.168.3.165"] });
+    expect(await sqliteDb.validateApiKey(k.key, "192.168.3.165")).toBeTruthy();
+    expect(await sqliteDb.validateApiKey(k.key, "192.168.1.112")).toBeFalsy();
+    await sqliteDb.updateApiKey(k.id, { allowedIps: [] });
+    expect(await sqliteDb.validateApiKey(k.key, "192.168.1.112")).toBeTruthy();
+
+    await sqliteDb.updateApiKey(k.id, { isActive: false });
+    expect(await sqliteDb.validateApiKey(k.key)).toBeFalsy();
+    await expect(sqliteDb.createApiKey("TEST-KEY", "machine-def")).rejects.toThrow("api key name already exists");
+
     expect(await sqliteDb.validateApiKey("invalid")).toBeFalsy();
 
     const deleted = await sqliteDb.deleteApiKey(k.id);
     expect(deleted).toBe(true);
     expect(await sqliteDb.getApiKeyById(k.id)).toBeNull();
+  });
+
+  it("apiKeys: claim by username records client IP and prevents second claim", async () => {
+    const k = await sqliteDb.createApiKey("claim-test", "machine-claim");
+
+    const claimed = await sqliteDb.claimApiKeyByName("CLAIM-TEST", "192.168.3.165", "192.168.1.112\n192.168.3.165");
+    expect(claimed.status).toBe("claimed");
+    expect(claimed.apiKey.allowedIps).toEqual(["192.168.3.165", "192.168.1.112"]);
+    expect(await sqliteDb.validateApiKey(k.key, "192.168.1.112")).toBeTruthy();
+    expect(await sqliteDb.validateApiKey(k.key, "10.0.0.1")).toBeFalsy();
+
+    const secondClaim = await sqliteDb.claimApiKeyByName("claim-test", "192.168.3.165");
+    expect(secondClaim.status).toBe("already_claimed");
+
+    await sqliteDb.deleteApiKey(k.id);
   });
 
   it("providerConnections: CRUD + reorder by priority", async () => {
