@@ -31,6 +31,7 @@ trap cleanup EXIT
 SSH_OPTIONS=(
   -o StrictHostKeyChecking=no
   -o UserKnownHostsFile=/dev/null
+  -o LogLevel=ERROR
 )
 
 require_cmd() {
@@ -60,12 +61,16 @@ ssh_remote() {
 
 sudo_remote() {
   local cmd="$1"
-  ssh_remote "printf '%s\n' $(shell_quote "$SUDO_PASS") | sudo -S sh -lc $(shell_quote "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/packages/ContainerManager/target/usr/bin:\$PATH; $cmd")"
+  ssh_remote "printf '%s\n' $(shell_quote "$SUDO_PASS") | sudo -S -p '' sh -lc $(shell_quote "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/packages/ContainerManager/target/usr/bin:\$PATH; $cmd")"
 }
 
 compose_remote() {
   local args="$1"
   sudo_remote "cd $(shell_quote "$REMOTE_DIR") && if docker compose version >/dev/null 2>&1; then docker compose -f $(shell_quote "$COMPOSE_FILE") $args; else docker-compose -f $(shell_quote "$COMPOSE_FILE") $args; fi"
+}
+
+print_container_status() {
+  sudo_remote "docker inspect $(shell_quote "$CONTAINER_NAME") --format 'container={{.Name}} status={{.State.Status}} started={{.State.StartedAt}} network={{.HostConfig.NetworkMode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}'"
 }
 
 sync_standalone() {
@@ -85,6 +90,24 @@ sync_standalone() {
     -C "$ROOT/.next/standalone" \
     -cf - . | ssh_remote "tar -C $(shell_quote "$dest") -xmf -"
 }
+
+MODE="${1:-upgrade}"
+case "$MODE" in
+  upgrade) ;;
+  status)
+    require_cmd sshpass
+    require_var REMOTE_HOST
+    require_var REMOTE_USER
+    require_var REMOTE_PASS
+    require_var SUDO_PASS
+    print_container_status
+    exit 0
+    ;;
+  *)
+    echo "Usage: $0 [upgrade|status]" >&2
+    exit 1
+    ;;
+esac
 
 echo "[1/7] Checking local tools..."
 require_cmd sshpass
@@ -129,6 +152,7 @@ for _ in $(seq 1 40); do
     status="$(sudo_remote "docker inspect $(shell_quote "$CONTAINER_NAME") --format '{{.HostConfig.NetworkMode}} {{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}'" | tail -n 1)"
     if [ "$status" = "host healthy" ] || [ "$status" = "host no-healthcheck" ]; then
       echo "$status"
+      print_container_status
       echo "9router upgraded: http://$REMOTE_HOST:$PORT"
       exit 0
     fi

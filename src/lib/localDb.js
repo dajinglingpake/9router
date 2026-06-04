@@ -18,5 +18,6 @@ export {
   getCustomModels, addCustomModel, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
+  clearAuditLogs,
   exportDb, importDb,
 } from "@/lib/db/index.js";

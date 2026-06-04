@@ -229,6 +229,32 @@ describe("DB SQLite layer — public API parity", () => {
     expect(stats.byProvider.openai.promptTokens).toBeGreaterThanOrEqual(300);
   });
 
+  it("audit logs: clear by condition and rebuild daily summaries", async () => {
+    await sqliteDb.saveRequestUsage({
+      timestamp: "2024-01-01T00:00:00.000Z",
+      provider: "audit-test", model: "old-model", connectionId: "audit-c1", clientIp: "10.0.0.1",
+      tokens: { prompt_tokens: 10, completion_tokens: 5 },
+      endpoint: "/v1/chat/completions", status: "ok",
+    });
+    await sqliteDb.saveRequestUsage({
+      timestamp: "2024-01-03T00:00:00.000Z",
+      provider: "audit-test", model: "new-model", connectionId: "audit-c1", clientIp: "10.0.0.1",
+      tokens: { prompt_tokens: 20, completion_tokens: 10 },
+      endpoint: "/v1/chat/completions", status: "ok",
+    });
+
+    const result = await sqliteDb.clearAuditLogs({ provider: "audit-test", before: "2024-01-02T00:00:00.000Z" });
+    expect(result.deleted.usageHistory).toBe(1);
+
+    const history = await sqliteDb.getUsageHistory({ provider: "audit-test" });
+    expect(history).toHaveLength(1);
+    expect(history[0].model).toBe("new-model");
+
+    const stats = await sqliteDb.getUsageStats("all");
+    expect(stats.byProvider["audit-test"].requests).toBe(1);
+    expect(stats.byProvider["audit-test"].promptTokens).toBe(20);
+  });
+
   it("usage: pending tracking in-memory", () => {
     sqliteDb.trackPendingRequest("gpt-4", "openai", "c1", true);
     expect(global._pendingRequests.byModel["gpt-4 (openai)"]).toBe(1);
