@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
 function getErrorMessage(status, error) {
   if (status === 400) return error || "请输入有效用户名。";
@@ -16,14 +17,15 @@ export default function ClaimKeyPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const { copied, copy } = useCopyToClipboard();
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLoading(true);
     setResult(null);
     setError("");
-    setCopied(false);
+    setCopyError("");
 
     try {
       const response = await fetch("/api/keys/claim", {
@@ -46,8 +48,11 @@ export default function ClaimKeyPage() {
 
   const copyApiKey = async () => {
     if (!result?.apiKey) return;
-    await navigator.clipboard.writeText(result.apiKey);
-    setCopied(true);
+    setCopyError("");
+    const success = await copy(result.apiKey, "claimed-api-key");
+    if (!success) {
+      setCopyError("复制失败，请手动选中上方 API Key 后复制。");
+    }
   };
 
   return (
@@ -114,8 +119,13 @@ export default function ClaimKeyPage() {
                 onClick={copyApiKey}
                 className="mt-3 h-9 rounded-md border border-emerald-400/40 px-3 text-sm font-medium text-emerald-100 transition hover:bg-emerald-400/10"
               >
-                {copied ? "已复制" : "复制 API Key"}
+                {copied === "claimed-api-key" ? "已复制" : "复制 API Key"}
               </button>
+              {copyError && (
+                <div className="mt-2 text-xs leading-5 text-amber-100">
+                  {copyError}
+                </div>
+              )}
               {result.allowedIps?.length > 0 && (
                 <div className="mt-3 text-xs leading-5 text-emerald-100/80">
                   允许 IP：{result.allowedIps.join(", ")}
