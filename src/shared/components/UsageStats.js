@@ -40,10 +40,6 @@ function TimeAgo({ timestamp }) {
 function AliasInput({ clientIp, value, onSave }) {
   const [draft, setDraft] = useState(value || "");
 
-  useEffect(() => {
-    setDraft(value || "");
-  }, [value]);
-
   const save = useCallback(() => {
     const next = draft.trim();
     if (clientIp && clientIp !== "unknown" && next !== (value || "")) {
@@ -143,7 +139,6 @@ function getGroupKey(item, keyField) {
     case "keyName": return item.keyName || "Unknown Key";
     case "endpoint": return item.endpoint || "Unknown Endpoint";
     case "clientIp": return item.clientIp || "Unknown IP";
-    case "clientName": return item.clientName || item.clientAlias || item.clientIp || "Unknown";
     default: return item[keyField] || "Unknown";
   }
 }
@@ -185,9 +180,9 @@ const MODEL_COLUMNS = [
 ];
 
 const ACCOUNT_COLUMNS = [
+  { field: "accountName", label: "Account" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
-  { field: "accountName", label: "Account" },
   { field: "requests", label: "Requests", align: "right" },
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
@@ -210,16 +205,6 @@ const CLIENT_IP_COLUMNS = [
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
 
-const CLIENT_ALIAS_COLUMNS = [
-  { field: "clientName", label: "Person / Alias" },
-  { field: "clientIps", label: "Client IPs" },
-  { field: "keyName", label: "API Key Name" },
-  { field: "rawModel", label: "Model" },
-  { field: "provider", label: "Provider" },
-  { field: "requests", label: "Requests", align: "right" },
-  { field: "lastUsed", label: "Last Used", align: "right" },
-];
-
 const ENDPOINT_COLUMNS = [
   { field: "endpoint", label: "Endpoint" },
   { field: "rawModel", label: "Model" },
@@ -233,7 +218,6 @@ const TABLE_OPTIONS = [
   { value: "account", label: "Usage by Account" },
   { value: "apiKey", label: "Usage by API Key" },
   { value: "clientIp", label: "Usage by IP" },
-  { value: "clientAlias", label: "Usage by Person" },
   { value: "endpoint", label: "Usage by Endpoint" },
 ];
 
@@ -255,7 +239,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
-  const [tableView, setTableView] = useState("model");
+  const [tableView, setTableView] = useState("apiKey");
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
@@ -463,36 +447,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           renderDetailCells: (item) => (
             <>
               <td className="px-6 py-3 font-mono text-sm font-medium">{item.clientIp || "unknown"}</td>
-              <td className="px-6 py-3"><AliasInput clientIp={item.clientIp} value={item.clientAlias} onSave={saveClientIpAlias} /></td>
-              <td className="px-6 py-3 font-medium">{item.keyName}</td>
-              <td className="px-6 py-3">{item.rawModel}</td>
-              <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
-              <td className="px-6 py-3 text-right">{fmt(item.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(item.lastUsed)}</td>
-            </>
-          ),
-        };
-      }
-      case "clientAlias": {
-        return {
-          columns: CLIENT_ALIAS_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byClientAlias, {}, sortBy, sortOrder), "clientName"),
-          storageKey: "usage-stats:expanded-client-aliases",
-          emptyMessage: "No person usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
-          renderDetailCells: (item) => (
-            <>
-              <td className="px-6 py-3 font-medium">{item.clientName}</td>
-              <td className="px-6 py-3 max-w-[260px] truncate font-mono text-sm text-text-muted" title={(item.clientIps || []).join(", ")}>{(item.clientIps || []).join(", ")}</td>
+              <td className="px-6 py-3"><AliasInput key={`${item.clientIp || "unknown"}:${item.clientAlias || ""}`} clientIp={item.clientIp} value={item.clientAlias} onSave={saveClientIpAlias} /></td>
               <td className="px-6 py-3 font-medium">{item.keyName}</td>
               <td className="px-6 py-3">{item.rawModel}</td>
               <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
@@ -611,6 +566,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         </div>
         {loading ? spinner : activeTableConfig && (
           <UsageTable
+            key={activeTableConfig.storageKey}
             title=""
             columns={activeTableConfig.columns}
             groupedData={activeTableConfig.groupedData}

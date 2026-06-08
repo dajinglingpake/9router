@@ -8,6 +8,18 @@ import Badge from "@/shared/components/Badge";
 const fmt = (n) => new Intl.NumberFormat().format(n || 0);
 const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
 
+function readExpandedGroups(storageKey) {
+  if (typeof window === "undefined") return new Set();
+
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  } catch (e) {
+    console.error(`Failed to load ${storageKey}:`, e);
+    return new Set();
+  }
+}
+
 function fmtTime(iso) {
   if (!iso) return "Never";
   const diffMins = Math.floor((Date.now() - new Date(iso)) / 60000);
@@ -100,17 +112,7 @@ export default function UsageTable({
   renderSummaryCells,
   emptyMessage,
 }) {
-  const [expanded, setExpanded] = useState(new Set());
-
-  // Load expanded state from localStorage
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (saved) setExpanded(new Set(JSON.parse(saved)));
-    } catch (e) {
-      console.error(`Failed to load ${storageKey}:`, e);
-    }
-  }, [storageKey]);
+  const [expanded, setExpanded] = useState(() => readExpandedGroups(storageKey));
 
   // Save expanded state to localStorage
   useEffect(() => {
@@ -178,18 +180,25 @@ export default function UsageTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {groupedData.map((group) => (
+            {groupedData.map((group) => {
+              const isExpandable = group.items.length > 1;
+
+              return (
               <Fragment key={group.groupKey}>
                 {/* Group summary row */}
                 <tr
-                  className="group-summary cursor-pointer hover:bg-bg-subtle/50 transition-colors"
-                  onClick={() => toggleGroup(group.groupKey)}
+                  className={`group-summary transition-colors ${isExpandable ? "cursor-pointer hover:bg-bg-subtle/50" : "hover:bg-bg-subtle/20"}`}
+                  onClick={isExpandable ? () => toggleGroup(group.groupKey) : undefined}
                 >
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-2">
-                      <span className={`material-symbols-outlined text-[18px] text-text-muted transition-transform ${expanded.has(group.groupKey) ? "rotate-90" : ""}`}>
-                        chevron_right
-                      </span>
+                      {isExpandable ? (
+                        <span className={`material-symbols-outlined text-[18px] text-text-muted transition-transform ${expanded.has(group.groupKey) ? "rotate-90" : ""}`}>
+                          chevron_right
+                        </span>
+                      ) : (
+                        <span className="inline-block w-[18px]" aria-hidden="true" />
+                      )}
                       <span className={`font-medium transition-colors ${group.summary.pending > 0 ? "text-primary" : ""}`}>
                         {group.groupKey}
                       </span>
@@ -199,7 +208,7 @@ export default function UsageTable({
                   <ValueCells item={group.summary} viewMode={viewMode} isSummary />
                 </tr>
                 {/* Detail rows */}
-                {expanded.has(group.groupKey) && group.items.map((item) => (
+                {isExpandable && expanded.has(group.groupKey) && group.items.map((item) => (
                   <tr
                     key={`detail-${item.key}`}
                     className="group-detail hover:bg-bg-subtle/20 transition-colors"
@@ -209,7 +218,8 @@ export default function UsageTable({
                   </tr>
                 ))}
               </Fragment>
-            ))}
+              );
+            })}
             {groupedData.length === 0 && (
               <tr>
                 <td colSpan={totalColSpan} className="px-6 py-8 text-center text-text-muted">
