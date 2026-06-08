@@ -91,6 +91,21 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
 
+  const cacheRead = tokens.cached_tokens
+    ?? tokens.cache_read_input_tokens
+    ?? tokens.prompt_tokens_details?.cached_tokens;
+  const cacheCreation = tokens.cache_creation_input_tokens
+    ?? tokens.prompt_tokens_details?.cache_creation_tokens;
+  const reasoning = tokens.reasoning_tokens
+    ?? tokens.completion_tokens_details?.reasoning_tokens;
+
+  if (cacheRead !== undefined) normalized.cached_tokens = cacheRead;
+  if (tokens.cache_read_input_tokens !== undefined) normalized.cache_read_input_tokens = tokens.cache_read_input_tokens;
+  if (cacheCreation !== undefined) normalized.cache_creation_input_tokens = cacheCreation;
+  if (reasoning !== undefined) normalized.reasoning_tokens = reasoning;
+  if (tokens.prompt_tokens_details) normalized.prompt_tokens_details = tokens.prompt_tokens_details;
+  if (tokens.completion_tokens_details) normalized.completion_tokens_details = tokens.completion_tokens_details;
+
   saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
