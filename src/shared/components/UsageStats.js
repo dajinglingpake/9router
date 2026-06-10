@@ -112,14 +112,15 @@ function RecentRequests({ requests = [] }) {
   );
 }
 
-function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
+function sortData(dataMap, pendingMap = {}, sortBy, sortOrder, viewMode = "costs") {
   return Object.entries(dataMap || {})
     .map(([key, data]) => {
       const totalTokens = (data.promptTokens || 0) + (data.completionTokens || 0);
       const totalCost = data.cost || 0;
       const inputCost = totalTokens > 0 ? (data.promptTokens || 0) * (totalCost / totalTokens) : 0;
       const outputCost = totalTokens > 0 ? (data.completionTokens || 0) * (totalCost / totalTokens) : 0;
-      return { ...data, key, totalTokens, totalCost, inputCost, outputCost, pending: pendingMap[key] || 0 };
+      const usageShare = viewMode === "tokens" ? totalTokens : totalCost;
+      return { ...data, key, totalTokens, totalCost, inputCost, outputCost, usageShare, pending: pendingMap[key] || 0 };
     })
     .sort((a, b) => {
       let valA = a[sortBy];
@@ -221,6 +222,9 @@ const TABLE_OPTIONS = [
   { value: "endpoint", label: "Usage by Endpoint" },
 ];
 
+const TABLE_VIEW_VALUES = new Set(TABLE_OPTIONS.map((option) => option.value));
+const VIEW_MODE_VALUES = new Set(["costs", "tokens"]);
+
 const PERIODS = [
   { value: "today", label: "Today" },
   { value: "24h", label: "24h" },
@@ -235,12 +239,14 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
   const sortBy = searchParams.get("sortBy") || "rawModel";
   const sortOrder = searchParams.get("sortOrder") || "asc";
+  const tableViewParam = searchParams.get("tableView");
+  const viewModeParam = searchParams.get("viewMode");
+  const tableView = TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "apiKey";
+  const viewMode = VIEW_MODE_VALUES.has(viewModeParam) ? viewModeParam : "costs";
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
-  const [tableView, setTableView] = useState("apiKey");
-  const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
   const isInitialLoad = useRef(true);
@@ -331,6 +337,12 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     router.replace(`?${params.toString()}`, { scroll: false });
   }, [searchParams, router]);
 
+  const updateTableSetting = useCallback((key, value) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set(key, value);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }, [searchParams, router]);
+
   const saveClientIpAlias = useCallback(async (clientIp, alias) => {
     const res = await fetch("/api/usage/client-ip-aliases", {
       method: "PUT",
@@ -348,7 +360,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         const pendingMap = stats.pending?.byModel || {};
         return {
           columns: MODEL_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byModel, pendingMap, sortBy, sortOrder), "rawModel"),
+          groupedData: groupDataByKey(sortData(stats.byModel, pendingMap, sortBy, sortOrder, viewMode), "rawModel"),
           storageKey: "usage-stats:expanded-models",
           emptyMessage: "No usage recorded yet.",
           renderSummaryCells: (group) => (
@@ -381,7 +393,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         }
         return {
           columns: ACCOUNT_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byAccount, pendingMap, sortBy, sortOrder), "accountName"),
+          groupedData: groupDataByKey(sortData(stats.byAccount, pendingMap, sortBy, sortOrder, viewMode), "accountName"),
           storageKey: "usage-stats:expanded-accounts",
           emptyMessage: "No account-specific usage recorded yet.",
           renderSummaryCells: (group) => (
@@ -406,7 +418,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       case "apiKey": {
         return {
           columns: API_KEY_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byApiKey, {}, sortBy, sortOrder), "keyName"),
+          groupedData: groupDataByKey(sortData(stats.byApiKey, {}, sortBy, sortOrder, viewMode), "keyName"),
           storageKey: "usage-stats:expanded-apikeys",
           emptyMessage: "No API key usage recorded yet.",
           renderSummaryCells: (group) => (
@@ -431,7 +443,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       case "clientIp": {
         return {
           columns: CLIENT_IP_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byClientIp, {}, sortBy, sortOrder), "clientIp"),
+          groupedData: groupDataByKey(sortData(stats.byClientIp, {}, sortBy, sortOrder, viewMode), "clientIp"),
           storageKey: "usage-stats:expanded-client-ips",
           emptyMessage: "No IP usage recorded yet.",
           renderSummaryCells: (group) => (
@@ -461,7 +473,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       default: {
         return {
           columns: ENDPOINT_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byEndpoint, {}, sortBy, sortOrder), "endpoint"),
+          groupedData: groupDataByKey(sortData(stats.byEndpoint, {}, sortBy, sortOrder, viewMode), "endpoint"),
           storageKey: "usage-stats:expanded-endpoints",
           emptyMessage: "No endpoint usage recorded yet.",
           renderSummaryCells: (group) => (
@@ -484,7 +496,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         };
       }
     }
-  }, [stats, tableView, sortBy, sortOrder, saveClientIpAlias]);
+  }, [stats, tableView, sortBy, sortOrder, viewMode, saveClientIpAlias]);
 
   if (!stats && !loading) return <div className="text-text-muted">Failed to load usage statistics.</div>;
 
@@ -541,7 +553,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <select
             value={tableView}
-            onChange={(e) => setTableView(e.target.value)}
+            onChange={(e) => updateTableSetting("tableView", e.target.value)}
             className="w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-main focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
             style={{ colorScheme: 'auto' }}
           >
@@ -551,13 +563,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           </select>
           <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex">
             <button
-              onClick={() => setViewMode("costs")}
+              onClick={() => updateTableSetting("viewMode", "costs")}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "costs" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Costs
             </button>
             <button
-              onClick={() => setViewMode("tokens")}
+              onClick={() => updateTableSetting("viewMode", "tokens")}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Tokens

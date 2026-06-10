@@ -167,11 +167,13 @@ export default function UsageTable({
       ];
     }
     return [
-      { field: "promptTokens", label: "Input Cost" },
-      { field: "completionTokens", label: "Output Cost" },
-      { field: "cost", label: "Total Cost" },
+      { field: "inputCost", label: "Input Cost" },
+      { field: "outputCost", label: "Output Cost" },
+      { field: "totalCost", label: "Total Cost" },
     ];
   }, [viewMode]);
+
+  const shareSortField = "usageShare";
 
   const totalUsage = useMemo(
     () => groupedData.reduce((sum, group) => sum + getUsageValue(group.summary, viewMode), 0),
@@ -209,7 +211,13 @@ export default function UsageTable({
                   <SortIcon field={col.field} currentSort={sortBy} currentOrder={sortOrder} />
                 </th>
               ))}
-              <th className="px-6 py-3 text-right">占比</th>
+              <th
+                className="px-6 py-3 text-right cursor-pointer hover:bg-bg-subtle/50"
+                onClick={() => onToggleSort(tableType, shareSortField)}
+              >
+                占比{" "}
+                <SortIcon field={shareSortField} currentSort={sortBy} currentOrder={sortOrder} />
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
