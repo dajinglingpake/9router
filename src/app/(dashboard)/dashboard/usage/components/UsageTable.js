@@ -3,10 +3,23 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import PropTypes from "prop-types";
 import Card from "@/shared/components/Card";
-import Badge from "@/shared/components/Badge";
 
 const fmt = (n) => new Intl.NumberFormat().format(n || 0);
 const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
+const fmtPercent = (value, total) => {
+  if (!total || !value) return "0%";
+  const percent = (value / total) * 100;
+  if (percent > 0 && percent < 0.1) return "<0.1%";
+  if (percent >= 10 || Number.isInteger(percent)) return `${percent.toFixed(0)}%`;
+  return `${percent.toFixed(1)}%`;
+};
+
+function getUsageValue(item, viewMode) {
+  if (viewMode === "tokens") {
+    return item.totalTokens ?? ((item.promptTokens || 0) + (item.completionTokens || 0));
+  }
+  return item.totalCost ?? item.cost ?? 0;
+}
 
 function readExpandedGroups(storageKey) {
   if (typeof window === "undefined") return new Set();
@@ -80,6 +93,20 @@ ValueCells.propTypes = {
   isSummary: PropTypes.bool,
 };
 
+function ShareCell({ item, totalUsage, viewMode }) {
+  return (
+    <td className="px-6 py-3 text-right font-medium text-text-muted tabular-nums">
+      {fmtPercent(getUsageValue(item, viewMode), totalUsage)}
+    </td>
+  );
+}
+
+ShareCell.propTypes = {
+  item: PropTypes.object.isRequired,
+  totalUsage: PropTypes.number.isRequired,
+  viewMode: PropTypes.string.isRequired,
+};
+
 /**
  * Reusable sortable usage table with expandable group rows.
  *
@@ -146,7 +173,12 @@ export default function UsageTable({
     ];
   }, [viewMode]);
 
-  const totalColSpan = columns.length + valueColumns.length;
+  const totalUsage = useMemo(
+    () => groupedData.reduce((sum, group) => sum + getUsageValue(group.summary, viewMode), 0),
+    [groupedData, viewMode]
+  );
+
+  const totalColSpan = columns.length + valueColumns.length + 1;
 
   return (
     <Card className="overflow-hidden">
@@ -177,6 +209,7 @@ export default function UsageTable({
                   <SortIcon field={col.field} currentSort={sortBy} currentOrder={sortOrder} />
                 </th>
               ))}
+              <th className="px-6 py-3 text-right">占比</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -206,6 +239,7 @@ export default function UsageTable({
                   </td>
                   {renderSummaryCells(group)}
                   <ValueCells item={group.summary} viewMode={viewMode} isSummary />
+                  <ShareCell item={group.summary} totalUsage={totalUsage} viewMode={viewMode} />
                 </tr>
                 {/* Detail rows */}
                 {isExpandable && expanded.has(group.groupKey) && group.items.map((item) => (
@@ -215,6 +249,7 @@ export default function UsageTable({
                   >
                     {renderDetailCells(item)}
                     <ValueCells item={item} viewMode={viewMode} />
+                    <ShareCell item={item} totalUsage={totalUsage} viewMode={viewMode} />
                   </tr>
                 ))}
               </Fragment>
