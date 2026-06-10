@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
@@ -225,6 +225,17 @@ const TABLE_OPTIONS = [
 const TABLE_VIEW_VALUES = new Set(TABLE_OPTIONS.map((option) => option.value));
 const VIEW_MODE_VALUES = new Set(["costs", "tokens"]);
 
+function getTableStateFromParams(params) {
+  const tableViewParam = params.get("tableView");
+  const viewModeParam = params.get("viewMode");
+  return {
+    sortBy: params.get("sortBy") || "rawModel",
+    sortOrder: params.get("sortOrder") === "desc" ? "desc" : "asc",
+    tableView: TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "apiKey",
+    viewMode: VIEW_MODE_VALUES.has(viewModeParam) ? viewModeParam : "costs",
+  };
+}
+
 const PERIODS = [
   { value: "today", label: "Today" },
   { value: "24h", label: "24h" },
@@ -234,15 +245,10 @@ const PERIODS = [
 ];
 
 export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false } = {}) {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
-  const sortBy = searchParams.get("sortBy") || "rawModel";
-  const sortOrder = searchParams.get("sortOrder") || "asc";
-  const tableViewParam = searchParams.get("tableView");
-  const viewModeParam = searchParams.get("viewMode");
-  const tableView = TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "apiKey";
-  const viewMode = VIEW_MODE_VALUES.has(viewModeParam) ? viewModeParam : "costs";
+  const [tableState, setTableState] = useState(() => getTableStateFromParams(searchParams));
+  const { sortBy, sortOrder, tableView, viewMode } = tableState;
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -327,21 +333,18 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   }, []);
 
   const toggleSort = useCallback((tableType, field) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (params.get("sortBy") === field) {
-      params.set("sortOrder", params.get("sortOrder") === "asc" ? "desc" : "asc");
-    } else {
-      params.set("sortBy", field);
-      params.set("sortOrder", "asc");
-    }
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [searchParams, router]);
+    setTableState((prev) => {
+      return {
+        ...prev,
+        sortBy: field,
+        sortOrder: prev.sortBy === field && prev.sortOrder === "asc" ? "desc" : "asc",
+      };
+    });
+  }, []);
 
   const updateTableSetting = useCallback((key, value) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set(key, value);
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [searchParams, router]);
+    setTableState((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
   const saveClientIpAlias = useCallback(async (clientIp, alias) => {
     const res = await fetch("/api/usage/client-ip-aliases", {
@@ -578,7 +581,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         </div>
         {loading ? spinner : activeTableConfig && (
           <UsageTable
-            key={activeTableConfig.storageKey}
+            key={`${activeTableConfig.storageKey}:${viewMode}:${sortBy}:${sortOrder}`}
             title=""
             columns={activeTableConfig.columns}
             groupedData={activeTableConfig.groupedData}
