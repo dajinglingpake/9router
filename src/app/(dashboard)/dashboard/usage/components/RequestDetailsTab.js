@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
@@ -103,56 +103,66 @@ export default function RequestDetailsTab() {
   const [providerNameCache, setProviderNameCache] = useState(null);
   const [filters, setFilters] = useState({
     provider: "",
+    apiKey: "",
     clientIp: "",
     startDate: "",
     endDate: ""
   });
 
-  const fetchProviders = useCallback(async () => {
-    try {
-      const res = await fetch("/api/usage/providers");
-      const data = await res.json();
-      setProviders(data.providers || []);
+  useEffect(() => {
+    let cancelled = false;
 
-      const cache = await fetchProviderNames();
-      setProviderNameCache(cache.providerNameCache);
-    } catch (error) {
-      console.error("Failed to fetch providers:", error);
+    async function loadProviders() {
+      try {
+        const res = await fetch("/api/usage/providers");
+        const data = await res.json();
+        const cache = await fetchProviderNames();
+        if (cancelled) return;
+        setProviders(data.providers || []);
+        setProviderNameCache(cache.providerNameCache);
+      } catch (error) {
+        console.error("Failed to fetch providers:", error);
+      }
     }
+
+    void loadProviders();
+    return () => { cancelled = true; };
   }, []);
 
-  const fetchDetails = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        pageSize: pagination.pageSize.toString()
-      });
-      if (filters.provider) params.append("provider", filters.provider);
-      const clientIp = filters.clientIp.trim();
-      if (clientIp) params.append("clientIp", clientIp);
-      if (filters.startDate) params.append("startDate", filters.startDate);
-      if (filters.endDate) params.append("endDate", filters.endDate);
+  useEffect(() => {
+    let cancelled = false;
 
-      const res = await fetch(`/api/usage/request-details?${params}`);
-      const data = await res.json();
+    async function loadDetails() {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: pagination.page.toString(),
+          pageSize: pagination.pageSize.toString()
+        });
+        if (filters.provider) params.append("provider", filters.provider);
+        const apiKey = filters.apiKey.trim();
+        if (apiKey) params.append("apiKey", apiKey);
+        const clientIp = filters.clientIp.trim();
+        if (clientIp) params.append("clientIp", clientIp);
+        if (filters.startDate) params.append("startDate", filters.startDate);
+        if (filters.endDate) params.append("endDate", filters.endDate);
 
-      setDetails(data.details || []);
-      setPagination(prev => ({ ...prev, ...data.pagination }));
-    } catch (error) {
-      console.error("Failed to fetch request details:", error);
-    } finally {
-      setLoading(false);
+        const res = await fetch(`/api/usage/request-details?${params}`);
+        const data = await res.json();
+
+        if (cancelled) return;
+        setDetails(data.details || []);
+        setPagination(prev => ({ ...prev, ...data.pagination }));
+      } catch (error) {
+        console.error("Failed to fetch request details:", error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  }, [pagination.page, pagination.pageSize, filters]);
 
-  useEffect(() => {
-    fetchProviders();
-  }, [fetchProviders]);
-
-  useEffect(() => {
-    fetchDetails();
-  }, [fetchDetails]);
+    void loadDetails();
+    return () => { cancelled = true; };
+  }, [pagination.page, pagination.pageSize, filters.provider, filters.apiKey, filters.clientIp, filters.startDate, filters.endDate]);
 
   const handleViewDetail = (detail) => {
     setSelectedDetail(detail);
@@ -168,13 +178,13 @@ export default function RequestDetailsTab() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ provider: "", clientIp: "", startDate: "", endDate: "" });
+    setFilters({ provider: "", apiKey: "", clientIp: "", startDate: "", endDate: "" });
   };
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Card padding="md">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="provider-filter" className="text-sm font-medium text-text-main">Provider</label>
             <select
@@ -195,6 +205,21 @@ export default function RequestDetailsTab() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-2">
+            <label htmlFor="api-key-filter" className="text-sm font-medium text-text-main">API Key</label>
+            <input
+              id="api-key-filter"
+              type="text"
+              value={filters.apiKey}
+              onChange={(e) => setFilters({ ...filters, apiKey: e.target.value })}
+              placeholder="All API keys"
+              className={cn(
+                "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
+                "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
+              )}
+            />
           </div>
 
           <div className="flex min-w-0 flex-col gap-2">
@@ -245,7 +270,7 @@ export default function RequestDetailsTab() {
             <Button 
               variant="ghost" 
               onClick={handleClearFilters}
-              disabled={!filters.provider && !filters.clientIp && !filters.startDate && !filters.endDate}
+              disabled={!filters.provider && !filters.apiKey && !filters.clientIp && !filters.startDate && !filters.endDate}
               className="w-full"
             >
               Clear Filters

@@ -318,6 +318,8 @@ export async function getUsageHistory(filter = {}) {
 
   if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
+  if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
+  if (filter.apiKey) { conds.push("apiKey = ?"); params.push(filter.apiKey); }
   if (filter.clientIp) { conds.push("clientIp = ?"); params.push(filter.clientIp); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
@@ -342,8 +344,9 @@ function loadDaysInRange(adapter, maxDays) {
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
 }
 
-export async function getUsageStats(period = "all") {
+export async function getUsageStats(period = "all", filter = {}) {
   const db = await getAdapter();
+  const apiKeyFilter = typeof filter.apiKey === "string" ? filter.apiKey.trim() : "";
 
   const [{ getProviderConnections }, { getApiKeys }, { getProviderNodes }] = await Promise.all([
     import("./connectionsRepo.js"),
@@ -369,7 +372,9 @@ export async function getUsageStats(period = "all") {
   const clientIpAliasMap = await getClientIpAliasMapCached();
 
   // recentRequests from live history (last 100 entries enough for 20 deduped)
-  const recentRows = db.all(`SELECT timestamp, provider, model, clientIp, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
+  const recentRows = apiKeyFilter
+    ? db.all(`SELECT timestamp, provider, model, clientIp, tokens, status FROM usageHistory WHERE apiKey = ? ORDER BY id DESC LIMIT 100`, [apiKeyFilter])
+    : db.all(`SELECT timestamp, provider, model, clientIp, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
   const seen = new Set();
   const recentRequests = recentRows
     .map((r) => {
@@ -427,10 +432,15 @@ export async function getUsageStats(period = "all") {
     bucketMap[ts] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
     stats.last10Minutes.push(bucketMap[ts]);
   }
-  const recent10 = db.all(
-    `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ? AND timestamp <= ?`,
-    [tenMinutesAgo.toISOString(), now.toISOString()]
-  );
+  const recent10 = apiKeyFilter
+    ? db.all(
+      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ? AND timestamp <= ? AND apiKey = ?`,
+      [tenMinutesAgo.toISOString(), now.toISOString(), apiKeyFilter]
+    )
+    : db.all(
+      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ? AND timestamp <= ?`,
+      [tenMinutesAgo.toISOString(), now.toISOString()]
+    );
   for (const r of recent10) {
     const tt = new Date(r.timestamp).getTime();
     const minuteStart = Math.floor(tt / 60000) * 60000;
@@ -442,7 +452,7 @@ export async function getUsageStats(period = "all") {
     }
   }
 
-  const useDailySummary = period !== "24h" && period !== "today";
+  const useDailySummary = !apiKeyFilter && period !== "24h" && period !== "today";
 
   if (useDailySummary) {
     const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
@@ -585,12 +595,19 @@ export async function getUsageStats(period = "all") {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
       cutoff = startOfDay.toISOString();
+    } else if (PERIOD_MS[period]) {
+      cutoff = new Date(Date.now() - PERIOD_MS[period]).toISOString();
     } else {
-      cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
+      cutoff = null;
     }
+    const conds = [];
+    const params = [];
+    if (cutoff) { conds.push("timestamp >= ?"); params.push(cutoff); }
+    if (apiKeyFilter) { conds.push("apiKey = ?"); params.push(apiKeyFilter); }
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
-      [cutoff]
+      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, promptTokens, completionTokens, cost, tokens FROM usageHistory ${where}`,
+      params
     );
 
     for (const r of filtered) {

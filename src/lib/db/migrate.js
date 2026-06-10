@@ -242,8 +242,8 @@ function importLegacyDetails(adapter, data) {
   if (!data || !Array.isArray(data.records)) return;
   for (const r of data.records) {
     adapter.run(
-      `INSERT OR REPLACE INTO requestDetails(id, timestamp, provider, model, connectionId, clientIp, status, data) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-      [r.id, r.timestamp || new Date().toISOString(), r.provider || null, r.model || null, r.connectionId || null, r.clientIp || null, r.status || null, stringifyJson(r)]
+      `INSERT OR REPLACE INTO requestDetails(id, timestamp, provider, model, connectionId, apiKey, clientIp, status, data) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [r.id, r.timestamp || new Date().toISOString(), r.provider || null, r.model || null, r.connectionId || null, r.apiKey || null, r.clientIp || null, r.status || null, stringifyJson(r)]
     );
   }
 }
