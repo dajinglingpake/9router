@@ -65,6 +65,7 @@ export const MODEL_PRICING = {
   "gemini-pro-agent":             { input: 4.00,  output: 18.00, cached: 0.50,  reasoning: 27.00,  cache_creation: 4.00  },
   "gemini-3-flash-agent": { input: 0.5, output: 3.00, cached: 0.05, reasoning: 3.00, cache_creation: 0.5 },
   "gemini-3.5-flash-low":         { input: 0.50,  output: 3.00,  cached: 0.03,  reasoning: 4.50,   cache_creation: 0.50  },
+  "gemini-3.5-flash-extra-low":   { input: 0.50,  output: 3.00,  cached: 0.03,  reasoning: 4.50,   cache_creation: 0.50  },
   "gemini-3-flash": { input: 0.5, output: 3.00, cached: 0.05, reasoning: 3.00, cache_creation: 0.5 },
   "gemini-2.5-pro": { input: 1.25, output: 10.00, cached: 0.125, reasoning: 10.00, cache_creation: 1.25 },
   "gemini-2.5-flash":             { input: 0.30,  output: 2.50,  cached: 0.03,  reasoning: 3.75,   cache_creation: 0.30  },
@@ -98,6 +99,7 @@ export const MODEL_PRICING = {
   "glm-5": { input: 0.589, output: 2.65, cached: 0.147, reasoning: 2.65, cache_creation: 0.589 },
 
   // === MiniMax ===
+  "MiniMax-M3":                   { input: 0.30,  output: 1.20,  cached: 0.06,  reasoning: 1.80,   cache_creation: 0.30  },
   "MiniMax-M2.1": { input: 0.309, output: 1.24, cached: 0.031, reasoning: 1.24, cache_creation: 0.386 },
   "MiniMax-M2.5": { input: 0.309, output: 1.24, cached: 0.031, reasoning: 1.24, cache_creation: 0.386 },
   "MiniMax-M2.7": { input: 0.309, output: 1.24, cached: 0.062, reasoning: 1.24, cache_creation: 0.386 },
