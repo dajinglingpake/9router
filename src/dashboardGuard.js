@@ -29,6 +29,7 @@ const PUBLIC_API_PATHS = [
   "/api/auth/status",
   "/api/auth/oidc",
   "/api/keys/claim",
+  "/api/usage/weekly-summary",
   "/api/version",
   "/api/settings/require-login",
 ];
