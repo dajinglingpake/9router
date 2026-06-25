@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
@@ -197,6 +197,21 @@ const TABLE_OPTIONS = [
 
 const DEFAULT_SORT_BY = "usageShare";
 const DEFAULT_SORT_ORDER = "desc";
+const TABLE_VIEW_VALUES = new Set(TABLE_OPTIONS.map((option) => option.value));
+const VIEW_MODE_VALUES = new Set(["costs", "tokens"]);
+
+function getTableStateFromParams(params) {
+  const tableViewParam = params.get("tableView");
+  const viewModeParam = params.get("viewMode");
+  const sortOrderParam = params.get("sortOrder");
+
+  return {
+    sortBy: params.get("sortBy") || DEFAULT_SORT_BY,
+    sortOrder: sortOrderParam === "asc" || sortOrderParam === "desc" ? sortOrderParam : DEFAULT_SORT_ORDER,
+    tableView: TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "model",
+    viewMode: VIEW_MODE_VALUES.has(viewModeParam) ? viewModeParam : "costs",
+  };
+}
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -207,19 +222,14 @@ const PERIODS = [
 ];
 
 export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false } = {}) {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
-  const sortByParam = searchParams.get("sortBy");
-  const sortOrderParam = searchParams.get("sortOrder");
-  const sortBy = sortByParam || DEFAULT_SORT_BY;
-  const sortOrder = sortOrderParam === "asc" || sortOrderParam === "desc" ? sortOrderParam : (sortByParam ? "asc" : DEFAULT_SORT_ORDER);
+  const [tableState, setTableState] = useState(() => getTableStateFromParams(searchParams));
+  const { sortBy, sortOrder, tableView, viewMode } = tableState;
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
-  const [tableView, setTableView] = useState("model");
-  const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
   const isInitialLoad = useRef(true);
@@ -314,15 +324,16 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   }, []);
 
   const toggleSort = useCallback((tableType, field) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (params.get("sortBy") === field) {
-      params.set("sortOrder", params.get("sortOrder") === "asc" ? "desc" : "asc");
-    } else {
-      params.set("sortBy", field);
-      params.set("sortOrder", "asc");
-    }
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [searchParams, router]);
+    setTableState((prev) => ({
+      ...prev,
+      sortBy: field,
+      sortOrder: prev.sortBy === field && prev.sortOrder === "asc" ? "desc" : "asc",
+    }));
+  }, []);
+
+  const updateTableSetting = useCallback((key, value) => {
+    setTableState((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
   // Compute active table data
   const activeTableConfig = useMemo(() => {
@@ -523,7 +534,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <select
             value={tableView}
-            onChange={(e) => setTableView(e.target.value)}
+            onChange={(e) => updateTableSetting("tableView", e.target.value)}
             className="w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-main focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
             style={{ colorScheme: 'auto' }}
           >
@@ -533,13 +544,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           </select>
           <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex">
             <button
-              onClick={() => setViewMode("costs")}
+              onClick={() => updateTableSetting("viewMode", "costs")}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "costs" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Costs
             </button>
             <button
-              onClick={() => setViewMode("tokens")}
+              onClick={() => updateTableSetting("viewMode", "tokens")}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Tokens
