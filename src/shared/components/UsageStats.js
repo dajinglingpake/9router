@@ -208,7 +208,7 @@ function getTableStateFromParams(params) {
   return {
     sortBy: params.get("sortBy") || DEFAULT_SORT_BY,
     sortOrder: sortOrderParam === "asc" || sortOrderParam === "desc" ? sortOrderParam : DEFAULT_SORT_ORDER,
-    tableView: TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "model",
+    tableView: TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "apiKey",
     viewMode: VIEW_MODE_VALUES.has(viewModeParam) ? viewModeParam : "costs",
   };
 }
