@@ -74,3 +74,6 @@ scripts/upgrade-remote-9router.local.env
 scripts/agSniffer/*
 gitbooks/*
 gitbook/README.md
+
+# Refactor backup reference (do not bundle/lint)
+open-sse.old/

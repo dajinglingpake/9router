@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { FREE_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
 
 // Keep providers without serviceKinds (default LLM) or with "llm" in serviceKinds
@@ -37,32 +37,6 @@ function TimeAgo({ timestamp }) {
   return <>{timeAgo(timestamp)}</>;
 }
 
-function AliasInput({ clientIp, value, onSave }) {
-  const [draft, setDraft] = useState(value || "");
-
-  const save = useCallback(() => {
-    const next = draft.trim();
-    if (clientIp && clientIp !== "unknown" && next !== (value || "")) {
-      onSave(clientIp, next);
-    }
-  }, [clientIp, draft, onSave, value]);
-
-  return (
-    <input
-      type="text"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={save}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-      placeholder="Alias"
-      disabled={!clientIp || clientIp === "unknown"}
-      className="h-8 w-36 rounded-md border border-border bg-surface px-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50"
-    />
-  );
-}
-
 function RecentRequests({ requests = [] }) {
   return (
     <Card className="flex min-w-0 flex-col overflow-hidden" padding="sm" style={{ height: 480 }}>
@@ -75,12 +49,11 @@ function RecentRequests({ requests = [] }) {
         <div className="flex-1 flex items-center justify-center text-text-muted text-sm">No requests yet.</div>
       ) : (
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full min-w-[360px] border-collapse text-xs">
+          <table className="w-full min-w-[300px] border-collapse text-xs">
             <thead className="sticky top-0 bg-bg z-10">
               <tr className="border-b border-border">
                 <th className="py-1.5 text-left font-semibold text-text-muted w-2"></th>
                 <th className="py-1.5 text-left font-semibold text-text-muted">Model</th>
-                <th className="py-1.5 text-left font-semibold text-text-muted">IP</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted whitespace-nowrap">In / Out</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted">When</th>
               </tr>
@@ -94,7 +67,6 @@ function RecentRequests({ requests = [] }) {
                       <span className={`block w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-error"}`} />
                     </td>
                     <td className="py-1.5 font-mono truncate max-w-[120px]" title={r.model}>{r.model}</td>
-                    <td className="py-1.5 font-mono truncate max-w-[90px] text-text-muted" title={r.clientIp || "unknown"}>{r.clientIp || "unknown"}</td>
                     <td className="py-1.5 text-right whitespace-nowrap">
                       <span className="text-primary">{fmt(r.promptTokens)}↑</span>
                       {" "}
@@ -139,7 +111,6 @@ function getGroupKey(item, keyField) {
     case "accountName": return item.accountName || `Account ${item.connectionId?.slice(0, 8)}...` || "Unknown Account";
     case "keyName": return item.keyName || "Unknown Key";
     case "endpoint": return item.endpoint || "Unknown Endpoint";
-    case "clientIp": return item.clientIp || "Unknown IP";
     default: return item[keyField] || "Unknown";
   }
 }
@@ -181,24 +152,14 @@ const MODEL_COLUMNS = [
 ];
 
 const ACCOUNT_COLUMNS = [
-  { field: "accountName", label: "Account" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
+  { field: "accountName", label: "Account" },
   { field: "requests", label: "Requests", align: "right" },
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
 
 const API_KEY_COLUMNS = [
-  { field: "keyName", label: "API Key Name" },
-  { field: "rawModel", label: "Model" },
-  { field: "provider", label: "Provider" },
-  { field: "requests", label: "Requests", align: "right" },
-  { field: "lastUsed", label: "Last Used", align: "right" },
-];
-
-const CLIENT_IP_COLUMNS = [
-  { field: "clientIp", label: "Client IP" },
-  { field: "clientAlias", label: "Alias" },
   { field: "keyName", label: "API Key Name" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
@@ -218,23 +179,11 @@ const TABLE_OPTIONS = [
   { value: "model", label: "Usage by Model" },
   { value: "account", label: "Usage by Account" },
   { value: "apiKey", label: "Usage by API Key" },
-  { value: "clientIp", label: "Usage by IP" },
   { value: "endpoint", label: "Usage by Endpoint" },
 ];
 
-const TABLE_VIEW_VALUES = new Set(TABLE_OPTIONS.map((option) => option.value));
-const VIEW_MODE_VALUES = new Set(["costs", "tokens"]);
-
-function getTableStateFromParams(params) {
-  const tableViewParam = params.get("tableView");
-  const viewModeParam = params.get("viewMode");
-  return {
-    sortBy: params.get("sortBy") || "rawModel",
-    sortOrder: params.get("sortOrder") === "desc" ? "desc" : "asc",
-    tableView: TABLE_VIEW_VALUES.has(tableViewParam) ? tableViewParam : "apiKey",
-    viewMode: VIEW_MODE_VALUES.has(viewModeParam) ? viewModeParam : "costs",
-  };
-}
+const DEFAULT_SORT_BY = "usageShare";
+const DEFAULT_SORT_ORDER = "desc";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -245,14 +194,19 @@ const PERIODS = [
 ];
 
 export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false } = {}) {
+  const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [tableState, setTableState] = useState(() => getTableStateFromParams(searchParams));
-  const { sortBy, sortOrder, tableView, viewMode } = tableState;
+  const sortByParam = searchParams.get("sortBy");
+  const sortOrderParam = searchParams.get("sortOrder");
+  const sortBy = sortByParam || DEFAULT_SORT_BY;
+  const sortOrder = sortOrderParam === "asc" || sortOrderParam === "desc" ? sortOrderParam : (sortByParam ? "asc" : DEFAULT_SORT_ORDER);
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
+  const [tableView, setTableView] = useState("model");
+  const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
   const [periodLocal, setPeriodLocal] = useState("today");
   const isInitialLoad = useRef(true);
@@ -260,7 +214,41 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
-  const loadStats = useCallback(() => {
+  // Fetch connected providers once, deduplicate by provider type
+  // Always include noAuth free providers (e.g. opencode) regardless of connections
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/providers").then((r) => r.ok ? r.json() : null),
+      fetch("/api/provider-nodes").then((r) => r.ok ? r.json() : null),
+    ])
+      .then(([d, nodesData]) => {
+        // Build node name lookup for custom providers
+        const nodeNameMap = {};
+        for (const node of (nodesData?.nodes || [])) {
+          nodeNameMap[node.id] = node.name;
+        }
+        const seen = new Set();
+        const unique = (d?.connections || []).filter((c) => {
+          if (c.isActive === false) return false;
+          if (!isLLMProvider(c.provider)) return false;
+          if (seen.has(c.provider)) return false;
+          seen.add(c.provider);
+          return true;
+        }).map((c) => ({
+          ...c,
+          nodeName: nodeNameMap[c.provider] || null,
+        }));
+        const noAuthProviders = Object.values(FREE_PROVIDERS)
+          .filter((p) => p.noAuth && !seen.has(p.id) && isLLMProvider(p.id))
+          .map((p) => ({ provider: p.id, name: p.name }));
+        setProviders([...unique, ...noAuthProviders]);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch filtered stats via REST when period changes
+  useEffect(() => {
+    // First load: show full spinner; subsequent: show subtle fetching indicator
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
       setLoading(true);
@@ -268,7 +256,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       setFetching(true);
     }
 
-    return fetch(`/api/usage/stats?period=${period}`)
+    fetch(`/api/usage/stats?period=${period}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) {
@@ -282,33 +270,6 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         setFetching(false);
       });
   }, [period]);
-
-  // Fetch connected providers once, deduplicate by provider type
-  // Always include noAuth free providers (e.g. opencode) regardless of connections
-  useEffect(() => {
-    fetch("/api/providers")
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => {
-        const seen = new Set();
-        const unique = (d?.connections || []).filter((c) => {
-          if (c.isActive === false) return false;
-          if (!isLLMProvider(c.provider)) return false;
-          if (seen.has(c.provider)) return false;
-          seen.add(c.provider);
-          return true;
-        });
-        const noAuthProviders = Object.values(FREE_PROVIDERS)
-          .filter((p) => p.noAuth && !seen.has(p.id) && isLLMProvider(p.id))
-          .map((p) => ({ provider: p.id, name: p.name }));
-        setProviders([...unique, ...noAuthProviders]);
-      })
-      .catch(() => {});
-  }, []);
-
-  // Fetch filtered stats via REST when period changes
-  useEffect(() => {
-    loadStats();
-  }, [loadStats]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests only
   useEffect(() => {
@@ -340,27 +301,15 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   }, []);
 
   const toggleSort = useCallback((tableType, field) => {
-    setTableState((prev) => {
-      return {
-        ...prev,
-        sortBy: field,
-        sortOrder: prev.sortBy === field && prev.sortOrder === "asc" ? "desc" : "asc",
-      };
-    });
-  }, []);
-
-  const updateTableSetting = useCallback((key, value) => {
-    setTableState((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
-  const saveClientIpAlias = useCallback(async (clientIp, alias) => {
-    const res = await fetch("/api/usage/client-ip-aliases", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ip: clientIp, alias }),
-    });
-    if (res.ok) await loadStats();
-  }, [loadStats]);
+    const params = new URLSearchParams(searchParams.toString());
+    if (params.get("sortBy") === field) {
+      params.set("sortOrder", params.get("sortOrder") === "asc" ? "desc" : "asc");
+    } else {
+      params.set("sortBy", field);
+      params.set("sortOrder", "asc");
+    }
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }, [searchParams, router]);
 
   // Compute active table data
   const activeTableConfig = useMemo(() => {
@@ -450,35 +399,6 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           ),
         };
       }
-      case "clientIp": {
-        return {
-          columns: CLIENT_IP_COLUMNS,
-          groupedData: groupDataByKey(sortData(stats.byClientIp, {}, sortBy, sortOrder, viewMode), "clientIp"),
-          storageKey: "usage-stats:expanded-client-ips",
-          emptyMessage: "No IP usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
-          renderDetailCells: (item) => (
-            <>
-              <td className="px-6 py-3 font-mono text-sm font-medium">{item.clientIp || "unknown"}</td>
-              <td className="px-6 py-3"><AliasInput key={`${item.clientIp || "unknown"}:${item.clientAlias || ""}`} clientIp={item.clientIp} value={item.clientAlias} onSave={saveClientIpAlias} /></td>
-              <td className="px-6 py-3 font-medium">{item.keyName}</td>
-              <td className="px-6 py-3">{item.rawModel}</td>
-              <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
-              <td className="px-6 py-3 text-right">{fmt(item.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(item.lastUsed)}</td>
-            </>
-          ),
-        };
-      }
       case "endpoint":
       default: {
         return {
@@ -506,7 +426,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         };
       }
     }
-  }, [stats, tableView, sortBy, sortOrder, viewMode, saveClientIpAlias]);
+  }, [stats, tableView, sortBy, sortOrder, viewMode]);
 
   if (!stats && !loading) return <div className="text-text-muted">Failed to load usage statistics.</div>;
 
@@ -563,7 +483,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <select
             value={tableView}
-            onChange={(e) => updateTableSetting("tableView", e.target.value)}
+            onChange={(e) => setTableView(e.target.value)}
             className="w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-main focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
             style={{ colorScheme: 'auto' }}
           >
@@ -573,13 +493,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           </select>
           <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex">
             <button
-              onClick={() => updateTableSetting("viewMode", "costs")}
+              onClick={() => setViewMode("costs")}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "costs" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Costs
             </button>
             <button
-              onClick={() => updateTableSetting("viewMode", "tokens")}
+              onClick={() => setViewMode("tokens")}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Tokens
@@ -588,7 +508,6 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         </div>
         {loading ? spinner : activeTableConfig && (
           <UsageTable
-            key={`${activeTableConfig.storageKey}:${viewMode}:${sortBy}:${sortOrder}`}
             title=""
             columns={activeTableConfig.columns}
             groupedData={activeTableConfig.groupedData}

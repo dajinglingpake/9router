@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Button, Toggle, Input } from "@/shared/components";
-import { ConfirmModal } from "@/shared/components/Modal";
+import Modal, { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
 import { useTheme } from "@/shared/hooks/useTheme";
 import { cn } from "@/shared/utils/cn";
@@ -20,10 +20,15 @@ function getLocaleFromCookie() {
   return normalizeLocale(value);
 }
 
+function getOidcRedirectUri() {
+  if (typeof window === "undefined") return "/api/auth/oidc/callback";
+  return `${window.location.origin}/api/auth/oidc/callback`;
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const { theme, setTheme, isDark } = useTheme();
-  const [locale, setLocale] = useState("en");
+  const [locale, setLocale] = useState(() => getLocaleFromCookie());
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
@@ -34,17 +39,8 @@ export default function ProfilePage() {
   const [passLoading, setPassLoading] = useState(false);
   const [dbLoading, setDbLoading] = useState(false);
   const [dbStatus, setDbStatus] = useState({ type: "", message: "" });
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditStatus, setAuditStatus] = useState({ type: "", message: "" });
-  const [auditFilters, setAuditFilters] = useState({
-    before: "",
-    after: "",
-    provider: "",
-    model: "",
-    connectionId: "",
-    clientIp: "",
-    status: "",
-  });
+  const [dbAuth, setDbAuth] = useState({ open: false, mode: "", password: "" });
+  const pendingImportRef = useRef(null);
   const [oidcForm, setOidcForm] = useState({
     authMode: "password",
     oidcIssuerUrl: "",
@@ -57,7 +53,7 @@ export default function ProfilePage() {
   const [oidcLoading, setOidcLoading] = useState(false);
   const [oidcTestLoading, setOidcTestLoading] = useState(false);
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
-  const [oidcRedirectUri, setOidcRedirectUri] = useState("/api/auth/oidc/callback");
+  const [oidcRedirectUri, setOidcRedirectUri] = useState(() => getOidcRedirectUri());
   const [oidcExpanded, setOidcExpanded] = useState(false);
   const importFileRef = useRef(null);
   const [proxyForm, setProxyForm] = useState({
@@ -70,7 +66,7 @@ export default function ProfilePage() {
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
 
   useEffect(() => {
-    setLocale(getLocaleFromCookie());
+    queueMicrotask(() => setLocale(getLocaleFromCookie()));
   }, [langOpen]);
 
   useEffect(() => {
@@ -101,9 +97,7 @@ export default function ProfilePage() {
   }, []);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOidcRedirectUri(`${window.location.origin}/api/auth/oidc/callback`);
-    }
+    queueMicrotask(() => setOidcRedirectUri(getOidcRedirectUri()));
   }, []);
 
   const updateOutboundProxy = async (e) => {
@@ -482,11 +476,13 @@ export default function ProfilePage() {
     }
   };
 
-  const handleExportDatabase = async () => {
+  const handleExportDatabase = async (password) => {
     setDbLoading(true);
     setDbStatus({ type: "", message: "" });
     try {
-      const res = await fetch("/api/settings/database");
+      const res = await fetch("/api/settings/database", {
+        headers: { "x-9r-password": password },
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to export database");
@@ -513,13 +509,19 @@ export default function ProfilePage() {
     }
   };
 
-  const handleImportDatabase = async (event) => {
+  const handleImportDatabase = (event) => {
     const file = event.target.files?.[0];
+    if (importFileRef.current) importFileRef.current.value = "";
     if (!file) return;
-
-    setDbLoading(true);
+    pendingImportRef.current = file;
     setDbStatus({ type: "", message: "" });
+    setDbAuth({ open: true, mode: "import", password: "" });
+  };
 
+  const runImportDatabase = async (password) => {
+    const file = pendingImportRef.current;
+    if (!file) return;
+    setDbLoading(true);
     try {
       const raw = await file.text();
       const payload = JSON.parse(raw);
@@ -527,7 +529,7 @@ export default function ProfilePage() {
       const res = await fetch("/api/settings/database", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, password }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -540,63 +542,17 @@ export default function ProfilePage() {
     } catch (err) {
       setDbStatus({ type: "error", message: err.message || "Invalid backup file" });
     } finally {
-      if (importFileRef.current) {
-        importFileRef.current.value = "";
-      }
+      pendingImportRef.current = null;
       setDbLoading(false);
     }
   };
 
-  const updateAuditFilter = (field, value) => {
-    setAuditFilters((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const buildAuditFilterPayload = () => {
-    const payload = {};
-    for (const [key, value] of Object.entries(auditFilters)) {
-      const trimmed = String(value || "").trim();
-      if (trimmed) payload[key] = trimmed;
-    }
-    return payload;
-  };
-
-  const clearAuditLogs = async (all = false) => {
-    const payload = all ? { all: true } : buildAuditFilterPayload();
-    if (!all && Object.keys(payload).length === 0) {
-      setAuditStatus({ type: "error", message: "Set at least one filter, or use Clear all audit logs." });
-      return;
-    }
-
-    const confirmed = window.confirm(
-      all
-        ? "Clear all audit logs? This removes usage history, daily usage aggregates, and request details."
-        : "Clear audit logs matching the current filters? This cannot be undone."
-    );
-    if (!confirmed) return;
-
-    setAuditLoading(true);
-    setAuditStatus({ type: "", message: "" });
-
-    try {
-      const res = await fetch("/api/settings/audit-logs", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Failed to clear audit logs");
-
-      const usageCount = data.deleted?.usageHistory || 0;
-      const detailCount = data.deleted?.requestDetails || 0;
-      setAuditStatus({
-        type: "success",
-        message: `Audit logs cleared: ${usageCount} usage records, ${detailCount} request details.`,
-      });
-    } catch (err) {
-      setAuditStatus({ type: "error", message: err.message || "Failed to clear audit logs" });
-    } finally {
-      setAuditLoading(false);
-    }
+  // Confirm password modal, then run export or import.
+  const handleDbAuthConfirm = async () => {
+    const { mode, password } = dbAuth;
+    setDbAuth({ open: false, mode: "", password: "" });
+    if (mode === "export") await handleExportDatabase(password);
+    else if (mode === "import") await runImportDatabase(password);
   };
 
   const observabilityEnabled = settings.enableObservability === true;
@@ -671,7 +627,7 @@ export default function ProfilePage() {
               <Button
                 variant="secondary"
                 icon="download"
-                onClick={handleExportDatabase}
+                onClick={() => setDbAuth({ open: true, mode: "export", password: "" })}
                 loading={dbLoading}
                 className="w-full sm:w-auto"
               >
@@ -699,91 +655,6 @@ export default function ProfilePage() {
                 {dbStatus.message}
               </p>
             )}
-            <div className="flex flex-col gap-3 pt-4 border-t border-border">
-              <div>
-                <p className="font-medium text-sm sm:text-base">Audit Logs</p>
-                <p className="text-xs sm:text-sm text-text-muted">
-                  Clear usage history, daily aggregates, and request details.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Input
-                  type="date"
-                  label="Before"
-                  value={auditFilters.before}
-                  onChange={(e) => updateAuditFilter("before", e.target.value)}
-                  disabled={auditLoading}
-                />
-                <Input
-                  type="date"
-                  label="After"
-                  value={auditFilters.after}
-                  onChange={(e) => updateAuditFilter("after", e.target.value)}
-                  disabled={auditLoading}
-                />
-                <Input
-                  label="Provider"
-                  placeholder="openai"
-                  value={auditFilters.provider}
-                  onChange={(e) => updateAuditFilter("provider", e.target.value)}
-                  disabled={auditLoading}
-                />
-                <Input
-                  label="Model"
-                  placeholder="gpt-5"
-                  value={auditFilters.model}
-                  onChange={(e) => updateAuditFilter("model", e.target.value)}
-                  disabled={auditLoading}
-                />
-                <Input
-                  label="Client IP"
-                  placeholder="192.168.1.112"
-                  value={auditFilters.clientIp}
-                  onChange={(e) => updateAuditFilter("clientIp", e.target.value)}
-                  disabled={auditLoading}
-                />
-                <Input
-                  label="Status"
-                  placeholder="ok"
-                  value={auditFilters.status}
-                  onChange={(e) => updateAuditFilter("status", e.target.value)}
-                  disabled={auditLoading}
-                />
-                <Input
-                  label="Connection ID"
-                  placeholder="provider connection id"
-                  value={auditFilters.connectionId}
-                  onChange={(e) => updateAuditFilter("connectionId", e.target.value)}
-                  disabled={auditLoading}
-                  className="sm:col-span-2"
-                />
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Button
-                  variant="secondary"
-                  icon="filter_alt_off"
-                  onClick={() => clearAuditLogs(false)}
-                  loading={auditLoading}
-                  className="w-full sm:w-auto"
-                >
-                  Clear matching logs
-                </Button>
-                <Button
-                  variant="danger"
-                  icon="delete_forever"
-                  onClick={() => clearAuditLogs(true)}
-                  loading={auditLoading}
-                  className="w-full sm:w-auto"
-                >
-                  Clear all audit logs
-                </Button>
-              </div>
-              {auditStatus.message && (
-                <p className={`text-sm ${auditStatus.type === "error" ? "text-red-500" : "text-green-600 dark:text-green-400"}`}>
-                  {auditStatus.message}
-                </p>
-              )}
-            </div>
           </div>
         </Card>
 
@@ -1283,6 +1154,35 @@ export default function ProfilePage() {
         variant="danger"
         loading={isShuttingDown}
       />
+
+      <Modal
+        isOpen={dbAuth.open}
+        onClose={() => setDbAuth({ open: false, mode: "", password: "" })}
+        title="Confirm Password"
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDbAuth({ open: false, mode: "", password: "" })} disabled={dbLoading}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={handleDbAuthConfirm} loading={dbLoading} disabled={!dbAuth.password}>
+              Confirm
+            </Button>
+          </>
+        }
+      >
+        <p className="text-text-muted mb-3 text-sm">
+          Enter your current password to {dbAuth.mode === "export" ? "export" : "import"} the database.
+        </p>
+        <Input
+          type="password"
+          value={dbAuth.password}
+          onChange={(e) => setDbAuth((s) => ({ ...s, password: e.target.value }))}
+          onKeyDown={(e) => { if (e.key === "Enter" && dbAuth.password) handleDbAuthConfirm(); }}
+          placeholder="Current password"
+          autoFocus
+        />
+      </Modal>
     </div>
   );
 }

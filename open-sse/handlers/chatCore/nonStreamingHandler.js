@@ -38,6 +38,12 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
             function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) }
           });
         }
+        // Handle inline image data (from image generation models)
+        const inlineData = part.inlineData || part.inline_data;
+        if (inlineData?.data) {
+          const mimeType = inlineData.mimeType || inlineData.mime_type || "image/png";
+          textContent += `\n![image](data:${mimeType};base64,${inlineData.data})\n`;
+        }
       }
     }
 
@@ -77,7 +83,12 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
     // missing/null (e.g. M3 with max_tokens:1 spends the budget on thinking
     // and returns `content: null`). Returning the raw body would leave the
     // OpenAI client without a `choices` array and surface as a UI test error.
-    if (responseBody.content && !Array.isArray(responseBody.content)) return responseBody;
+    // Early return if the response is already in OpenAI format (has choices array)
+    // or if it has content as a non-array value (likely a different non-Claude format).
+    // Some providers (e.g. xiaomi-tokenplan) return OpenAI-format responses even when
+    // the request was translated to Claude format — the targetFormat is Claude but the
+    // actual response is OpenAI-native and needs no further translation.
+    if (responseBody.choices || (responseBody.content && !Array.isArray(responseBody.content))) return responseBody;
 
     let textContent = "", thinkingContent = "";
     const toolCalls = [];
@@ -196,12 +207,12 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   // Strip reasoning_content except on DeepSeek tool-call turns. DeepSeek thinking
   // mode requires those assistant messages to be replayed with reasoning_content.
-  // Other providers/models keep the old behavior for client compatibility.
+  // Also preserve reasoning-only outputs where content is empty.
   if (translatedResponse?.choices) {
     for (const choice of translatedResponse.choices) {
       const message = choice?.message;
       const shouldPreserve = shouldPreserveReasoningContent({ provider, model, message });
-      if (message && !shouldPreserve) delete message.reasoning_content;
+      if (message?.reasoning_content && message.content && !shouldPreserve) delete message.reasoning_content;
     }
   }
 
