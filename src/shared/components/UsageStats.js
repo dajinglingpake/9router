@@ -49,11 +49,12 @@ function RecentRequests({ requests = [] }) {
         <div className="flex-1 flex items-center justify-center text-text-muted text-sm">No requests yet.</div>
       ) : (
         <div className="flex-1 overflow-y-auto">
-          <table className="w-full min-w-[300px] border-collapse text-xs">
+          <table className="w-full min-w-[360px] border-collapse text-xs">
             <thead className="sticky top-0 bg-bg z-10">
               <tr className="border-b border-border">
                 <th className="py-1.5 text-left font-semibold text-text-muted w-2"></th>
                 <th className="py-1.5 text-left font-semibold text-text-muted">Model</th>
+                <th className="py-1.5 text-left font-semibold text-text-muted">IP</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted whitespace-nowrap">In / Out</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted">When</th>
               </tr>
@@ -67,6 +68,7 @@ function RecentRequests({ requests = [] }) {
                       <span className={`block w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-error"}`} />
                     </td>
                     <td className="py-1.5 font-mono truncate max-w-[120px]" title={r.model}>{r.model}</td>
+                    <td className="py-1.5 font-mono truncate max-w-[90px] text-text-muted" title={r.clientIp || "unknown"}>{r.clientIp || "unknown"}</td>
                     <td className="py-1.5 text-right whitespace-nowrap">
                       <span className="text-primary">{fmt(r.promptTokens)}↑</span>
                       {" "}
@@ -111,6 +113,7 @@ function getGroupKey(item, keyField) {
     case "accountName": return item.accountName || `Account ${item.connectionId?.slice(0, 8)}...` || "Unknown Account";
     case "keyName": return item.keyName || "Unknown Key";
     case "endpoint": return item.endpoint || "Unknown Endpoint";
+    case "clientIp": return item.clientIp || "Unknown IP";
     default: return item[keyField] || "Unknown";
   }
 }
@@ -167,6 +170,15 @@ const API_KEY_COLUMNS = [
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
 
+const CLIENT_IP_COLUMNS = [
+  { field: "clientIp", label: "Client IP" },
+  { field: "keyName", label: "API Key Name" },
+  { field: "rawModel", label: "Model" },
+  { field: "provider", label: "Provider" },
+  { field: "requests", label: "Requests", align: "right" },
+  { field: "lastUsed", label: "Last Used", align: "right" },
+];
+
 const ENDPOINT_COLUMNS = [
   { field: "endpoint", label: "Endpoint" },
   { field: "rawModel", label: "Model" },
@@ -179,6 +191,7 @@ const TABLE_OPTIONS = [
   { value: "model", label: "Usage by Model" },
   { value: "account", label: "Usage by Account" },
   { value: "apiKey", label: "Usage by API Key" },
+  { value: "clientIp", label: "Usage by IP" },
   { value: "endpoint", label: "Usage by Endpoint" },
 ];
 
@@ -390,6 +403,33 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           ),
           renderDetailCells: (item) => (
             <>
+              <td className="px-6 py-3 font-medium">{item.keyName}</td>
+              <td className="px-6 py-3">{item.rawModel}</td>
+              <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
+              <td className="px-6 py-3 text-right">{fmt(item.requests)}</td>
+              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(item.lastUsed)}</td>
+            </>
+          ),
+        };
+      }
+      case "clientIp": {
+        return {
+          columns: CLIENT_IP_COLUMNS,
+          groupedData: groupDataByKey(sortData(stats.byClientIp, {}, sortBy, sortOrder, viewMode), "clientIp"),
+          storageKey: "usage-stats:expanded-client-ips",
+          emptyMessage: "No IP usage recorded yet.",
+          renderSummaryCells: (group) => (
+            <>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+            </>
+          ),
+          renderDetailCells: (item) => (
+            <>
+              <td className="px-6 py-3 font-mono text-sm font-medium">{item.clientIp || "unknown"}</td>
               <td className="px-6 py-3 font-medium">{item.keyName}</td>
               <td className="px-6 py-3">{item.rawModel}</td>
               <td className="px-6 py-3"><Badge variant="neutral" size="sm">{item.provider}</Badge></td>
