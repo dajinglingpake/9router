@@ -452,7 +452,8 @@ export async function getUsageStats(period = "all", filter = {}) {
     }
   }
 
-  const useDailySummary = !apiKeyFilter && period !== "24h" && period !== "today";
+  // Compute usage ranges from history so table totals stay aligned with request details.
+  const useDailySummary = false;
 
   if (useDailySummary) {
     const periodDays = { "7d": 7, "30d": 30, "60d": 60 };

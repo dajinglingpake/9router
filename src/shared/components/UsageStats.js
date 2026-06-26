@@ -235,6 +235,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [periodLocal, setPeriodLocal] = useState("today");
   const isInitialLoad = useRef(true);
   const hasLoadedStats = useRef(false);
+  const statsRequestId = useRef(0);
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
@@ -272,27 +273,38 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
-    // First load: show full spinner; subsequent: show subtle fetching indicator
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
-      setLoading(true);
-    } else {
-      setFetching(true);
-    }
+    const requestId = statsRequestId.current + 1;
+    statsRequestId.current = requestId;
+    const controller = new AbortController();
 
-    fetch(`/api/usage/stats?period=${period}`)
+    const isFirstLoad = isInitialLoad.current;
+    isInitialLoad.current = false;
+    queueMicrotask(() => {
+      if (statsRequestId.current !== requestId) return;
+      if (!isFirstLoad) setFetching(true);
+      setLoading(true);
+      setStats(null);
+    });
+
+    fetch(`/api/usage/stats?period=${period}`, { signal: controller.signal })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (data) {
+        if (data && statsRequestId.current === requestId) {
           hasLoadedStats.current = true;
-          setStats((prev) => ({ ...prev, ...data }));
+          setStats(data);
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (err.name !== "AbortError") console.error("[USAGE STATS] fetch error:", err);
+      })
       .finally(() => {
-        setLoading(false);
-        setFetching(false);
+        if (statsRequestId.current === requestId) {
+          setLoading(false);
+          setFetching(false);
+        }
       });
+
+    return () => controller.abort();
   }, [period]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests only
