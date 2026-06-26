@@ -90,7 +90,7 @@ function sortData(dataMap, pendingMap = {}, sortBy, sortOrder, viewMode = "costs
   return Object.entries(dataMap || {})
     .map(([key, data]) => {
       const totalTokens = (data.promptTokens || 0) + (data.completionTokens || 0);
-      const totalCost = data.cost || 0;
+      const totalCost = data.totalCost ?? data.cost ?? 0;
       const inputCost = totalTokens > 0 ? (data.promptTokens || 0) * (totalCost / totalTokens) : 0;
       const outputCost = totalTokens > 0 ? (data.completionTokens || 0) * (totalCost / totalTokens) : 0;
       const usageShare = viewMode === "tokens" ? totalTokens : totalCost;
@@ -126,7 +126,7 @@ function groupDataByKey(data, keyField) {
     if (!groups[gk]) {
       groups[gk] = {
         groupKey: gk,
-        summary: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, inputCost: 0, outputCost: 0, lastUsed: null, pending: 0 },
+        summary: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, totalCost: 0, inputCost: 0, outputCost: 0, lastUsed: null, pending: 0 },
         items: [],
       };
     }
@@ -136,6 +136,7 @@ function groupDataByKey(data, keyField) {
     s.completionTokens += item.completionTokens || 0;
     s.totalTokens += item.totalTokens || 0;
     s.cost += item.cost || 0;
+    s.totalCost += item.totalCost ?? item.cost ?? 0;
     s.inputCost += item.inputCost || 0;
     s.outputCost += item.outputCost || 0;
     s.pending += item.pending || 0;

@@ -81,7 +81,7 @@ function ValueCells({ item, viewMode, isSummary = false }) {
         {isSummary && item.outputCost === undefined ? "—" : fmtCost(item.outputCost)}
       </td>
       <td className="px-6 py-3 text-right font-medium text-warning">
-        {fmtCost(item.totalCost || item.cost)}
+        {fmtCost(item.totalCost ?? item.cost)}
       </td>
     </>
   );
@@ -225,7 +225,7 @@ export default function UsageTable({
               const isExpandable = group.items.length > 1;
 
               return (
-              <Fragment key={group.groupKey}>
+              <Fragment key={`${viewMode}:${group.groupKey}`}>
                 {/* Group summary row */}
                 <tr
                   className={`group-summary transition-colors ${isExpandable ? "cursor-pointer hover:bg-bg-subtle/50" : "hover:bg-bg-subtle/20"}`}
@@ -252,7 +252,7 @@ export default function UsageTable({
                 {/* Detail rows */}
                 {isExpandable && expanded.has(group.groupKey) && group.items.map((item) => (
                   <tr
-                    key={`detail-${item.key}`}
+                    key={`${viewMode}:detail-${item.key}`}
                     className="group-detail hover:bg-bg-subtle/20 transition-colors"
                   >
                     {renderDetailCells(item)}
