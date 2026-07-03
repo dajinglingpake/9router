@@ -11,6 +11,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: production
+      TZ: "${TZ:-Asia/Shanghai}"
       PORT: "${PORT:-20128}"
       HOSTNAME: 0.0.0.0
       DATA_DIR: /app/data
@@ -36,6 +37,7 @@ services:
       NO_PROXY: "${CONTAINER_NO_PROXY:-localhost,127.0.0.1,host.docker.internal}"
       no_proxy: "${CONTAINER_NO_PROXY:-localhost,127.0.0.1,host.docker.internal}"
     volumes:
+      - /etc/localtime:/etc/localtime:ro
       - ${STANDALONE_DIR:-./.next/standalone}:/app:ro
       - ${HOST_DATA_DIR:-${DATA_DIR:-./data}}:/app/data
     healthcheck:
