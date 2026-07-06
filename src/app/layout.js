@@ -1,4 +1,4 @@
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import "material-symbols/outlined.css";
 import "./globals.css";
@@ -11,9 +11,11 @@ import { RuntimeI18nProvider } from "@/i18n/RuntimeI18nProvider";
 // Hook console immediately at module load time (server-side only, runs once)
 initConsoleLogCapture();
 
-const inter = Inter({
-  subsets: ["latin"],
+const inter = localFont({
+  src: "./fonts/InterVariable.woff2",
+  weight: "100 900",
   variable: "--font-inter",
+  display: "swap",
 });
 
 export const metadata = {

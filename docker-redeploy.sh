@@ -94,9 +94,10 @@ cp -a "$ROOT/public" "$ROOT/.next/standalone/public"
 cp -a "$ROOT/.next/static" "$ROOT/.next/standalone/.next/static"
 
 echo "[4/6] Stopping legacy bare 9router process if present..."
-pids="$(ps -ef | awk '/9router\/\.next\/standalone|\.next\/standalone\/server\.js|next-server/ && !/awk/ {print $2}')"
+current_uid="$(id -u)"
+pids="$(ps -eo pid=,uid=,args= | awk -v uid="$current_uid" -v root="$ROOT" '($2 == uid) && (index($0, root "/.next/standalone") || index($0, root "/.next/standalone/server.js")) {print $1}')"
 if [ -n "$pids" ]; then
-  kill $pids
+  kill $pids 2>/dev/null || true
   sleep 1
 fi
 

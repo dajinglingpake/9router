@@ -3,8 +3,8 @@ services:
     image: ${NODE_IMAGE:-node:22-alpine}
     container_name: ${CONTAINER_NAME:-9router}
     restart: unless-stopped
-    working_dir: /app
-    command: ["node", "server.js"]
+    working_dir: /
+    command: ["node", "/app/server.js"]
     ports:
       - "${BIND_HOST:-0.0.0.0}:${PORT:-20128}:${PORT:-20128}"
     extra_hosts:
@@ -28,12 +28,6 @@ services:
       NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL:-http://localhost:${PORT:-20128}}"
       NEXT_PUBLIC_CLOUD_URL: "${NEXT_PUBLIC_CLOUD_URL:-https://9router.com}"
       NEXT_TELEMETRY_DISABLED: "1"
-      HTTP_PROXY: "${CONTAINER_HTTP_PROXY:-http://host.docker.internal:7890}"
-      HTTPS_PROXY: "${CONTAINER_HTTPS_PROXY:-http://host.docker.internal:7890}"
-      ALL_PROXY: "${CONTAINER_ALL_PROXY:-http://host.docker.internal:7890}"
-      http_proxy: "${CONTAINER_HTTP_PROXY:-http://host.docker.internal:7890}"
-      https_proxy: "${CONTAINER_HTTPS_PROXY:-http://host.docker.internal:7890}"
-      all_proxy: "${CONTAINER_ALL_PROXY:-http://host.docker.internal:7890}"
       NO_PROXY: "${CONTAINER_NO_PROXY:-localhost,127.0.0.1,host.docker.internal}"
       no_proxy: "${CONTAINER_NO_PROXY:-localhost,127.0.0.1,host.docker.internal}"
     volumes:
