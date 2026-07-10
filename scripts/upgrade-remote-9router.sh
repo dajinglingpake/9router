@@ -19,14 +19,8 @@ REMOTE_DIR="${REMOTE_DIR:-/volume1/docker/9router}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.remote.yml}"
 CONTAINER_NAME="${CONTAINER_NAME:-9router}"
 PORT="${PORT:-20128}"
-BUILD_DATA_DIR=""
-
-cleanup() {
-  if [ -n "$BUILD_DATA_DIR" ]; then
-    rm -rf "$BUILD_DATA_DIR"
-  fi
-}
-trap cleanup EXIT
+IMAGE_NAME="${IMAGE_NAME:-9router:local}"
+BUILD_NODE_IMAGE="${BUILD_NODE_IMAGE:-node:22-bookworm-slim}"
 
 SSH_OPTIONS=(
   -o StrictHostKeyChecking=no
@@ -73,22 +67,10 @@ print_container_status() {
   sudo_remote "docker inspect $(shell_quote "$CONTAINER_NAME") --format 'container={{.Name}} status={{.State.Status}} started={{.State.StartedAt}} network={{.HostConfig.NetworkMode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}'"
 }
 
-sync_standalone() {
-  local dest="$REMOTE_DIR/.next/standalone"
-
-  sudo_remote "mkdir -p $(shell_quote "$dest") && uid=\$(id -u $(shell_quote "$REMOTE_USER")) && gid=\$(id -g $(shell_quote "$REMOTE_USER")) && chown -R \"\$uid:\$gid\" $(shell_quote "$REMOTE_DIR/.next")"
-  ssh_remote "find $(shell_quote "$dest") -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +"
-  tar \
-    --exclude './.env' \
-    --exclude './.env.*' \
-    --exclude './data' \
-    --exclude './*.sqlite' \
-    --exclude './*.sqlite-*' \
-    --exclude './*.db' \
-    --exclude './auth.json' \
-    --exclude './config.toml' \
-    -C "$ROOT/.next/standalone" \
-    -cf - . | ssh_remote "tar -C $(shell_quote "$dest") -xmf -"
+sync_compose_file() {
+  local tmp="/tmp/9router-compose-$(date +%s).yaml"
+  ssh_remote "cat > $(shell_quote "$tmp")" < "$ROOT/compose.yaml"
+  sudo_remote "mv $(shell_quote "$tmp") $(shell_quote "$REMOTE_DIR/$COMPOSE_FILE")"
 }
 
 MODE="${1:-upgrade}"
@@ -111,8 +93,7 @@ esac
 
 echo "[1/7] Checking local tools..."
 require_cmd sshpass
-require_cmd tar
-require_cmd npm
+require_cmd docker
 require_cmd curl
 require_var REMOTE_HOST
 require_var REMOTE_USER
@@ -123,27 +104,19 @@ echo "[2/7] Checking remote deployment..."
 ssh_remote "test -d $(shell_quote "$REMOTE_DIR") && test -f $(shell_quote "$REMOTE_DIR/$COMPOSE_FILE")"
 ssh_remote "grep -Eq '^[[:space:]]*network_mode:[[:space:]]*host[[:space:]]*$' $(shell_quote "$REMOTE_DIR/$COMPOSE_FILE")"
 
-echo "[3/7] Installing local dependencies..."
-if [ -f "$ROOT/package-lock.json" ]; then
-  npm ci
-else
-  npm install
-fi
+echo "[3/7] Building local Docker image..."
+docker build --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
 
-echo "[4/7] Building Next standalone output..."
-BUILD_DATA_DIR="$(mktemp -d)"
-DATA_DIR="$BUILD_DATA_DIR" npm run build
+echo "[4/7] Loading image on remote host..."
+REMOTE_IMAGE_TAR="/tmp/9router-image-$(date +%s).tar"
+docker save "$IMAGE_NAME" | ssh_remote "cat > $(shell_quote "$REMOTE_IMAGE_TAR")"
+sudo_remote "docker load -i $(shell_quote "$REMOTE_IMAGE_TAR") && rm -f $(shell_quote "$REMOTE_IMAGE_TAR")"
 
-echo "[5/7] Preparing standalone assets..."
-mkdir -p "$ROOT/.next/standalone/.next"
-rm -rf "$ROOT/.next/standalone/public" "$ROOT/.next/standalone/.next/static"
-rm -f "$ROOT/.next/standalone/.env" "$ROOT/.next/standalone/auth.json" "$ROOT/.next/standalone/config.toml"
-cp -a "$ROOT/public" "$ROOT/.next/standalone/public"
-cp -a "$ROOT/.next/static" "$ROOT/.next/standalone/.next/static"
+echo "[5/7] Updating remote compose..."
+sync_compose_file
 
-echo "[6/7] Syncing runtime files and recreating container..."
+echo "[6/7] Recreating container..."
 compose_remote "stop $(shell_quote "$CONTAINER_NAME") || true"
-sync_standalone
 compose_remote "up -d --force-recreate $(shell_quote "$CONTAINER_NAME")"
 
 echo "[7/7] Waiting for health check..."

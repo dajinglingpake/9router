@@ -48,18 +48,6 @@ EOF
   chmod 600 "$env_file"
 }
 
-run_node() {
-  docker run --rm \
-    -e HOST_UID="$(id -u)" \
-    -e HOST_GID="$(id -g)" \
-    -e HOME=/tmp \
-    -e npm_config_cache=/tmp/.npm \
-    -v "$ROOT:/workspace" \
-    -w /workspace \
-    "${NODE_IMAGE:-node:22-alpine}" \
-    sh -lc "$*"
-}
-
 RUN_ENV="$ROOT/.run/docker.env"
 ensure_runtime_env "$RUN_ENV"
 
@@ -73,27 +61,18 @@ PUBLIC_HOST="${PUBLIC_HOST:-$(detect_host_ip)}"
 PUBLIC_HOST="${PUBLIC_HOST:-localhost}"
 PUBLIC_URL="${PUBLIC_URL:-http://${PUBLIC_HOST}:${PORT}}"
 CONTAINER_NAME="${CONTAINER_NAME:-9router}"
-STANDALONE_DIR="${STANDALONE_DIR:-$ROOT/.next/standalone}"
 HOST_DATA_DIR="${HOST_DATA_DIR:-$ROOT/data}"
+IMAGE_NAME="${IMAGE_NAME:-9router:local}"
+BUILD_NODE_IMAGE="${BUILD_NODE_IMAGE:-node:22-bookworm-slim}"
 
-export PORT BIND_HOST CONTAINER_NAME STANDALONE_DIR HOST_DATA_DIR
+export PORT BIND_HOST CONTAINER_NAME HOST_DATA_DIR IMAGE_NAME
 export BASE_URL="${BASE_URL:-$PUBLIC_URL}"
 export NEXT_PUBLIC_BASE_URL="${NEXT_PUBLIC_BASE_URL:-$PUBLIC_URL}"
 
-echo "[1/6] Installing dependencies inside Docker..."
-run_node "set -e; apk add --no-cache python3 make g++ linux-headers; npm install; chown -R \"\$HOST_UID:\$HOST_GID\" node_modules package-lock.json 2>/dev/null || true"
+echo "[1/4] Building Docker image..."
+docker build --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
 
-echo "[2/6] Building Next standalone output inside Docker..."
-run_node "set -e; npm run build; chown -R \"\$HOST_UID:\$HOST_GID\" .next 2>/dev/null || true"
-
-echo "[3/6] Syncing standalone static assets..."
-mkdir -p "$ROOT/.next/standalone/.next"
-mkdir -p "$ROOT/.next/standalone/data"
-rm -rf "$ROOT/.next/standalone/public" "$ROOT/.next/standalone/.next/static"
-cp -a "$ROOT/public" "$ROOT/.next/standalone/public"
-cp -a "$ROOT/.next/static" "$ROOT/.next/standalone/.next/static"
-
-echo "[4/6] Stopping legacy bare 9router process if present..."
+echo "[2/4] Stopping legacy bare 9router process if present..."
 current_uid="$(id -u)"
 pids="$(ps -eo pid=,uid=,args= | awk -v uid="$current_uid" -v root="$ROOT" '($2 == uid) && (index($0, root "/.next/standalone") || index($0, root "/.next/standalone/server.js")) {print $1}')"
 if [ -n "$pids" ]; then
@@ -101,10 +80,10 @@ if [ -n "$pids" ]; then
   sleep 1
 fi
 
-echo "[5/6] Recreating Docker Compose service..."
+echo "[3/4] Recreating Docker Compose service..."
 docker compose --env-file "$RUN_ENV" -f "$ROOT/compose.yaml" up -d --force-recreate
 
-echo "[6/6] Waiting for health check..."
+echo "[4/4] Waiting for health check..."
 for i in $(seq 1 30); do
   if curl -fsS "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
     echo "9router is healthy: $PUBLIC_URL"

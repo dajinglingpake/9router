@@ -1,18 +1,21 @@
 # syntax=docker/dockerfile:1.7
-ARG NODE_IMAGE=node:22-alpine
+ARG NODE_IMAGE=node:22-bookworm-slim
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
 
 FROM base AS builder
 
-RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  python3 make g++ ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
-COPY package.json ./
+COPY package.json package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm \
-  npm install
+  if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATA_DIR=/tmp/9router-build-data
 RUN npm run build
 
 FROM ${NODE_IMAGE} AS runner
@@ -43,8 +46,9 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
   ln -sf /app/data-home /root/.9router 2>/dev/null || true
 
 # Fix permissions at runtime (handles mounted volumes)
-RUN apk --no-cache upgrade && apk --no-cache add su-exec && \
-  printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
+RUN apt-get update && apt-get install -y --no-install-recommends gosu ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec gosu node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 
 EXPOSE 20128
