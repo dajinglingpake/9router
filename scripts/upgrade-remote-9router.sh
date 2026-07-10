@@ -101,8 +101,7 @@ require_var REMOTE_PASS
 require_var SUDO_PASS
 
 echo "[2/7] Checking remote deployment..."
-ssh_remote "test -d $(shell_quote "$REMOTE_DIR") && test -f $(shell_quote "$REMOTE_DIR/$COMPOSE_FILE")"
-ssh_remote "grep -Eq '^[[:space:]]*network_mode:[[:space:]]*host[[:space:]]*$' $(shell_quote "$REMOTE_DIR/$COMPOSE_FILE")"
+sudo_remote "mkdir -p $(shell_quote "$REMOTE_DIR/data")"
 
 echo "[3/7] Building local Docker image..."
 docker build --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"

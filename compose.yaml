@@ -29,7 +29,7 @@ services:
       NEXT_TELEMETRY_DISABLED: "1"
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - ${HOST_DATA_DIR:-${DATA_DIR:-./data}}:/app/data
+      - ${HOST_DATA_DIR:-./data}:/app/data
     healthcheck:
       test:
         [
