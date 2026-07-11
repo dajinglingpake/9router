@@ -9,7 +9,6 @@ import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
-import { shouldPreserveReasoningContent } from "../../utils/reasoningContentInjector.js";
 
 function parseToolArguments(value) {
   if (!value) return {};
@@ -272,14 +271,14 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     translatedResponse.usage = filterUsageForFormat(addBufferToUsage(translatedResponse.usage), sourceFormat);
   }
 
-  // Strip reasoning_content from OpenAI-style choices only when content is
-  // non-empty and the provider/model does not need it replayed on tool turns.
-  // Reasoning-only outputs keep reasoning_content as their useful content.
+  // Strip reasoning_content only when content is non-empty.
+  // When content is empty (e.g. thinking models that used all tokens for reasoning),
+  // reasoning_content is the only useful output and must be preserved.
   if (!isClaudeMessageResponse && translatedResponse?.choices) {
     for (const choice of translatedResponse.choices) {
-      const message = choice?.message;
-      const shouldPreserve = shouldPreserveReasoningContent({ provider, model, message });
-      if (message?.reasoning_content && message.content && !shouldPreserve) delete message.reasoning_content;
+      if (choice?.message?.reasoning_content && choice.message.content) {
+        delete choice.message.reasoning_content;
+      }
     }
   }
 

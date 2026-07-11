@@ -17,8 +17,6 @@ const DEFAULT_TTS_RESPONSE_EXAMPLE = `// Audio will appear here after running.
   "audio": "//NExAANaAIIAUAAANNNNNNNN..." // base64 encoded MP3
 }`;
 
-const getBrowserOrigin = () => typeof window === "undefined" ? "" : window.location.origin;
-
 export function TtsExampleCard({ providerId }) {
   const providerAlias = getProviderAlias(providerId);
   const config = TTS_PROVIDER_CONFIG[providerId] || TTS_PROVIDER_CONFIG["edge-tts"];
@@ -44,7 +42,7 @@ export function TtsExampleCard({ providerId }) {
   const [input, setInput]               = useState("Hello, this is a text to speech test.");
   const [apiKey, setApiKey]             = useState("");
   const [useTunnel, setUseTunnel]       = useState(false);
-  const [localEndpoint, setLocalEndpoint]   = useState(() => getBrowserOrigin());
+  const [localEndpoint, setLocalEndpoint]   = useState("");
   const [tunnelEndpoint, setTunnelEndpoint] = useState("");
   const [responseFormat, setResponseFormat] = useState("mp3"); // mp3 | json
   const [audioUrl, setAudioUrl]         = useState("");
@@ -65,7 +63,7 @@ export function TtsExampleCard({ providerId }) {
   const [languageHint, setLanguageHint]     = useState("");
 
   useEffect(() => {
-    queueMicrotask(() => setLocalEndpoint(getBrowserOrigin()));
+    setLocalEndpoint(window.location.origin);
     fetch("/api/keys")
       .then((r) => r.json())
       .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
@@ -85,40 +83,36 @@ export function TtsExampleCard({ providerId }) {
         ? (getTtsVoicesForModel(providerId, defaultModel) || [])
         : getModelsByProviderId(config.voiceKey || providerId).filter((m) => getModelKind(m) === "tts");
       if (voices.length) {
-        queueMicrotask(() => {
-          if (config.hasBrowseButton) {
-            // Google TTS: pre-select "en" (English) as default, show as single voice chip
-            const defaultVoice = voices.find((v) => v.id === "en") || voices[0];
-            setSelectedLang(defaultVoice.id);
-            setSelectedVoice(defaultVoice.id);
-            setSelectedVoiceName(defaultVoice.name);
-            setCountryVoices([{ id: defaultVoice.id, name: defaultVoice.name }]);
-          } else {
-            // OpenAI/OpenRouter: set voice chips directly (no language picker)
-            setCountryVoices(voices);
-            setSelectedVoice(voices[0].id);
-            setSelectedVoiceName(voices[0].name || voices[0].id);
-          }
-        });
+        if (config.hasBrowseButton) {
+          // Google TTS: pre-select "en" (English) as default, show as single voice chip
+          const defaultVoice = voices.find((v) => v.id === "en") || voices[0];
+          setSelectedLang(defaultVoice.id);
+          setSelectedVoice(defaultVoice.id);
+          setSelectedVoiceName(defaultVoice.name);
+          setCountryVoices([{ id: defaultVoice.id, name: defaultVoice.name }]);
+        } else {
+          // OpenAI/OpenRouter: set voice chips directly (no language picker)
+          setCountryVoices(voices);
+          setSelectedVoice(voices[0].id);
+          setSelectedVoiceName(voices[0].name || voices[0].id);
+        }
       }
     }
     // api-language (edge-tts, local-device, elevenlabs): NO default load, wait for user to pick language
     // config (nvidia, hyperbolic, deepgram, huggingface, cartesia, playht, coqui, tortoise, inworld, qwen):
     // use ttsConfig.models for model selector; voice is empty by default (backend uses provider default)
-  }, [config.hasBrowseButton, config.hasModelSelector, config.modelKey, config.voiceKey, config.voiceSource, config.voicesPerModel, providerId]);
+  }, [providerId]);
 
   // Update voices when model changes (voicesPerModel providers)
   useEffect(() => {
     if (!config.voicesPerModel || !selectedModel) return;
     const voices = getTtsVoicesForModel(providerId, selectedModel) || [];
-    queueMicrotask(() => {
-      setCountryVoices(voices);
-      if (voices.length) {
-        setSelectedVoice(voices[0].id);
-        setSelectedVoiceName(voices[0].name || voices[0].id);
-      }
-    });
-  }, [config.voicesPerModel, providerId, selectedModel]);
+    setCountryVoices(voices);
+    if (voices.length) {
+      setSelectedVoice(voices[0].id);
+      setSelectedVoiceName(voices[0].name || voices[0].id);
+    }
+  }, [selectedModel]);
 
   // Open modal — load language list
   const openModal = async () => {
