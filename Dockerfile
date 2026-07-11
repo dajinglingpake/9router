@@ -16,7 +16,8 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATA_DIR=/tmp/9router-build-data
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache,sharing=locked \
+  npm run build
 
 FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
@@ -29,27 +30,26 @@ ENV HOSTNAME=0.0.0.0
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATA_DIR=/app/data
 
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/custom-server.js ./custom-server.js
-COPY --from=builder /app/open-sse ./open-sse
-# Next file tracing can omit sibling files; MITM runs server.js as a separate process.
-COPY --from=builder /app/src/mitm ./src/mitm
-# Standalone node_modules may omit deps only required by the MITM child process.
-COPY --from=builder /app/node_modules/node-forge ./node_modules/node-forge
-# Ensure `next` is available at runtime in case tracing did not include it.
-COPY --from=builder /app/node_modules/next ./node_modules/next
-
-RUN mkdir -p /app/data && chown -R node:node /app && \
-  mkdir -p /app/data-home && chown node:node /app/data-home && \
-  ln -sf /app/data-home /root/.9router 2>/dev/null || true
-
-# Fix permissions at runtime (handles mounted volumes)
+# Install runtime packages before copying application files so this layer stays cached.
 RUN apt-get update && apt-get install -y --no-install-recommends gosu ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
-  && printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec gosu node "$@"\n' > /entrypoint.sh && \
-  chmod +x /entrypoint.sh
+  && printf '#!/bin/sh\nchown -R node:node /app/data /app/data-home 2>/dev/null\nexec gosu node "$@"\n' > /entrypoint.sh \
+  && chmod +x /entrypoint.sh
+
+COPY --chown=node:node --from=builder /app/public ./public
+COPY --chown=node:node --from=builder /app/.next/static ./.next/static
+COPY --chown=node:node --from=builder /app/.next/standalone ./
+COPY --chown=node:node --from=builder /app/custom-server.js ./custom-server.js
+COPY --chown=node:node --from=builder /app/open-sse ./open-sse
+# Next file tracing can omit sibling files; MITM runs server.js as a separate process.
+COPY --chown=node:node --from=builder /app/src/mitm ./src/mitm
+# Standalone node_modules may omit deps only required by the MITM child process.
+COPY --chown=node:node --from=builder /app/node_modules/node-forge ./node_modules/node-forge
+# Ensure `next` is available at runtime in case tracing did not include it.
+COPY --chown=node:node --from=builder /app/node_modules/next ./node_modules/next
+
+RUN install -d -o node -g node /app/data /app/data-home && \
+  ln -sf /app/data-home /root/.9router 2>/dev/null || true
 
 EXPOSE 20128
 
