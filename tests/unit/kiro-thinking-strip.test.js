@@ -31,7 +31,7 @@ function createMockFrame(eventType, payloadObj) {
   offset += headerValueBytes.length;
 
   buffer.set(payloadBytes, offset);
-
+  
   return buffer;
 }
 
@@ -50,11 +50,11 @@ async function readAllSSE(stream) {
 describe("KiroExecutor thinking tag stripping", () => {
   it("strips <thinking> tags from assistantResponseEvent", async () => {
     const executor = new KiroExecutor();
-
+    
     // Create frames
     const f1 = createMockFrame("assistantResponseEvent", { content: "Here is my answer. <thinking>Let me think..." });
     const f2 = createMockFrame("assistantResponseEvent", { content: "still thinking...</thinking> Yes, 42." });
-
+    
     const readableStream = new ReadableStream({
       start(controller) {
         controller.enqueue(f1);
@@ -65,9 +65,9 @@ describe("KiroExecutor thinking tag stripping", () => {
 
     const mockResponse = { body: readableStream };
     const transformedResponse = executor.transformEventStreamToSSE(mockResponse, "claude-test");
-
+    
     const output = await readAllSSE(transformedResponse.body);
-
+    
     // Check that we got chat.completion.chunk outputs
     expect(output).toContain("chat.completion.chunk");
     // Ensure the thinking parts are gone
@@ -75,7 +75,7 @@ describe("KiroExecutor thinking tag stripping", () => {
     expect(output).not.toContain("Let me think...");
     expect(output).not.toContain("still thinking...");
     expect(output).not.toContain("</thinking>");
-
+    
     // Check that the normal content is preserved
     // Parse the data chunks
     const dataLines = output.split("\n").filter(line => line.startsWith("data: "));
@@ -87,17 +87,17 @@ describe("KiroExecutor thinking tag stripping", () => {
         return "";
       }
     });
-
+    
     const fullText = contents.join("");
     expect(fullText).toBe("Here is my answer.  Yes, 42.");
   });
 
   it("handles empty content after stripping when hasReasoningContent is true", async () => {
     const executor = new KiroExecutor();
-
+    
     const f0 = createMockFrame("reasoningContentEvent", { text: "I am reasoning" });
     const f1 = createMockFrame("assistantResponseEvent", { content: "<thinking>purely thinking...</thinking>" });
-
+    
     const readableStream = new ReadableStream({
       start(controller) {
         controller.enqueue(f0);
@@ -108,15 +108,15 @@ describe("KiroExecutor thinking tag stripping", () => {
 
     const mockResponse = { body: readableStream };
     const transformedResponse = executor.transformEventStreamToSSE(mockResponse, "claude-test");
-
+    
     const output = await readAllSSE(transformedResponse.body);
-
+    
     const dataLines = output.split("\n").filter(line => line.startsWith("data: ") && !line.includes("[DONE]"));
     const objects = dataLines.map(line => JSON.parse(line.slice(6)));
-
+    
     // First chunk should have reasoning_content
     expect(objects[0].choices[0].delta.reasoning_content).toBe("I am reasoning");
-
+    
     // We shouldn't get an empty content chunk from f1 since it was entirely stripped and reasoning was present
     const contentChunks = objects.filter(obj => obj.choices[0].delta.content !== undefined);
     expect(contentChunks.length).toBe(0);

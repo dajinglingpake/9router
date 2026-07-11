@@ -203,13 +203,13 @@ describe("fusion combo", () => {
     const panelCalls = handleSingleModel.mock.calls.filter(([,, isPanel]) => isPanel === true);
     expect(panelCalls.length).toBe(2);
     const panelBody = panelCalls[0][0];
-
+    
     expect(panelBody.tools).toBeUndefined();
     expect(panelBody.messages.length).toBe(3);
-
+    
     // Flattened tool_use
     expect(panelBody.messages[1].content).toBe("ok\n[Called tools: run]");
-
+    
     // Flattened tool_result
     expect(panelBody.messages[2].content).toBe("[Tool result: done]");
   });

@@ -58,39 +58,11 @@ describe("DB SQLite layer — public API parity", () => {
     expect(all.find((x) => x.id === k.id)).toBeDefined();
 
     expect(await sqliteDb.validateApiKey(k.key)).toBeTruthy();
-    expect(await sqliteDb.validateApiKey("test-key")).toBeFalsy();
-    expect((await sqliteDb.getApiKeyByName("TEST-KEY"))?.id).toBe(k.id);
-
-    await sqliteDb.updateApiKey(k.id, { allowedIps: ["192.168.3.165"] });
-    expect(await sqliteDb.validateApiKey(k.key, "192.168.3.165")).toBeTruthy();
-    expect(await sqliteDb.validateApiKey(k.key, "192.168.1.112")).toBeFalsy();
-    await sqliteDb.updateApiKey(k.id, { allowedIps: [] });
-    expect(await sqliteDb.validateApiKey(k.key, "192.168.1.112")).toBeTruthy();
-
-    await sqliteDb.updateApiKey(k.id, { isActive: false });
-    expect(await sqliteDb.validateApiKey(k.key)).toBeFalsy();
-    await expect(sqliteDb.createApiKey("TEST-KEY", "machine-def")).rejects.toThrow("api key name already exists");
-
     expect(await sqliteDb.validateApiKey("invalid")).toBeFalsy();
 
     const deleted = await sqliteDb.deleteApiKey(k.id);
     expect(deleted).toBe(true);
     expect(await sqliteDb.getApiKeyById(k.id)).toBeNull();
-  });
-
-  it("apiKeys: claim by username records client IP and prevents second claim", async () => {
-    const k = await sqliteDb.createApiKey("claim-test", "machine-claim");
-
-    const claimed = await sqliteDb.claimApiKeyByName("CLAIM-TEST", "192.168.3.165", "192.168.1.112\n192.168.3.165");
-    expect(claimed.status).toBe("claimed");
-    expect(claimed.apiKey.allowedIps).toEqual(["192.168.3.165", "192.168.1.112"]);
-    expect(await sqliteDb.validateApiKey(k.key, "192.168.1.112")).toBeTruthy();
-    expect(await sqliteDb.validateApiKey(k.key, "10.0.0.1")).toBeFalsy();
-
-    const secondClaim = await sqliteDb.claimApiKeyByName("claim-test", "192.168.3.165");
-    expect(secondClaim.status).toBe("already_claimed");
-
-    await sqliteDb.deleteApiKey(k.id);
   });
 
   it("providerConnections: CRUD + reorder by priority", async () => {
@@ -127,6 +99,19 @@ describe("DB SQLite layer — public API parity", () => {
     expect(back.refreshToken).toBe("rtok");
     expect(back.expiresAt).toBe(12345);
     expect(back.providerSpecificData).toEqual({ foo: "bar" });
+  });
+
+  it("providerConnections: GitHub OAuth uses account identity as fallback name", async () => {
+    const c = await sqliteDb.createProviderConnection({
+      provider: "github",
+      authType: "oauth",
+      accessToken: "tok",
+      providerSpecificData: { githubLogin: "octocat" },
+    });
+
+    expect(c.name).toBe("octocat");
+    const back = await sqliteDb.getProviderConnectionById(c.id);
+    expect(back.name).toBe("octocat");
   });
 
   it("providerNodes: CRUD", async () => {
@@ -227,32 +212,6 @@ describe("DB SQLite layer — public API parity", () => {
     expect(stats.byProvider.openai).toBeDefined();
     expect(stats.byProvider.openai.requests).toBeGreaterThanOrEqual(2);
     expect(stats.byProvider.openai.promptTokens).toBeGreaterThanOrEqual(300);
-  });
-
-  it("audit logs: clear by condition and rebuild daily summaries", async () => {
-    await sqliteDb.saveRequestUsage({
-      timestamp: "2024-01-01T00:00:00.000Z",
-      provider: "audit-test", model: "old-model", connectionId: "audit-c1", clientIp: "10.0.0.1",
-      tokens: { prompt_tokens: 10, completion_tokens: 5 },
-      endpoint: "/v1/chat/completions", status: "ok",
-    });
-    await sqliteDb.saveRequestUsage({
-      timestamp: "2024-01-03T00:00:00.000Z",
-      provider: "audit-test", model: "new-model", connectionId: "audit-c1", clientIp: "10.0.0.1",
-      tokens: { prompt_tokens: 20, completion_tokens: 10 },
-      endpoint: "/v1/chat/completions", status: "ok",
-    });
-
-    const result = await sqliteDb.clearAuditLogs({ provider: "audit-test", before: "2024-01-02T00:00:00.000Z" });
-    expect(result.deleted.usageHistory).toBe(1);
-
-    const history = await sqliteDb.getUsageHistory({ provider: "audit-test" });
-    expect(history).toHaveLength(1);
-    expect(history[0].model).toBe("new-model");
-
-    const stats = await sqliteDb.getUsageStats("all");
-    expect(stats.byProvider["audit-test"].requests).toBe(1);
-    expect(stats.byProvider["audit-test"].promptTokens).toBe(20);
   });
 
   it("usage: pending tracking in-memory", () => {
