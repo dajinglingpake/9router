@@ -214,7 +214,7 @@ export function TtsExampleCard({ providerId }) {
         setError(d?.error?.message || d?.error || `HTTP ${res.status}`);
         return;
       }
-
+      
       if (responseFormat === "json") {
         const data = await res.json();
         setJsonResponse(data); // Store full JSON response
@@ -472,7 +472,7 @@ export function TtsExampleCard({ providerId }) {
                 </a>
               </div>
               <audio controls src={audioUrl} className="w-full" />
-
+              
               {/* JSON Response (if format is json) */}
               {jsonResponse && (
                 <div className="mt-3">

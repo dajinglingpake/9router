@@ -435,8 +435,4 @@ export function logUsage(provider, usage, model = null, connectionId = null, api
   if (reasoning) msg += ` | reasoning=${reasoning}`;
 
   console.log(msg);
-
-
-  // Persistence is handled by chatCore's stream completion callback, which
-  // also has request metadata such as endpoint and client IP.
 }

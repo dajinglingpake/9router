@@ -20,14 +20,9 @@ function getLocaleFromCookie() {
   return normalizeLocale(value);
 }
 
-function getOidcRedirectUri() {
-  if (typeof window === "undefined") return "/api/auth/oidc/callback";
-  return `${window.location.origin}/api/auth/oidc/callback`;
-}
-
 export default function ProfilePage() {
   const { theme, setTheme, isDark } = useTheme();
-  const [locale, setLocale] = useState(() => getLocaleFromCookie());
+  const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
@@ -52,7 +47,7 @@ export default function ProfilePage() {
   const [oidcLoading, setOidcLoading] = useState(false);
   const [oidcTestLoading, setOidcTestLoading] = useState(false);
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
-  const [oidcRedirectUri, setOidcRedirectUri] = useState(() => getOidcRedirectUri());
+  const [oidcRedirectUri, setOidcRedirectUri] = useState("/api/auth/oidc/callback");
   const [oidcExpanded, setOidcExpanded] = useState(false);
   const importFileRef = useRef(null);
   const [proxyForm, setProxyForm] = useState({
@@ -65,7 +60,7 @@ export default function ProfilePage() {
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
 
   useEffect(() => {
-    queueMicrotask(() => setLocale(getLocaleFromCookie()));
+    setLocale(getLocaleFromCookie());
   }, [langOpen]);
 
   useEffect(() => {
@@ -96,7 +91,9 @@ export default function ProfilePage() {
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => setOidcRedirectUri(getOidcRedirectUri()));
+    if (typeof window !== "undefined") {
+      setOidcRedirectUri(`${window.location.origin}/api/auth/oidc/callback`);
+    }
   }, []);
 
   const updateOutboundProxy = async (e) => {
