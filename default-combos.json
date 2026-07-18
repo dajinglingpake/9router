@@ -16,6 +16,10 @@
     "models": ["oc/deepseek-v4-flash-free"]
   },
   {
+    "name": "codex-auto-review",
+    "models": ["cx/gpt-5.6-sol-review"]
+  },
+  {
     "name": "gpt-5.6-sol",
     "models": ["cx/gpt-5.6-sol"]
   },
