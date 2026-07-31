@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Card, Button, ManualConfigModal, Tooltip } from "@/shared/components";
+import { useState, useEffect, useRef } from "react";
+import { Card, Button, ModelSelectModal, ManualConfigModal, Tooltip } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
@@ -9,11 +9,25 @@ import { matchKnownEndpoint } from "./cliEndpointMatch";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
 
+// Context window presets. UI shows the round number; the value written is nudged
+// down 2K to stay safely under the upstream hard cap.
+const CONTEXT_OPTIONS = [
+  { label: "Default", value: "" },
+  { label: "200K", value: "198000" },
+  { label: "300K", value: "298000" },
+  { label: "500K", value: "498000" },
+  { label: "1M", value: "998000" },
+];
+
 export default function ClaudeToolCard({
   tool,
   isExpanded,
   onToggle,
+  activeProviders,
+  modelMappings,
+  onModelMappingChange,
   baseUrl,
+  hasActiveProviders,
   apiKeys,
   cloudEnabled,
   initialStatus,
@@ -28,10 +42,16 @@ export default function ClaudeToolCard({
   const [restoring, setRestoring] = useState(false);
   const [message, setMessage] = useState(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
+  const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [ccFilterNaming, setCcFilterNaming] = useState(false);
+  const [exaMcpEnabled, setExaMcpEnabled] = useState(false);
+  const [maxContextTokens, setMaxContextTokens] = useState("");
+  const hasInitializedModels = useRef(false);
 
   const getConfigStatus = () => {
     if (!claudeStatus?.installed) return null;
@@ -50,12 +70,21 @@ export default function ClaudeToolCard({
   }, [apiKeys, selectedApiKey]);
 
   useEffect(() => {
-    if (initialStatus) setClaudeStatus(initialStatus);
+    if (initialStatus) {
+      setClaudeStatus(initialStatus);
+      setExaMcpEnabled(!!initialStatus.exaMcpEnabled);
+    }
   }, [initialStatus]);
 
   useEffect(() => {
-    if (isExpanded && !claudeStatus) {
-      checkClaudeStatus();
+    const v = claudeStatus?.settings?.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    setMaxContextTokens(v || "");
+  }, [claudeStatus?.settings?.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS]);
+
+  useEffect(() => {
+    if (isExpanded) {
+      if (!claudeStatus) checkClaudeStatus();
+      fetchModelAliases();
     }
   }, [isExpanded]);
 
@@ -75,15 +104,37 @@ export default function ClaudeToolCard({
     }).catch(() => {});
   };
 
+  const fetchModelAliases = async () => {
+    try {
+      const res = await fetch("/api/models/alias");
+      const data = await res.json();
+      if (res.ok) setModelAliases(data.aliases || {});
+    } catch (error) {
+      console.log("Error fetching model aliases:", error);
+    }
+  };
+
   useEffect(() => {
-    if (claudeStatus?.installed) {
+    if (claudeStatus?.installed && !hasInitializedModels.current) {
+      hasInitializedModels.current = true;
       const env = claudeStatus.settings?.env || {};
+
+      tool.defaultModels.forEach((model) => {
+        if (model.envKey) {
+          const value = env[model.envKey] || model.defaultValue || "";
+          // Only sync initial values from file once
+          if (value) {
+            onModelMappingChange(model.alias, value);
+          }
+        }
+      });
+      // Only set selectedApiKey if it exists in apiKeys list
       const tokenFromFile = env.ANTHROPIC_AUTH_TOKEN;
       if (tokenFromFile && apiKeys?.some(k => k.key === tokenFromFile)) {
         setSelectedApiKey(tokenFromFile);
       }
     }
-  }, [claudeStatus, apiKeys]);
+  }, [claudeStatus, apiKeys, tool.defaultModels, onModelMappingChange]);
 
   const checkClaudeStatus = async () => {
     setCheckingClaude(true);
@@ -91,6 +142,7 @@ export default function ClaudeToolCard({
       const res = await fetch("/api/cli-tools/claude-settings");
       const data = await res.json();
       setClaudeStatus(data);
+      setExaMcpEnabled(!!data.exaMcpEnabled);
     } catch (error) {
       setClaudeStatus({ installed: false, error: error.message });
     } finally {
@@ -123,15 +175,22 @@ export default function ClaudeToolCard({
         env.ANTHROPIC_AUTH_TOKEN = keyToUse;
       }
 
+      tool.defaultModels.forEach((model) => {
+        const targetModel = modelMappings[model.alias];
+        if (targetModel && model.envKey) env[model.envKey] = targetModel;
+      });
+      if (maxContextTokens) {
+        env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = maxContextTokens;
+      }
       const res = await fetch("/api/cli-tools/claude-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ env }),
+        body: JSON.stringify({ env, exaMcpEnabled, maxContextTokens }),
       });
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: "Settings applied successfully!" });
-        setClaudeStatus(prev => ({ ...prev, hasBackup: true, settings: { ...prev?.settings, env } }));
+        setClaudeStatus(prev => ({ ...prev, hasBackup: true, settings: { ...prev?.settings, env }, exaMcpEnabled }));
       } else {
         setMessage({ type: "error", text: data.error || "Failed to apply settings" });
       }
@@ -150,7 +209,10 @@ export default function ClaudeToolCard({
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
+        tool.defaultModels.forEach((model) => onModelMappingChange(model.alias, model.defaultValue || ""));
         setSelectedApiKey("");
+        setExaMcpEnabled(false);
+        setMaxContextTokens("");
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
       }
@@ -161,12 +223,29 @@ export default function ClaudeToolCard({
     }
   };
 
+  const openModelSelector = (alias) => {
+    setCurrentEditingAlias(alias);
+    setModalOpen(true);
+  };
+
+  const handleModelSelect = (model) => {
+    if (currentEditingAlias) onModelMappingChange(currentEditingAlias, model.value);
+  };
+
   // Generate settings.json content for manual copy
   const getManualConfigs = () => {
     const keyToUse = (selectedApiKey && selectedApiKey.trim())
       ? selectedApiKey
       : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
     const env = { ANTHROPIC_BASE_URL: getEffectiveBaseUrl(), ANTHROPIC_AUTH_TOKEN: keyToUse };
+    tool.defaultModels.forEach((model) => {
+      const targetModel = modelMappings[model.alias];
+      if (targetModel && model.envKey) env[model.envKey] = targetModel;
+    });
+    if (maxContextTokens) {
+      env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = maxContextTokens;
+    }
+
     return [
       {
         filename: "~/.claude/settings.json",
@@ -180,7 +259,7 @@ export default function ClaudeToolCard({
       <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
-            <Image src="/providers/claude.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
+            <Image src="/providers/claude.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} loading="lazy" decoding="async" />
           </div>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -276,6 +355,30 @@ export default function ClaudeToolCard({
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
+                {/* Model Mappings */}
+                {tool.defaultModels.map((model) => (
+                  <div key={model.alias} className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                    <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">{model.name}</span>
+                    <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                    <div className="relative w-full min-w-0">
+                      <input type="text" value={modelMappings[model.alias] || ""} onChange={(e) => onModelMappingChange(model.alias, e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
+                      {modelMappings[model.alias] && <button onClick={() => onModelMappingChange(model.alias, "")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
+                    </div>
+                    <button onClick={() => openModelSelector(model.alias)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
+                  </div>
+                ))}
+
+                {/* Context Window */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Context window</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                  <select value={maxContextTokens} onChange={(e) => setMaxContextTokens(e.target.value)} className="w-full min-w-0 px-2 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5">
+                    {CONTEXT_OPTIONS.map((opt) => (
+                      <option key={opt.label} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* CC Filter Naming */}
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Filter naming</span>
@@ -284,6 +387,19 @@ export default function ClaudeToolCard({
                     <input type="checkbox" checked={ccFilterNaming} onChange={handleCcFilterNamingToggle} className="w-3.5 h-3.5 accent-primary cursor-pointer" />
                     <span className="text-xs text-text-muted">Filter naming requests</span>
                     <Tooltip text="Intercepts Claude Code's topic-naming requests and returns a fake response locally, saving API tokens.">
+                      <span className="material-symbols-outlined text-text-muted text-[14px] cursor-help">info</span>
+                    </Tooltip>
+                  </label>
+                </div>
+
+                {/* Exa MCP — ~/.claude.json mcpServers (not settings.json) */}
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Web Search</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={exaMcpEnabled} onChange={(e) => setExaMcpEnabled(e.target.checked)} className="w-3.5 h-3.5 accent-primary cursor-pointer" />
+                    <span className="text-xs text-text-muted">Exa MCP</span>
+                    <Tooltip text="Injects Exa MCP into ~/.claude.json so non-Claude models gain web search. Restart Claude Code after Apply.">
                       <span className="material-symbols-outlined text-text-muted text-[14px] cursor-help">info</span>
                     </Tooltip>
                   </label>
@@ -298,7 +414,7 @@ export default function ClaudeToolCard({
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApplySettings} loading={applying}>
+                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={!hasActiveProviders} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleResetSettings} disabled={!claudeStatus?.has9Router} loading={restoring}>
@@ -311,6 +427,10 @@ export default function ClaudeToolCard({
             </>
           )}
         </div>
+      )}
+
+      {modalOpen && (
+        <ModelSelectModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSelect={handleModelSelect} selectedModel={currentEditingAlias ? modelMappings[currentEditingAlias] : null} activeProviders={activeProviders} modelAliases={modelAliases} title={`Select model for ${currentEditingAlias}`} />
       )}
 
       <ManualConfigModal
