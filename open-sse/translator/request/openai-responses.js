@@ -168,7 +168,22 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   // such as Gemini, which strictly validates function names.
   if (body.tools && Array.isArray(body.tools)) {
     result.tools = body.tools
-      .map(tool => {
+      .flatMap(tool => {
+        // Chat Completions has no namespace tool type. Expose each nested
+        // Responses function directly so providers can call it by name.
+        if (tool.type === "namespace" && Array.isArray(tool.tools)) {
+          return tool.tools
+            .filter(nestedTool => nestedTool?.type === OPENAI_BLOCK.FUNCTION && nestedTool.name)
+            .map(nestedTool => ({
+              type: OPENAI_BLOCK.FUNCTION,
+              function: {
+                name: nestedTool.name,
+                description: String(nestedTool.description || tool.description || ""),
+                parameters: normalizeToolParameters(nestedTool.parameters),
+                strict: nestedTool.strict
+              }
+            }));
+        }
         // Already in Chat Completions format: { type: "function", function: { name, ... } }
         if (tool.function) return tool;
         // Responses API function tool: { type: "function", name, description, parameters }

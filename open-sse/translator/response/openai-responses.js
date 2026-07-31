@@ -263,7 +263,11 @@ function emitToolCall(state, emit, tc) {
   const newCallId = tc.id;
   const funcName = tc.function?.name;
 
-  if (funcName) state.funcNames[tcIdx] = funcName;
+  if (funcName) {
+    state.funcNames[tcIdx] = funcName;
+    const namespace = state.toolNamespaces?.get(funcName);
+    if (namespace) state.funcNamespaces[tcIdx] = namespace;
+  }
 
   if (!state.funcCallIds[tcIdx] && newCallId) {
     state.funcCallIds[tcIdx] = newCallId;
@@ -276,7 +280,8 @@ function emitToolCall(state, emit, tc) {
         type: RESPONSES_ITEM.FUNCTION_CALL,
         arguments: "",
         call_id: newCallId,
-        name: state.funcNames[tcIdx] || ""
+        name: state.funcNames[tcIdx] || "",
+        ...(state.funcNamespaces[tcIdx] && { namespace: state.funcNamespaces[tcIdx] })
       }
     });
   }
@@ -317,7 +322,8 @@ function closeToolCall(state, emit, idx) {
         type: RESPONSES_ITEM.FUNCTION_CALL,
         arguments: args,
         call_id: callId,
-        name: state.funcNames[idx] || ""
+        name: state.funcNames[idx] || "",
+        ...(state.funcNamespaces[idx] && { namespace: state.funcNamespaces[idx] })
       }
     });
 
