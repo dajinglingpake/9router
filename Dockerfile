@@ -47,6 +47,9 @@ COPY --chown=node:node --from=builder /app/src/mitm ./src/mitm
 COPY --chown=node:node --from=builder /app/node_modules/node-forge ./node_modules/node-forge
 # Ensure `next` is available at runtime in case tracing did not include it.
 COPY --chown=node:node --from=builder /app/node_modules/next ./node_modules/next
+# sql.js loads dist/sql-wasm.wasm by path at runtime; tracing only follows JS imports,
+# so the last-resort DB driver would abort with ENOENT on the missing binary.
+COPY --chown=node:node --from=builder /app/node_modules/sql.js ./node_modules/sql.js
 
 RUN install -d -o node -g node /app/data /app/data-home && \
   ln -sf /app/data-home /root/.9router 2>/dev/null || true
