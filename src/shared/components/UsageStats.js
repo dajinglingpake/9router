@@ -157,6 +157,10 @@ function groupDataByKey(data, keyField) {
   return Object.values(groups);
 }
 
+function getSingleGroupItem(group) {
+  return group.items.length === 1 ? group.items[0] : null;
+}
+
 const MODEL_COLUMNS = [
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
@@ -165,9 +169,9 @@ const MODEL_COLUMNS = [
 ];
 
 const ACCOUNT_COLUMNS = [
+  { field: "accountName", label: "Account" },
   { field: "rawModel", label: "Model" },
   { field: "provider", label: "Provider" },
-  { field: "accountName", label: "Account" },
   { field: "requests", label: "Requests", align: "right" },
   { field: "lastUsed", label: "Last Used", align: "right" },
 ];
@@ -368,13 +372,18 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           groupedData: groupDataByKey(sortData(stats.byModel, pendingMap, sortBy, sortOrder, viewMode), "rawModel"),
           storageKey: "usage-stats:expanded-models",
           emptyMessage: "No usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
+          renderSummaryCells: (group) => {
+            const item = getSingleGroupItem(group);
+            return (
+              <>
+                <td className="px-6 py-3">
+                  {item ? <Badge variant={item.pending > 0 ? "primary" : "neutral"} size="sm">{item.provider || "—"}</Badge> : <span className="text-text-muted">—</span>}
+                </td>
+                <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+                <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+              </>
+            );
+          },
           renderDetailCells: (item) => (
             <>
               <td className={`px-6 py-3 font-medium transition-colors ${item.pending > 0 ? "text-primary" : ""}`}>{item.rawModel}</td>
@@ -401,14 +410,19 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           groupedData: groupDataByKey(sortData(stats.byAccount, pendingMap, sortBy, sortOrder, viewMode), "accountName"),
           storageKey: "usage-stats:expanded-accounts",
           emptyMessage: "No account-specific usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
+          renderSummaryCells: (group) => {
+            const item = getSingleGroupItem(group);
+            return (
+              <>
+                <td className="px-6 py-3">{item?.rawModel || <span className="text-text-muted">—</span>}</td>
+                <td className="px-6 py-3">
+                  {item ? <Badge variant={item.pending > 0 ? "primary" : "neutral"} size="sm">{item.provider || "—"}</Badge> : <span className="text-text-muted">—</span>}
+                </td>
+                <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+                <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+              </>
+            );
+          },
           renderDetailCells: (item) => (
             <>
               <td className={`px-6 py-3 font-medium transition-colors ${item.pending > 0 ? "text-primary" : ""}`}>{item.accountName || `Account ${item.connectionId?.slice(0, 8)}...`}</td>
@@ -426,14 +440,19 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           groupedData: groupDataByKey(sortData(stats.byApiKey, {}, sortBy, sortOrder, viewMode), "keyName"),
           storageKey: "usage-stats:expanded-apikeys",
           emptyMessage: "No API key usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
+          renderSummaryCells: (group) => {
+            const item = getSingleGroupItem(group);
+            return (
+              <>
+                <td className="px-6 py-3">{item?.rawModel || <span className="text-text-muted">—</span>}</td>
+                <td className="px-6 py-3">
+                  {item ? <Badge variant="neutral" size="sm">{item.provider || "—"}</Badge> : <span className="text-text-muted">—</span>}
+                </td>
+                <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+                <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+              </>
+            );
+          },
           renderDetailCells: (item) => (
             <>
               <td className="px-6 py-3 font-medium">{item.keyName}</td>
@@ -451,15 +470,20 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           groupedData: groupDataByKey(sortData(stats.byClientIp, {}, sortBy, sortOrder, viewMode), "clientIp"),
           storageKey: "usage-stats:expanded-client-ips",
           emptyMessage: "No IP usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
+          renderSummaryCells: (group) => {
+            const item = getSingleGroupItem(group);
+            return (
+              <>
+                <td className="px-6 py-3">{item?.keyName || <span className="text-text-muted">—</span>}</td>
+                <td className="px-6 py-3">{item?.rawModel || <span className="text-text-muted">—</span>}</td>
+                <td className="px-6 py-3">
+                  {item ? <Badge variant="neutral" size="sm">{item.provider || "—"}</Badge> : <span className="text-text-muted">—</span>}
+                </td>
+                <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+                <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+              </>
+            );
+          },
           renderDetailCells: (item) => (
             <>
               <td className="px-6 py-3 font-mono text-sm font-medium">{item.clientIp || "unknown"}</td>
@@ -479,14 +503,19 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           groupedData: groupDataByKey(sortData(stats.byEndpoint, {}, sortBy, sortOrder, viewMode), "endpoint"),
           storageKey: "usage-stats:expanded-endpoints",
           emptyMessage: "No endpoint usage recorded yet.",
-          renderSummaryCells: (group) => (
-            <>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-text-muted">—</td>
-              <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
-              <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
-            </>
-          ),
+          renderSummaryCells: (group) => {
+            const item = getSingleGroupItem(group);
+            return (
+              <>
+                <td className="px-6 py-3">{item?.rawModel || <span className="text-text-muted">—</span>}</td>
+                <td className="px-6 py-3">
+                  {item ? <Badge variant="neutral" size="sm">{item.provider || "—"}</Badge> : <span className="text-text-muted">—</span>}
+                </td>
+                <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
+                <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
+              </>
+            );
+          },
           renderDetailCells: (item) => (
             <>
               <td className="px-6 py-3 font-medium font-mono text-sm">{item.endpoint}</td>
