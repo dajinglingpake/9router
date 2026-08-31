@@ -16,4 +16,19 @@ describe("default combos", () => {
       },
     ]);
   });
+
+  it("exposes Codex Spark models under their standard model IDs", () => {
+    const matches = defaultCombos.filter((combo) => combo.name.startsWith("gpt-5.3-codex-spark"));
+
+    expect(matches).toEqual([
+      {
+        name: "gpt-5.3-codex-spark",
+        models: ["cx/gpt-5.3-codex-spark"],
+      },
+      {
+        name: "gpt-5.3-codex-spark-review",
+        models: ["cx/gpt-5.3-codex-spark-review"],
+      },
+    ]);
+  });
 });

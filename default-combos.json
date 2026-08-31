@@ -58,5 +58,13 @@
   {
     "name": "gpt-5.3-codex",
     "models": ["cx/gpt-5.3-codex"]
+  },
+  {
+    "name": "gpt-5.3-codex-spark",
+    "models": ["cx/gpt-5.3-codex-spark"]
+  },
+  {
+    "name": "gpt-5.3-codex-spark-review",
+    "models": ["cx/gpt-5.3-codex-spark-review"]
   }
 ]
