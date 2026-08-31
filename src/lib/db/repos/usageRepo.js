@@ -266,7 +266,18 @@ export async function getActiveRequests() {
     .slice(0, 20);
 
   const errorProvider = (Date.now() - lastErrorProvider.ts < 10000) ? lastErrorProvider.provider : "";
-  return { activeRequests, recentRequests, errorProvider };
+  return {
+    activeRequests,
+    recentRequests,
+    errorProvider,
+    // Clone the small mutable pending state so SSE consumers get a snapshot.
+    pending: {
+      byModel: { ...pendingRequests.byModel },
+      byAccount: Object.fromEntries(
+        Object.entries(pendingRequests.byAccount).map(([id, models]) => [id, { ...models }])
+      ),
+    },
+  };
 }
 
 export async function saveRequestUsage(entry) {
