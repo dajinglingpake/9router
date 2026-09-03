@@ -1,5 +1,4 @@
 import localFont from "next/font/local";
-import { GoogleAnalytics } from "@next/third-parties/google";
 import "material-symbols/outlined.css";
 import "./globals.css";
 import { ThemeProvider } from "@/shared/components/ThemeProvider";
@@ -19,7 +18,7 @@ const inter = localFont({
 });
 
 export const metadata = {
-  title: "9Router - AI Infrastructure Management",
+  title: "AI Gateway - AI Infrastructure Management",
   description: "One endpoint for all your AI providers. Manage keys, monitor usage, and scale effortlessly.",
   icons: {
     icon: "/favicon.svg",
@@ -46,7 +45,6 @@ export default function RootLayout({ children }) {
             {children}
           </RuntimeI18nProvider>
         </ThemeProvider>
-        <GoogleAnalytics gaId={"G-LC959F603F"} />
       </body>
     </html>
   );

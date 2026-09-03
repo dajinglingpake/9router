@@ -59,7 +59,7 @@ export default function ClaimKeyPage() {
     <main className="min-h-screen bg-[#101418] text-slate-100">
       <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center px-5 py-10">
         <div className="mb-8">
-          <p className="mb-3 text-sm font-medium text-cyan-300">9router API Key</p>
+          <p className="mb-3 text-sm font-medium text-cyan-300">AI Gateway API Key</p>
           <h1 className="text-3xl font-semibold tracking-normal text-white">领取个人 API Key</h1>
           <p className="mt-3 text-sm leading-6 text-slate-400">
             输入平台管理员预先创建的用户名。领取成功后请立即保存 API Key；每个用户名只能领取一次，默认只允许当前 IP 使用。
