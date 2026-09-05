@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, useTransition } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 
@@ -13,13 +12,6 @@ const PERIODS = [
   { value: "60d", label: "60D" },
 ];
 
-const TAB_VALUES = ["overview", "logs", "details"];
-
-function getTabFromSearchParams(searchParams) {
-  const tab = searchParams.get("tab");
-  return TAB_VALUES.includes(tab) ? tab : "overview";
-}
-
 export default function UsagePage() {
   return (
     <Suspense fallback={<CardSkeleton />}>
@@ -29,34 +21,20 @@ export default function UsagePage() {
 }
 
 function UsageContent() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
   const [period, setPeriod] = useState("today");
-  const [activeTab, setActiveTab] = useState(() => getTabFromSearchParams(searchParams));
-  const [, startTransition] = useTransition();
+  const [activeTab, setActiveTab] = useState("overview");
 
-  // Keep the tab immediately interactive while the App Router updates the URL.
+  // Remove legacy tab query state so a stale ?tab=details cannot affect refreshes.
   useEffect(() => {
-    const nextTab = getTabFromSearchParams(searchParams);
-    startTransition(() => {
-      setActiveTab((currentTab) => currentTab === nextTab ? currentTab : nextTab);
-    });
-  }, [searchParams, startTransition]);
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("tab")) return;
+    url.searchParams.delete("tab");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
 
   const handleTabChange = (value) => {
-    if (!TAB_VALUES.includes(value) || value === activeTab) return;
+    if (value === activeTab) return;
     setActiveTab(value);
-    const params = new URLSearchParams(searchParams.toString());
-    if (value === "overview") {
-      // Overview is the default view, so returning to it should not make
-      // future refreshes reopen the Details tab.
-      params.delete("tab");
-    } else {
-      params.set("tab", value);
-    }
-    const query = params.toString();
-    router.push(`/dashboard/usage${query ? `?${query}` : ""}`, { scroll: false });
   };
 
   return (
