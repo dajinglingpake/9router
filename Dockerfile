@@ -50,6 +50,8 @@ COPY --chown=node:node --from=builder /app/node_modules/next ./node_modules/next
 # sql.js loads dist/sql-wasm.wasm by path at runtime; tracing only follows JS imports,
 # so the last-resort DB driver would abort with ENOENT on the missing binary.
 COPY --chown=node:node --from=builder /app/node_modules/sql.js ./node_modules/sql.js
+# node-machine-id is createRequire-loaded at runtime; tracing omits it.
+COPY --chown=node:node --from=builder /app/node_modules/node-machine-id ./node_modules/node-machine-id
 
 RUN install -d -o node -g node /app/data /app/data-home && \
   ln -sf /app/data-home /root/.9router 2>/dev/null || true
