@@ -111,9 +111,11 @@ export default function RequestDetailsTab() {
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState([]);
+  const [models, setModels] = useState([]);
   const [providerNameCache, setProviderNameCache] = useState(null);
   const [filters, setFilters] = useState({
     provider: "",
+    model: "",
     apiKey: "",
     clientIp: "",
     startDate: "",
@@ -130,6 +132,7 @@ export default function RequestDetailsTab() {
         const cache = await fetchProviderNames();
         if (cancelled) return;
         setProviders(data.providers || []);
+        setModels(data.models || []);
         setProviderNameCache(cache.providerNameCache);
       } catch (error) {
         console.error("Failed to fetch providers:", error);
@@ -151,6 +154,8 @@ export default function RequestDetailsTab() {
           pageSize: pagination.pageSize.toString()
         });
         if (filters.provider) params.append("provider", filters.provider);
+        const model = filters.model.trim();
+        if (model) params.append("model", model);
         const apiKey = filters.apiKey.trim();
         if (apiKey) params.append("apiKey", apiKey);
         const clientIp = filters.clientIp.trim();
@@ -173,7 +178,7 @@ export default function RequestDetailsTab() {
 
     void loadDetails();
     return () => { cancelled = true; };
-  }, [pagination.page, pagination.pageSize, filters.provider, filters.apiKey, filters.clientIp, filters.startDate, filters.endDate]);
+  }, [pagination.page, pagination.pageSize, filters.provider, filters.model, filters.apiKey, filters.clientIp, filters.startDate, filters.endDate]);
 
   const handleViewDetail = (detail) => {
     setSelectedDetail(detail);
@@ -189,13 +194,13 @@ export default function RequestDetailsTab() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ provider: "", apiKey: "", clientIp: "", startDate: "", endDate: "" });
+    setFilters({ provider: "", model: "", apiKey: "", clientIp: "", startDate: "", endDate: "" });
   };
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Card padding="md">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-7">
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="provider-filter" className="text-sm font-medium text-text-main">Provider</label>
             <select
@@ -216,6 +221,28 @@ export default function RequestDetailsTab() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-2">
+            <label htmlFor="model-filter" className="text-sm font-medium text-text-main">Model</label>
+            <input
+              id="model-filter"
+              type="text"
+              value={filters.model}
+              list="model-filter-options"
+              onChange={(e) => {
+                setFilters({ ...filters, model: e.target.value });
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
+              placeholder="All models"
+              className={cn(
+                "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
+                "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
+              )}
+            />
+            <datalist id="model-filter-options">
+              {models.map((model) => <option key={model} value={model} />)}
+            </datalist>
           </div>
 
           <div className="flex min-w-0 flex-col gap-2">
@@ -281,7 +308,7 @@ export default function RequestDetailsTab() {
             <Button 
               variant="ghost" 
               onClick={handleClearFilters}
-              disabled={!filters.provider && !filters.apiKey && !filters.clientIp && !filters.startDate && !filters.endDate}
+              disabled={!filters.provider && !filters.model && !filters.apiKey && !filters.clientIp && !filters.startDate && !filters.endDate}
               className="w-full"
             >
               Clear Filters

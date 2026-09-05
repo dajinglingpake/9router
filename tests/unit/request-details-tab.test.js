@@ -171,6 +171,24 @@ describe("getDistinctProviders — providers route (no full-row parse)", () => {
   });
 });
 
+describe("getDistinctModels — model filter options", () => {
+  it("returns unique non-null models in sorted order", async () => {
+    const timestamp = new Date().toISOString();
+    for (const [id, model] of [["dm-1", "gpt-6-astra"], ["dm-2", "gpt-5.6-sol"], ["dm-3", "gpt-6-astra"]]) {
+      adapter.run(
+        `INSERT INTO requestDetails(id, timestamp, provider, model, status, data) VALUES(?, ?, ?, ?, ?, ?)`,
+        [id, timestamp, "openai", model, "ok", JSON.stringify({ id, model })]
+      );
+    }
+
+    const list = await db.getDistinctModels();
+    expect(list).toContain("gpt-6-astra");
+    expect(list).toContain("gpt-5.6-sol");
+    expect(new Set(list).size).toBe(list.length);
+    expect(list).toEqual([...list].sort());
+  });
+});
+
 describe("token helpers — render-time crash safety", () => {
   it("undefined/null tokens → 0, no throw", () => {
     expect(getInputTokens(undefined)).toBe(0);

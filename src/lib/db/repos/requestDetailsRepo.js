@@ -203,6 +203,12 @@ export async function getDistinctProviders() {
   return rows.map((r) => r.provider);
 }
 
+export async function getDistinctModels() {
+  const db = await getAdapter();
+  const rows = db.all(`SELECT DISTINCT model FROM requestDetails WHERE model IS NOT NULL ORDER BY model ASC`);
+  return rows.map((r) => r.model);
+}
+
 export async function getRequestDetailById(id) {
   const db = await getAdapter();
   const row = db.get(`SELECT data FROM requestDetails WHERE id = ?`, [id]);

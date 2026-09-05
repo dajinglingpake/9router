@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
-import { getDistinctProviders } from "@/lib/requestDetailsDb";
+import { getDistinctModels, getDistinctProviders } from "@/lib/requestDetailsDb";
 import { getProviderNodes } from "@/lib/localDb";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 
 /**
  * GET /api/usage/providers
- * Returns list of unique providers from request details
+ * Returns unique providers and models from request details for dashboard filters.
  */
 export async function GET() {
   try {
     // Query DISTINCT provider column directly — avoids parsing every row's
     // full JSON blob (can be hundreds of MB), which previously caused OOM.
-    const providerIds = await getDistinctProviders();
+    const [providerIds, models] = await Promise.all([
+      getDistinctProviders(),
+      getDistinctModels(),
+    ]);
 
     const providerNodes = await getProviderNodes();
     const nodeMap = {};
@@ -30,7 +33,7 @@ export async function GET() {
       return { id: providerId, name };
     });
 
-    return NextResponse.json({ providers });
+    return NextResponse.json({ providers, models });
   } catch (error) {
     console.error("[API] Failed to get providers:", error);
     return NextResponse.json(
