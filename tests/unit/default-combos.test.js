@@ -17,6 +17,17 @@ describe("default combos", () => {
     ]);
   });
 
+  it("routes GPT-6 Astra through Codex", () => {
+    const matches = defaultCombos.filter((combo) => combo.name === "gpt-6-astra");
+
+    expect(matches).toEqual([
+      {
+        name: "gpt-6-astra",
+        models: ["cx/gpt-6-astra"],
+      },
+    ]);
+  });
+
   it("exposes Codex Spark models under their standard model IDs", () => {
     const matches = defaultCombos.filter((combo) => combo.name.startsWith("gpt-5.3-codex-spark"));
 

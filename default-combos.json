@@ -20,6 +20,10 @@
     "models": ["cx/gpt-5.6-sol-review"]
   },
   {
+    "name": "gpt-6-astra",
+    "models": ["cx/gpt-6-astra"]
+  },
+  {
     "name": "gpt-5.6-sol",
     "models": ["cx/gpt-5.6-sol"]
   },
