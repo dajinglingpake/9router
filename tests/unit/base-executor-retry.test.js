@@ -8,9 +8,13 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 }));
 
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
+const { parseRetryAfterMs } = await import("../../open-sse/utils/retryAfter.js");
 
-function res(status) {
-  return { status, headers: { get: () => "" } };
+function res(status, headers = {}) {
+  return {
+    status,
+    headers: { get: (name) => headers[name.toLowerCase()] ?? "" },
+  };
 }
 
 function makeExec(config) {
@@ -22,6 +26,22 @@ function makeExec(config) {
 const creds = { apiKey: "k" };
 
 beforeEach(() => fetchMock.mockReset());
+
+describe("Retry-After parsing", () => {
+  it("parses delay-seconds", () => {
+    expect(parseRetryAfterMs({ get: () => "31" })).toBe(31000);
+  });
+
+  it("parses HTTP-date relative to the supplied clock", () => {
+    const now = Date.parse("Wed, 21 Oct 2015 07:28:00 GMT");
+    const headers = { get: () => "Wed, 21 Oct 2015 07:28:05 GMT" };
+    expect(parseRetryAfterMs(headers, now)).toBe(5000);
+  });
+
+  it("ignores malformed values", () => {
+    expect(parseRetryAfterMs({ get: () => "not-a-delay" })).toBeNull();
+  });
+});
 
 describe("BaseExecutor.execute — retry by status (config-driven)", () => {
   it("retries 502 `attempts` times then succeeds", async () => {
@@ -42,6 +62,28 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
     const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
     expect(out.response.status).toBe(502);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry before the upstream Retry-After delay", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 1, delayMs: 0 } } });
+    fetchMock
+      .mockResolvedValueOnce(res(503, { "retry-after": "1" }))
+      .mockResolvedValueOnce(res(200));
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const delays = [];
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((fn, ms, ...args) => {
+      delays.push(ms);
+      return originalSetTimeout(fn, 0, ...args);
+    });
+
+    try {
+      const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
+      expect(out.response.status).toBe(200);
+      expect(delays).toContain(1000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 });
 

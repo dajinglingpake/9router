@@ -1,4 +1,5 @@
 import { ERROR_TYPES, DEFAULT_ERROR_MESSAGES } from "../config/errorConfig.js";
+import { parseRetryAfterMs } from "./retryAfter.js";
 
 /**
  * Build OpenAI-compatible error response body
@@ -53,9 +54,11 @@ export async function writeStreamError(writer, statusCode, message) {
  * Parse upstream provider error response
  * @param {Response} response - Fetch response from provider
  * @param {object} [executor] - Optional executor with parseError() override for provider-specific parsing
- * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number}>}
+ * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number}>} resetsAtMs is the upstream quota or Retry-After expiry.
  */
 export async function parseUpstreamError(response, executor = null) {
+  const retryAfterMs = parseRetryAfterMs(response?.headers);
+  const retryAfterAtMs = retryAfterMs != null ? Date.now() + retryAfterMs : null;
   let bodyText = "";
   try {
     bodyText = await response.text();
@@ -69,7 +72,11 @@ export async function parseUpstreamError(response, executor = null) {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
         const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
-        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs };
+        return {
+          statusCode: parsed.status || response.status,
+          message: msg,
+          resetsAtMs: parsed.resetsAtMs ?? retryAfterAtMs,
+        };
       }
     } catch { /* fall through to default parsing */ }
   }
@@ -85,7 +92,7 @@ export async function parseUpstreamError(response, executor = null) {
   const messageStr = typeof message === "string" ? message : JSON.stringify(message);
   const finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
-  return { statusCode: response.status, message: finalMessage };
+  return { statusCode: response.status, message: finalMessage, resetsAtMs: retryAfterAtMs };
 }
 
 /**
