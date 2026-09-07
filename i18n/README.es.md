@@ -1216,7 +1216,6 @@ docker pull decolua/9router:latest   # actualiza a la última versión
 | `NEXT_PUBLIC_CLOUD_URL`                              | `https://9router.com`                      | URL de nube pública/compatible (prefiere `CLOUD_URL` para el runtime del servidor)   |
 | `API_KEY_SECRET`                                     | `endpoint-proxy-api-key-secret`            | Secreto HMAC para las claves API generadas                                           |
 | `MACHINE_ID_SALT`                                    | `endpoint-proxy-salt`                      | Sal para el hash estable del ID de máquina                                           |
-| `ENABLE_REQUEST_LOGS`                                | `false`                                    | Habilita los registros de solicitudes/respuestas en `logs/`                          |
 | `AUTH_COOKIE_SECURE`                                 | `false`                                    | Fuerza la cookie `Secure` de autenticación (establece `true` detrás de un proxy HTTPS inverso) |
 | `REQUIRE_API_KEY`                                    | `false`                                    | Aplica clave API Bearer en las rutas `/v1/*` (recomendado para despliegues expuestos a Internet) |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | vacío                                      | Proxy saliente opcional para las llamadas a proveedores externos                     |
@@ -1233,7 +1232,6 @@ Notas:
 
 - Estado principal de la app: `${DATA_DIR}/db/data.sqlite` (SQLite — proveedores, combos, alias, claves, ajustes, historial de uso)
 - Copias de seguridad automáticas: `${DATA_DIR}/db/backups/`
-- Registros opcionales de solicitudes/translator: `<repo>/logs/...` cuando `ENABLE_REQUEST_LOGS=true`
 - Tanto `${DATA_DIR}` como `~/.9router` resuelven a la misma ubicación en un contenedor de Docker — el enlace simbólico `/root/.9router -> /app/data` se crea en tiempo de compilación.
 
 </details>
@@ -1352,7 +1350,6 @@ Notas:
 
 **No hay registros de solicitudes en `logs/`**
 
-- Establece `ENABLE_REQUEST_LOGS=true`
 
 ---
 

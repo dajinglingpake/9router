@@ -51,7 +51,6 @@ export NODE_ENV="production"
 | `INITIAL_PASSWORD` | `123456` | Contraseña de login del dashboard |
 | `DATA_DIR` | `~/.9router` | Ruta de almacenamiento de la base de datos |
 | `NODE_ENV` | `development` | Establece a `production` para despliegue |
-| `ENABLE_REQUEST_LOGS` | `false` | Habilita logs de debug de request/response |
 
 ### Paso 5: Crear el directorio de datos
 

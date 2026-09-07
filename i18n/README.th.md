@@ -652,7 +652,6 @@ Combo: "openclaw-free"
 - ถ้ายังไม่ตั้งค่า รหัสผ่านสำรองคือ `123456`
 
 **ไม่มี request log ใต้ `logs/`**
-- ตั้ง `ENABLE_REQUEST_LOGS=true`
 
 ---
 

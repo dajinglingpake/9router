@@ -1216,7 +1216,6 @@ docker pull decolua/9router:latest   # mise à jour vers la dernière version
 | `NEXT_PUBLIC_CLOUD_URL`                              | `https://9router.com`                       | URL cloud publique/rétrocompatible (préférez `CLOUD_URL` pour le runtime serveur)             |
 | `API_KEY_SECRET`                                     | `endpoint-proxy-api-key-secret`             | Secret HMAC pour les clés API générées                                                         |
 | `MACHINE_ID_SALT`                                    | `endpoint-proxy-salt`                       | Sel pour le hachage stable de l'ID machine                                                    |
-| `ENABLE_REQUEST_LOGS`                                | `false`                                     | Active les journaux de requêtes/réponses dans `logs/`                                         |
 | `AUTH_COOKIE_SECURE`                                 | `false`                                     | Force le cookie d'authentification `Secure` (mettez `true` derrière un proxy inverse HTTPS)   |
 | `REQUIRE_API_KEY`                                    | `false`                                     | Applique la clé API Bearer sur les routes `/v1/*` (recommandé pour les déploiements exposés à Internet) |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | vide                                        | Proxy sortant optionnel pour les appels aux fournisseurs externes                              |
@@ -1233,7 +1232,6 @@ Remarques :
 
 - État principal de l'app : `${DATA_DIR}/db/data.sqlite` (SQLite — fournisseurs, combos, alias, clés, paramètres, historique d'utilisation)
 - Sauvegardes automatiques : `${DATA_DIR}/db/backups/`
-- Journaux optionnels de requêtes/translator : `<repo>/logs/...` quand `ENABLE_REQUEST_LOGS=true`
 - `${DATA_DIR}` et `~/.9router` résolvent tous deux le même emplacement dans un conteneur Docker — le lien symbolique `/root/.9router -> /app/data` est créé au moment de la compilation.
 
 </details>
@@ -1352,7 +1350,6 @@ Remarques :
 
 **Pas de journaux de requêtes dans `logs/`**
 
-- Définissez `ENABLE_REQUEST_LOGS=true`
 
 ---
 

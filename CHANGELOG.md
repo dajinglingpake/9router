@@ -259,7 +259,6 @@
   Windows
 - **OAuth**: declare missing `searchParams` in register-session handler (was a
   500 instead of JSON on error)
-- **DB**: `ENABLE_REQUEST_LOGS` env var now overrides the UI setting correctly;
   observability defaults to off (opt-in)
 - **Translator**: preserve Codex Responses Lite tool use across chat-native
   OpenAI-compatible providers

@@ -1214,7 +1214,6 @@ docker pull decolua/9router:latest   # به‌روزرسانی به آخرین �
 | `NEXT_PUBLIC_CLOUD_URL`                              | `https://9router.com`                    | آدرس ابری عمومی/سازگار با گذشته (برای زمان اجرای سرور `CLOUD_URL` را ترجیح دهید)        |
 | `API_KEY_SECRET`                                     | `endpoint-proxy-api-key-secret`          | راز HMAC برای کلیدهای API تولید شده                                                  |
 | `MACHINE_ID_SALT`                                    | `endpoint-proxy-salt`                    | نمک برای هش کردن شناسه ماشین پایدار                                                  |
-| `ENABLE_REQUEST_LOGS`                                | `false`                                  | لاگ‌های درخواست/پاسخ را در `logs/` فعال می‌کند                                         |
 | `AUTH_COOKIE_SECURE`                                 | `false`                                  | کوکی احراز هویت `Secure` را اعمال می‌کند (در پشت پروکسی معکوس HTTPS `true` تنظیم کنید)                  |
 | `REQUIRE_API_KEY`                                    | `false`                                  | اعمال کلید API Bearer در مسیرهای `/v1/*` (برای استقرارهای در معرض اینترنت توصیه می‌شود) |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | خالی                                    | پروکسی خروجی اختیاری برای فراخوانی‌های ارائه‌دهنده بالا دست                                 |
@@ -1231,7 +1230,6 @@ docker pull decolua/9router:latest   # به‌روزرسانی به آخرین �
 
 - وضعیت اصلی برنامه: `${DATA_DIR}/db/data.sqlite` (SQLite — ارائه‌دهندگان، ترکیب‌ها، نام‌های مستعار، کلیدها، تنظیمات، تاریخچه استفاده)
 - پشتیبان‌گیری خودکار: `${DATA_DIR}/db/backups/`
-- لاگ‌های اختیاری درخواست/مترجم: `<repo>/logs/...` وقتی `ENABLE_REQUEST_LOGS=true`
 - هر دو `${DATA_DIR}` و `~/.9router` در یک کانتینر داکر به یک مکان اشاره می‌کنند — symlink `/root/.9router -> /app/data` در زمان ساخت ایجاد می‌شود.
 
 </details>
@@ -1350,7 +1348,6 @@ docker pull decolua/9router:latest   # به‌روزرسانی به آخرین �
 
 **لاگ‌های درخواست در `logs/` وجود ندارد**
 
-- `ENABLE_REQUEST_LOGS=true` را تنظیم کنید
 
 ---
 

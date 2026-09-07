@@ -51,7 +51,6 @@ export NODE_ENV="production"
 | `INITIAL_PASSWORD` | `123456` | 仪表盘登录密码 |
 | `DATA_DIR` | `~/.9router` | 数据库与数据存储路径 |
 | `NODE_ENV` | `development` | 部署时设为 `production` |
-| `ENABLE_REQUEST_LOGS` | `false` | 启用 debug 请求/响应日志 |
 
 ### 步骤 5:创建数据目录
 

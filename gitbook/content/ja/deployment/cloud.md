@@ -51,7 +51,6 @@ export NODE_ENV="production"
 | `INITIAL_PASSWORD` | `123456` | ダッシュボードログインパスワード |
 | `DATA_DIR` | `~/.9router` | データベースとデータの保存パス |
 | `NODE_ENV` | `development` | デプロイ時は `production` に設定 |
-| `ENABLE_REQUEST_LOGS` | `false` | デバッグリクエスト/レスポンスログを有効化 |
 
 ### ステップ5: データディレクトリを作成
 

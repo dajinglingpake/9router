@@ -200,7 +200,6 @@ export PORT="20128"
 export NODE_ENV="production"
 
 # Logging
-export ENABLE_REQUEST_LOGS="false"
 ```
 
 ### Directorio de datos
