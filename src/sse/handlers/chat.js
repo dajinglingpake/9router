@@ -241,7 +241,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
+        // Preserve a real upstream rate-limit status so clients can honor
+        // Retry-After instead of seeing a generic 503 and retrying too soon.
+        const lastErrorStatus = Number(credentials.lastErrorCode || lastStatus);
+        const status = lastErrorStatus === HTTP_STATUS.RATE_LIMITED
+          ? HTTP_STATUS.RATE_LIMITED
+          : HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
       }

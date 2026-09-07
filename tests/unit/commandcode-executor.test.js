@@ -189,4 +189,29 @@ describe("CommandCode in Combo Fallback", () => {
     expect(handleSingleModel).toHaveBeenNthCalledWith(1, expect.anything(), "commandcode/poolside/laguna-s-2.1-free");
     expect(handleSingleModel).toHaveBeenNthCalledWith(2, expect.anything(), "openai/gpt-4o-mini");
   });
+
+  it("preserves Retry-After and rate-limit status from a leaf response", async () => {
+    const log = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+    };
+    const handleSingleModel = vi.fn(async () => new Response(
+      JSON.stringify({ error: { message: "[codex/gpt-6-astra] [429]: Rate limit exceeded" } }),
+      { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "12" } }
+    ));
+
+    const response = await handleComboChat({
+      body: { messages: [{ role: "user", content: "Hello" }] },
+      models: ["cx/gpt-6-astra"],
+      handleSingleModel,
+      log,
+      comboName: "rate-limit-combo",
+      comboStrategy: "fallback",
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("12");
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+  });
 });
