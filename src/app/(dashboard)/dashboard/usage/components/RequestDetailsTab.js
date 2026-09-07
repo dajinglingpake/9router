@@ -22,6 +22,13 @@ function getTodayDateFilters() {
   return { startDate: local(start), endDate: local(end) };
 }
 
+function formatDashboardDate(timestamp) {
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+  });
+}
+
 async function fetchProviderNames() {
   if (providerNameCache && providerNodesCache) {
     return { providerNameCache, providerNodesCache };
@@ -389,7 +396,7 @@ export default function RequestDetailsTab() {
                     className="border-b border-black/5 dark:border-white/5 last:border-b-0 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
                   >
                     <td className="whitespace-nowrap p-4 text-sm text-text-main">
-                      {new Date(detail.timestamp).toLocaleString()}
+                      {formatDashboardDate(detail.timestamp)}
                     </td>
                     <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main">
                       {detail.model}
@@ -464,7 +471,7 @@ export default function RequestDetailsTab() {
               </div>
               <div>
                 <span className="text-text-muted">Timestamp:</span>{" "}
-                <span className="text-text-main">{new Date(selectedDetail.timestamp).toLocaleString()}</span>
+                <span className="text-text-main">{formatDashboardDate(selectedDetail.timestamp)}</span>
               </div>
               <div>
                  <span className="text-text-muted">Provider:</span>{" "}

@@ -403,7 +403,7 @@ export async function getDistinctUsageClientIps() {
 
 // Usage rows are still useful in the details view when request body logging is disabled.
 export async function getUsageRequestDetails(filter = {}) {
-  const rows = await getUsageHistory(filter);
+  const rows = (await getUsageHistory(filter)).reverse();
   const page = filter.page || 1;
   const pageSize = filter.pageSize || 20;
   const totalItems = rows.length;
