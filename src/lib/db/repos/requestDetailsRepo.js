@@ -171,6 +171,15 @@ export async function getRequestDetails(filter = {}) {
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
   if (filter.apiKey) { conds.push("apiKey = ?"); params.push(filter.apiKey); }
+  if (Array.isArray(filter.apiKeyValues)) {
+    const values = filter.apiKeyValues.filter((value) => typeof value === "string" && value);
+    if (values.length === 0) {
+      conds.push("1 = 0");
+    } else {
+      conds.push(`apiKey IN (${values.map(() => "?").join(", ")})`);
+      params.push(...values);
+    }
+  }
   if (filter.clientIp) { conds.push("clientIp = ?"); params.push(filter.clientIp); }
   if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
@@ -207,6 +216,12 @@ export async function getDistinctModels() {
   const db = await getAdapter();
   const rows = db.all(`SELECT DISTINCT model FROM requestDetails WHERE model IS NOT NULL ORDER BY model ASC`);
   return rows.map((r) => r.model);
+}
+
+export async function getDistinctClientIps() {
+  const db = await getAdapter();
+  const rows = db.all(`SELECT DISTINCT clientIp FROM requestDetails WHERE clientIp IS NOT NULL AND clientIp != '' ORDER BY clientIp ASC`);
+  return rows.map((r) => r.clientIp);
 }
 
 export async function getRequestDetailById(id) {

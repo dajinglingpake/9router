@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
-import { getDistinctModels, getDistinctProviders } from "@/lib/requestDetailsDb";
+import { getDistinctClientIps, getDistinctModels, getDistinctProviders } from "@/lib/requestDetailsDb";
+import { getApiKeys } from "@/lib/db";
+import { getDistinctUsageClientIps, getDistinctUsageModels, getDistinctUsageProviders } from "@/lib/db";
 import { getProviderNodes } from "@/lib/localDb";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/usage/providers
@@ -11,10 +15,18 @@ export async function GET() {
   try {
     // Query DISTINCT provider column directly — avoids parsing every row's
     // full JSON blob (can be hundreds of MB), which previously caused OOM.
-    const [providerIds, models] = await Promise.all([
+    const [detailProviderIds, detailModels, detailClientIps, usageProviderIds, usageModels, usageClientIps, apiKeys] = await Promise.all([
       getDistinctProviders(),
       getDistinctModels(),
+      getDistinctClientIps(),
+      getDistinctUsageProviders(),
+      getDistinctUsageModels(),
+      getDistinctUsageClientIps(),
+      getApiKeys(),
     ]);
+    const providerIds = [...new Set([...detailProviderIds, ...usageProviderIds])].sort();
+    const models = [...new Set([...detailModels, ...usageModels])].sort();
+    const clientIps = [...new Set([...detailClientIps, ...usageClientIps])].sort();
 
     const providerNodes = await getProviderNodes();
     const nodeMap = {};
@@ -33,7 +45,12 @@ export async function GET() {
       return { id: providerId, name };
     });
 
-    return NextResponse.json({ providers, models });
+    return NextResponse.json({
+      providers,
+      models,
+      clientIps,
+      apiKeys: apiKeys.map(({ id, name }) => ({ id, name })),
+    });
   } catch (error) {
     console.error("[API] Failed to get providers:", error);
     return NextResponse.json(

@@ -364,6 +364,14 @@ export async function getUsageHistory(filter = {}) {
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
   if (filter.apiKey) { conds.push("apiKey = ?"); params.push(filter.apiKey); }
+  if (Array.isArray(filter.apiKeyValues)) {
+    const values = filter.apiKeyValues.filter((value) => typeof value === "string" && value);
+    if (values.length === 0) conds.push("1 = 0");
+    else {
+      conds.push(`apiKey IN (${values.map(() => "?").join(", ")})`);
+      params.push(...values);
+    }
+  }
   if (filter.clientIp) { conds.push("clientIp = ?"); params.push(filter.clientIp); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
@@ -376,6 +384,49 @@ export async function getUsageHistory(filter = {}) {
     connectionId: r.connectionId, apiKey: r.apiKey, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint, clientIp: r.clientIp,
     cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}),
   }));
+}
+
+export async function getDistinctUsageProviders() {
+  const db = await getAdapter();
+  return db.all(`SELECT DISTINCT provider FROM usageHistory WHERE provider IS NOT NULL AND provider != '' ORDER BY provider ASC`).map((r) => r.provider);
+}
+
+export async function getDistinctUsageModels() {
+  const db = await getAdapter();
+  return db.all(`SELECT DISTINCT model FROM usageHistory WHERE model IS NOT NULL AND model != '' ORDER BY model ASC`).map((r) => r.model);
+}
+
+export async function getDistinctUsageClientIps() {
+  const db = await getAdapter();
+  return db.all(`SELECT DISTINCT clientIp FROM usageHistory WHERE clientIp IS NOT NULL AND clientIp != '' ORDER BY clientIp ASC`).map((r) => r.clientIp);
+}
+
+// Usage rows are still useful in the details view when request body logging is disabled.
+export async function getUsageRequestDetails(filter = {}) {
+  const rows = await getUsageHistory(filter);
+  const page = filter.page || 1;
+  const pageSize = filter.pageSize || 20;
+  const totalItems = rows.length;
+  const offset = (page - 1) * pageSize;
+  return {
+    details: rows.slice(offset, offset + pageSize).map((row, index) => ({
+      id: `usage-${row.timestamp}-${offset + index}`,
+      ...row,
+      latency: {},
+      request: {},
+      providerRequest: undefined,
+      providerResponse: undefined,
+      response: undefined,
+    })),
+    pagination: {
+      page,
+      pageSize,
+      totalItems,
+      totalPages: Math.ceil(totalItems / pageSize),
+      hasNext: offset + pageSize < totalItems,
+      hasPrev: page > 1,
+    },
+  };
 }
 
 function loadDaysInRange(adapter, maxDays) {

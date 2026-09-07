@@ -11,6 +11,17 @@ import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 let providerNameCache = null;
 let providerNodesCache = null;
 
+function getTodayDateFilters() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  const local = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { startDate: local(start), endDate: local(end) };
+}
+
 async function fetchProviderNames() {
   if (providerNameCache && providerNodesCache) {
     return { providerNameCache, providerNodesCache };
@@ -112,15 +123,16 @@ export default function RequestDetailsTab() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState([]);
   const [models, setModels] = useState([]);
+  const [apiKeys, setApiKeys] = useState([]);
+  const [clientIps, setClientIps] = useState([]);
   const [providerNameCache, setProviderNameCache] = useState(null);
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState(() => ({
     provider: "",
     model: "",
-    apiKey: "",
+    apiKeyName: "",
     clientIp: "",
-    startDate: "",
-    endDate: ""
-  });
+    ...getTodayDateFilters()
+  }));
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +145,8 @@ export default function RequestDetailsTab() {
         if (cancelled) return;
         setProviders(data.providers || []);
         setModels(data.models || []);
+        setApiKeys(data.apiKeys || []);
+        setClientIps(data.clientIps || []);
         setProviderNameCache(cache.providerNameCache);
       } catch (error) {
         console.error("Failed to fetch providers:", error);
@@ -156,8 +170,8 @@ export default function RequestDetailsTab() {
         if (filters.provider) params.append("provider", filters.provider);
         const model = filters.model.trim();
         if (model) params.append("model", model);
-        const apiKey = filters.apiKey.trim();
-        if (apiKey) params.append("apiKey", apiKey);
+        const apiKeyName = filters.apiKeyName.trim();
+        if (apiKeyName) params.append("apiKeyName", apiKeyName);
         const clientIp = filters.clientIp.trim();
         if (clientIp) params.append("clientIp", clientIp);
         if (filters.startDate) params.append("startDate", filters.startDate);
@@ -178,7 +192,7 @@ export default function RequestDetailsTab() {
 
     void loadDetails();
     return () => { cancelled = true; };
-  }, [pagination.page, pagination.pageSize, filters.provider, filters.model, filters.apiKey, filters.clientIp, filters.startDate, filters.endDate]);
+  }, [pagination.page, pagination.pageSize, filters.provider, filters.model, filters.apiKeyName, filters.clientIp, filters.startDate, filters.endDate]);
 
   const handleViewDetail = (detail) => {
     setSelectedDetail(detail);
@@ -194,7 +208,8 @@ export default function RequestDetailsTab() {
   };
 
   const handleClearFilters = () => {
-    setFilters({ provider: "", model: "", apiKey: "", clientIp: "", startDate: "", endDate: "" });
+    setFilters({ provider: "", model: "", apiKeyName: "", clientIp: "", startDate: "", endDate: "" });
+    setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
   return (
@@ -206,7 +221,10 @@ export default function RequestDetailsTab() {
             <select
               id="provider-filter"
               value={filters.provider}
-              onChange={(e) => setFilters({ ...filters, provider: e.target.value })}
+              onChange={(e) => {
+                setFilters({ ...filters, provider: e.target.value });
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20",
@@ -246,18 +264,25 @@ export default function RequestDetailsTab() {
           </div>
 
           <div className="flex min-w-0 flex-col gap-2">
-            <label htmlFor="api-key-filter" className="text-sm font-medium text-text-main">API Key</label>
+            <label htmlFor="api-key-filter" className="text-sm font-medium text-text-main">API Key Name</label>
             <input
               id="api-key-filter"
               type="text"
-              value={filters.apiKey}
-              onChange={(e) => setFilters({ ...filters, apiKey: e.target.value })}
-              placeholder="All API keys"
+              value={filters.apiKeyName}
+              list="api-key-filter-options"
+              onChange={(e) => {
+                setFilters({ ...filters, apiKeyName: e.target.value });
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
+              placeholder="All API key names"
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
               )}
             />
+            <datalist id="api-key-filter-options">
+              {apiKeys.map((apiKey) => <option key={apiKey.id} value={apiKey.name} />)}
+            </datalist>
           </div>
 
           <div className="flex min-w-0 flex-col gap-2">
@@ -266,13 +291,20 @@ export default function RequestDetailsTab() {
               id="client-ip-filter"
               type="text"
               value={filters.clientIp}
-              onChange={(e) => setFilters({ ...filters, clientIp: e.target.value })}
+              list="client-ip-filter-options"
+              onChange={(e) => {
+                setFilters({ ...filters, clientIp: e.target.value });
+                setPagination((prev) => ({ ...prev, page: 1 }));
+              }}
               placeholder="All IPs"
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
               )}
             />
+            <datalist id="client-ip-filter-options">
+              {clientIps.map((clientIp) => <option key={clientIp} value={clientIp} />)}
+            </datalist>
           </div>
           
           <div className="flex min-w-0 flex-col gap-2">
@@ -308,7 +340,7 @@ export default function RequestDetailsTab() {
             <Button 
               variant="ghost" 
               onClick={handleClearFilters}
-              disabled={!filters.provider && !filters.model && !filters.apiKey && !filters.clientIp && !filters.startDate && !filters.endDate}
+              disabled={!filters.provider && !filters.model && !filters.apiKeyName && !filters.clientIp && !filters.startDate && !filters.endDate}
               className="w-full"
             >
               Clear Filters

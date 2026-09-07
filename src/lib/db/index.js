@@ -67,6 +67,8 @@ export {
 export {
   statsEmitter, trackPendingRequest, getActiveRequests,
   saveRequestUsage, getUsageHistory, getUsageStats, getChartData,
+  getDistinctUsageProviders, getDistinctUsageModels, getDistinctUsageClientIps,
+  getUsageRequestDetails,
   appendRequestLog, getRecentLogs,
 } from "./repos/usageRepo.js";
 
@@ -78,7 +80,7 @@ export {
 
 // Request details
 export {
-  saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders, getDistinctModels,
+  saveRequestDetail, getRequestDetails, getRequestDetailById, getDistinctProviders, getDistinctModels, getDistinctClientIps,
 } from "./repos/requestDetailsRepo.js";
 
 // Audit log maintenance

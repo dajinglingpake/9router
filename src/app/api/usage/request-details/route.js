@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { getRequestDetails } from "@/lib/usageDb";
+import { getApiKeys } from "@/lib/db";
+import { getUsageRequestDetails } from "@/lib/db";
 
 /**
  * GET /api/usage/request-details
- * Query parameters: page, pageSize (1-100), provider, model, connectionId, apiKey, clientIp, status, startDate, endDate
+ * Query parameters: page, pageSize (1-100), provider, model, connectionId, apiKey, apiKeyName, clientIp, status, startDate, endDate
  */
 export async function GET(request) {
   try {
@@ -17,6 +19,7 @@ export async function GET(request) {
     const model = searchParams.get("model");
     const connectionId = searchParams.get("connectionId");
     const apiKey = searchParams.get("apiKey");
+    const apiKeyName = searchParams.get("apiKeyName")?.trim();
     const clientIp = searchParams.get("clientIp");
     const status = searchParams.get("status");
     const startDate = searchParams.get("startDate");
@@ -45,12 +48,23 @@ export async function GET(request) {
     if (model) filter.model = model;
     if (connectionId) filter.connectionId = connectionId;
     if (apiKey?.trim()) filter.apiKey = apiKey.trim();
+    if (apiKeyName) {
+      const keys = await getApiKeys();
+      filter.apiKeyValues = keys
+        .filter((key) => key.name?.toLowerCase().includes(apiKeyName.toLowerCase()))
+        .map((key) => key.key);
+    }
     if (clientIp) filter.clientIp = clientIp;
     if (status) filter.status = status;
     if (startDate) filter.startDate = startDate;
     if (endDate) filter.endDate = endDate;
     
-    const result = await getRequestDetails(filter);
+    let result = await getRequestDetails(filter);
+    // Usage tracking remains enabled when full request logging is disabled.
+    // Fall back to its metadata rows so the details tab still shows real calls.
+    if (result.pagination.totalItems === 0) {
+      result = await getUsageRequestDetails(filter);
+    }
 
     // Redact conversation payloads: the stored details include full request
     // bodies (user prompts, tool calls) and provider responses. Returning them
