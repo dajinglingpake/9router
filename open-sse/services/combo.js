@@ -4,6 +4,7 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
+import { parseRetryAfterMs } from "../utils/retryAfter.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 
@@ -319,6 +320,17 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         retryAfter = errorBody?.retryAfter || null;
       } catch {
         // Ignore JSON parse errors
+      }
+
+      // Preserve a Retry-After header when the leaf handler already knows the
+      // account/model cooldown. Without this, the combo response loses the
+      // only signal that tells clients when it is safe to retry.
+      const retryAfterMs = parseRetryAfterMs(result.headers);
+      if (retryAfterMs != null) {
+        const headerRetryAfter = new Date(Date.now() + retryAfterMs).toISOString();
+        if (!earliestRetryAfter || new Date(headerRetryAfter) < new Date(earliestRetryAfter)) {
+          earliestRetryAfter = headerRetryAfter;
+        }
       }
 
       // Track earliest retryAfter across all combo models
