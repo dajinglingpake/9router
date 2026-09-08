@@ -72,7 +72,7 @@ export default function LatencyChart({ period = "today", embedded = false }) {
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: "currentColor", fillOpacity: 0.5 }} tickLine={false} axisLine={false} />
             <YAxis tick={{ fontSize: 10, fill: "currentColor", fillOpacity: 0.5 }} tickLine={false} axisLine={false} unit=" ms" width={60} />
             <Tooltip formatter={(value, name) => [`${value} ms`, "Average latency"]} />
-            {data.models.map((model, index) => <Line key={model} type="monotone" dataKey={model} hide={hiddenModels.has(model)} connectNulls={false} stroke={["#f97316", "#2563eb", "#16a34a", "#dc2626", "#9333ea"][index % 5]} strokeWidth={2} dot={false} />)}
+            {data.models.map((model, index) => <Line key={model} type="monotone" dataKey={model} hide={hiddenModels.has(model)} connectNulls={false} stroke={["#f97316", "#2563eb", "#16a34a", "#dc2626", "#9333ea"][index % 5]} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />)}
           </LineChart>
         </ResponsiveContainer>
         </>

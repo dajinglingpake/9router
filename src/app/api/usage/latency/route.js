@@ -39,7 +39,7 @@ export async function GET(request) {
     const modelSet = new Set();
     for (const detail of result.details || []) {
       const total = Number(detail.latency?.total);
-      if (!Number.isFinite(total) || total <= 0 || !detail.model) continue;
+      if (!Number.isFinite(total) || total < 0 || !detail.model) continue;
       const timestamp = new Date(detail.timestamp).getTime();
       const index = Math.floor((timestamp - buckets.start) / buckets.size);
       if (index < 0 || index >= buckets.count) continue;
