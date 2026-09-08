@@ -60,7 +60,8 @@ export function createSSEStream(options = {}) {
     connectionId = null,
     body = null,
     onStreamComplete = null,
-    apiKey = null
+    apiKey = null,
+    credentials = null
   } = options;
 
   let buffer = "";
@@ -76,7 +77,8 @@ export function createSSEStream(options = {}) {
         toolNameMap,
         toolNamespaces: collectToolNamespaces(body?.tools),
         customToolNames: new Set(customToolNames || []),
-        model
+        model,
+        sessionId: credentials?._clientSessionId || null,
       }
     : null;
 
@@ -505,7 +507,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, customToolNames = null, credentials = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -518,7 +520,8 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    credentials
   });
 }
 

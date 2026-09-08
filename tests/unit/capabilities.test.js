@@ -68,4 +68,15 @@ describe("getCapabilitiesForModel", () => {
     expect(getCapabilitiesForModel("codex", "gpt-5.3-codex-spark-review").contextWindow).toBe(128000);
     expect(getCapabilitiesForModel("cx", "gpt-5.3-codex-spark-high").contextWindow).toBe(128000);
   });
+
+  it("reports Codex GPT 6.0 Astra as a vision and thinking capable model", () => {
+    expect(getCapabilitiesForModel("codex", "gpt-6-astra")).toMatchObject({
+      vision: true,
+      reasoning: true,
+      search: true,
+      thinkingFormat: "openai",
+      contextWindow: 272000,
+      maxOutput: 128000,
+    });
+  });
 });
