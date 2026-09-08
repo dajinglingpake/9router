@@ -326,7 +326,7 @@ export async function saveRequestUsage(entry) {
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           entry.clientIp || null, promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
+          stringifyJson(tokens), stringifyJson({ latency: entry.latency || null }),
         ]
       );
 
@@ -377,13 +377,16 @@ export async function getUsageHistory(filter = {}) {
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, cost, status, tokens FROM usageHistory ${where} ORDER BY id ASC`, params);
+  const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY id ASC`, params);
 
-  return rows.map((r) => ({
-    timestamp: r.timestamp, provider: r.provider, model: r.model,
-    connectionId: r.connectionId, apiKey: r.apiKey, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint, clientIp: r.clientIp,
-    cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}),
-  }));
+  return rows.map((r) => {
+    const meta = parseJson(r.meta, {});
+    return {
+      timestamp: r.timestamp, provider: r.provider, model: r.model,
+      connectionId: r.connectionId, apiKey: r.apiKey, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint, clientIp: r.clientIp,
+      cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}), latency: meta.latency || {},
+    };
+  });
 }
 
 export async function getDistinctUsageProviders() {

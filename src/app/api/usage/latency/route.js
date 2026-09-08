@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRequestDetails } from "@/lib/usageDb";
+import { getUsageHistory } from "@/lib/usageDb";
 
 const PERIOD_MS = { "24h": 24 * 60 * 60 * 1000, "7d": 7 * 24 * 60 * 60 * 1000, "30d": 30 * 24 * 60 * 60 * 1000, "60d": 60 * 24 * 60 * 60 * 1000 };
 
@@ -33,17 +33,17 @@ export async function GET(request) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
 
-    const result = await getRequestDetails({ page: 1, pageSize: 1000, startDate: getStartDate(period) });
+    const details = await getUsageHistory({ startDate: getStartDate(period) });
     const buckets = getBuckets(period);
     const grouped = {};
     const modelSet = new Set();
-    for (const detail of result.details || []) {
+    for (const detail of details) {
+      if (detail.model) modelSet.add(detail.model);
       const total = Number(detail.latency?.total);
       if (!Number.isFinite(total) || total < 0 || !detail.model) continue;
       const timestamp = new Date(detail.timestamp).getTime();
       const index = Math.floor((timestamp - buckets.start) / buckets.size);
       if (index < 0 || index >= buckets.count) continue;
-      modelSet.add(detail.model);
       const key = `${index}|${detail.model}`;
       const item = grouped[key] ||= { index, model: detail.model, requests: 0, totalLatency: 0 };
       item.requests += 1;
@@ -55,7 +55,8 @@ export async function GET(request) {
       const point = { label: buckets.label(buckets.start + index * buckets.size), timestamp: buckets.start + index * buckets.size };
       for (const model of models) {
         const item = grouped[`${index}|${model}`];
-        point[model] = item ? Math.round(item.totalLatency / item.requests) : null;
+        // Keep every bucket numeric so zero-latency periods remain visible on the zero axis.
+        point[model] = item ? Math.round(item.totalLatency / item.requests) : 0;
       }
       return point;
     });
