@@ -69,7 +69,7 @@ export BASE_URL="${BASE_URL:-$PUBLIC_URL}"
 export NEXT_PUBLIC_BASE_URL="${NEXT_PUBLIC_BASE_URL:-$PUBLIC_URL}"
 
 echo "[1/4] Building Docker image..."
-docker build --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
+docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
 
 echo "[2/4] Stopping legacy bare 9router process if present..."
 current_uid="$(id -u)"

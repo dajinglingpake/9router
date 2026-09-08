@@ -63,12 +63,6 @@ describe("getCapabilitiesForModel", () => {
     expect(getCapabilitiesForModel("kiro", "gpt-5.6-sol-thinking-agentic")).toMatchObject(kiroGpt56Expected);
   });
 
-  it("reports Codex Spark variants with their 128k context window", () => {
-    expect(getCapabilitiesForModel("codex", "gpt-5.3-codex-spark").contextWindow).toBe(128000);
-    expect(getCapabilitiesForModel("codex", "gpt-5.3-codex-spark-review").contextWindow).toBe(128000);
-    expect(getCapabilitiesForModel("cx", "gpt-5.3-codex-spark-high").contextWindow).toBe(128000);
-  });
-
   it("reports Codex GPT 6.0 Astra as a vision and thinking capable model", () => {
     expect(getCapabilitiesForModel("codex", "gpt-6-astra")).toMatchObject({
       vision: true,

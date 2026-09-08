@@ -104,7 +104,7 @@ echo "[2/7] Checking remote deployment..."
 sudo_remote "mkdir -p $(shell_quote "$REMOTE_DIR/data")"
 
 echo "[3/7] Building local Docker image..."
-docker build --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
+docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
 
 echo "[4/7] Loading image on remote host..."
 REMOTE_IMAGE_TAR="/tmp/9router-image-$(date +%s).tar"
