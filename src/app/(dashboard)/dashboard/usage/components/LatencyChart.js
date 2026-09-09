@@ -68,7 +68,7 @@ export default function LatencyChart({ period = "today", embedded = false }) {
             <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.1} />
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: "currentColor", fillOpacity: 0.5 }} tickLine={false} axisLine={false} />
             <YAxis tick={{ fontSize: 10, fill: "currentColor", fillOpacity: 0.5 }} tickLine={false} axisLine={false} unit=" ms" width={60} />
-            <Tooltip formatter={(value, name) => [`${value} ms`, "Average latency"]} />
+            <Tooltip formatter={(value, name) => [`${value} ms`, name]} />
             {data.models.map((model, index) => <Line key={model} type="monotone" dataKey={model} hide={hiddenModels.has(model)} connectNulls={false} stroke={["#f97316", "#2563eb", "#16a34a", "#dc2626", "#9333ea"][index % 5]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />)}
           </LineChart>
         </ResponsiveContainer>
