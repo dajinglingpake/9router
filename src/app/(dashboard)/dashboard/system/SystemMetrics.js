@@ -21,17 +21,6 @@ const formatLatency = (milliseconds) => {
   return `${(milliseconds / 1000).toFixed(1)} s`;
 };
 
-const requestTagLabels = {
-  "🟢": "绿色",
-  "🔵": "蓝色",
-  "🟣": "紫色",
-  "🟡": "黄色",
-  "🟠": "橙色",
-  "🔴": "红色",
-  "⚪": "白色",
-  "🟤": "棕色",
-};
-
 
 function MetricCard({ icon, label, value, detail, tone = "text-primary" }) {
   return (
@@ -149,7 +138,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
           <MetricCard icon="speed" label="下行实时速率" value={metrics ? `${formatBytes(metrics.traffic.downloadRateBytesPerSecond)}/s` : "—"} detail="最近 10 秒平均" tone="text-teal-600" />
           <MetricCard icon="trending_up" label="请求吞吐率" value={metrics ? `${metrics.requestStats.throughputPerMinute} req/min` : "—"} detail="5 min average" tone="text-blue-600" />
           <MetricCard icon="check_circle" label="请求成功率" value={metrics ? `${metrics.requestStats.successRatePercent}%` : "—"} detail={metrics ? `客户端错误 ${metrics.requestStats.error4xx} · 服务端错误 ${metrics.requestStats.error5xx}` : "正在读取"} tone="text-emerald-600" />
-          <MetricCard icon="speed" label="输出速度" value={metrics ? `${metrics.requestStats.outputTokensPerSecond} tokens/s` : "—"} detail="基于已记录输出 Token 估算" tone="text-amber-600" />
+          <MetricCard icon="speed" label="实时输出速度" value={`${metrics?.traffic?.outputTokensPerSecond || 0} tokens/s`} detail="最近 10 秒流式输出估算" tone="text-amber-600" />
           <MetricCard icon="wifi" label="网络连接数" value={metrics?.networkConnections ?? "—"} detail="当前活动 Socket 连接" tone="text-cyan-600" />
         </div>
       </section>
@@ -187,7 +176,6 @@ export default function SystemMetrics({ initialMetrics = null }) {
                             <div><dt className="inline">上游模型：</dt><dd className="ml-1 break-all font-mono text-text-main">{item.upstreamModel || request.model}</dd></div>
                             <div><dt className="inline">模型级别：</dt><dd className="inline font-semibold text-text-main">{item.thinkingLevel || "auto"}</dd></div>
                             <div><dt className="inline">格式：</dt><dd className="inline text-text-main">{item.sourceFormat || "—"} → {item.targetFormat || "—"}</dd></div>
-                            <div><dt className="inline">会话日志标记：</dt><dd className="inline text-text-main">{item.requestTag ? `${item.requestTag} ${requestTagLabels[item.requestTag] || "标记"}（同色日志属于同一会话）` : "—"}</dd></div>
                           </dl>
                         </div>
                       ))}

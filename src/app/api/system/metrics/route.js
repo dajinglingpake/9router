@@ -71,8 +71,6 @@ export async function getSystemMetrics() {
     maxLatencyMs: latencies.length ? Math.max(...latencies) : 0,
     activeUploadBytes: requestItems.reduce((sum, request) => sum + (Number(request.requestBytes) || 0), 0),
   };
-  const recentLatency = history.map((item) => item.latency?.total).filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
-  const outputTokens = history.reduce((sum, item) => sum + (Number(item.tokens?.completion_tokens ?? item.tokens?.output_tokens) || 0), 0);
   const recentCount = history.length;
   const runtimeErrors = getRuntimeRequestErrors();
   const runtime4xx = runtimeErrors.filter((item) => /4\d\d/.test(item.status)).length;
@@ -83,8 +81,6 @@ export async function getSystemMetrics() {
     successRatePercent: recentCount + runtimeErrors.length ? Math.round(successful / (recentCount + runtimeErrors.length) * 1000) / 10 : 0,
     error4xx: history.filter((item) => /4\d\d/.test(String(item.status))).length + runtime4xx,
     error5xx: history.filter((item) => /5\d\d|error|failed/i.test(String(item.status))).length + runtime5xx,
-    outputTokensPerSecond: outputTokens && recentLatency.length
-      ? Math.round(outputTokens / (recentLatency.reduce((sum, value) => sum + value, 0) / 1000) * 10) / 10 : 0,
   };
   const memory = process.memoryUsage();
   const cpu = getCpuMetrics();
@@ -118,7 +114,7 @@ export async function getSystemMetrics() {
     requestSummary,
     traffic: getTrafficSnapshot(),
     runtime: { threads: await getThreadCount() },
-    requestStats,
+    requestStats: { ...requestStats, outputTokensPerSecond: undefined },
     activeRequests,
   };
 }

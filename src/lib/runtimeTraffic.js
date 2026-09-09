@@ -4,6 +4,7 @@ const state = global._runtimeTraffic || {
   downloadBytes: 0,
   samples: [],
   active: new Map(),
+  outputStreams: new Map(),
 };
 global._runtimeTraffic = state;
 
@@ -27,17 +28,42 @@ export function recordTraffic({ direction, bytes = 0, requestKey = null } = {}) 
   }
 }
 
+// Streaming text is converted to an approximate token count for live display.
+export function recordOutputText(text, streamId) {
+  if (typeof text !== "string" || !text) return;
+  const stream = state.outputStreams.get(streamId);
+  if (!stream) return;
+  const now = Date.now();
+  stream.tokens += Math.max(1, Math.ceil(Buffer.byteLength(text, "utf8") / 4));
+  stream.firstAt ||= now;
+  stream.lastAt = now;
+}
+
+export function beginOutputStream() {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  state.outputStreams.set(id, { tokens: 0, firstAt: null, lastAt: null });
+  return id;
+}
+export function endOutputStream(id) { if (id) state.outputStreams.delete(id); }
+
 export function getTrafficSnapshot() {
   const now = Date.now();
   const cutoff = now - 10_000;
   state.samples = state.samples.filter((sample) => sample.now >= cutoff);
   const uploadWindow = state.samples.reduce((sum, sample) => sum + sample.uploadBytes, 0);
   const downloadWindow = state.samples.reduce((sum, sample) => sum + sample.downloadBytes, 0);
+  let outputTokensPerSecond = 0;
+  for (const stream of state.outputStreams.values()) {
+    if (stream.firstAt && stream.lastAt > stream.firstAt) {
+      outputTokensPerSecond += stream.tokens / ((now - stream.firstAt) / 1000);
+    }
+  }
   return {
     uploadBytes: state.uploadBytes,
     downloadBytes: state.downloadBytes,
     uploadRateBytesPerSecond: Math.round(uploadWindow / 10),
     downloadRateBytesPerSecond: Math.round(downloadWindow / 10),
+    outputTokensPerSecond: Math.round(outputTokensPerSecond * 10) / 10,
   };
 }
 
