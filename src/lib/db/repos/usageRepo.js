@@ -28,6 +28,8 @@ if (!global._statsEmitter) {
   global._statsEmitter.setMaxListeners(50);
 }
 if (!global._pendingTimers) global._pendingTimers = {};
+if (!global._pendingRequestStarts) global._pendingRequestStarts = {};
+if (!global._pendingRequestDetails) global._pendingRequestDetails = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
@@ -35,6 +37,8 @@ if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update:
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
 const pendingTimers = global._pendingTimers;
+const pendingRequestStarts = global._pendingRequestStarts;
+const pendingRequestDetails = global._pendingRequestDetails;
 const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
@@ -179,7 +183,7 @@ async function calculateCost(provider, model, tokens) {
   }
 }
 
-export function trackPendingRequest(model, provider, connectionId, started, error = false) {
+export function trackPendingRequest(model, provider, connectionId, started, error = false, details = {}) {
   const modelKey = provider ? `${model} (${provider})` : model;
   const timerKey = `${connectionId}|${modelKey}`;
 
@@ -200,9 +204,15 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   }
 
   if (started) {
+    if (!pendingRequestStarts[timerKey]) pendingRequestStarts[timerKey] = [];
+    pendingRequestStarts[timerKey].push(Date.now());
+    if (!pendingRequestDetails[timerKey]) pendingRequestDetails[timerKey] = [];
+    pendingRequestDetails[timerKey].push({ ...details, startedAt: Date.now() });
     clearTimeout(pendingTimers[timerKey]);
     pendingTimers[timerKey] = setTimeout(() => {
       delete pendingTimers[timerKey];
+      delete pendingRequestStarts[timerKey];
+      delete pendingRequestDetails[timerKey];
       if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
       if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
         pendingRequests.byAccount[connectionId][modelKey] = 0;
@@ -212,6 +222,14 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   } else {
     clearTimeout(pendingTimers[timerKey]);
     delete pendingTimers[timerKey];
+    if (pendingRequestStarts[timerKey]?.length) {
+      pendingRequestStarts[timerKey].shift();
+      if (pendingRequestStarts[timerKey].length === 0) delete pendingRequestStarts[timerKey];
+    }
+    if (pendingRequestDetails[timerKey]?.length) {
+      pendingRequestDetails[timerKey].shift();
+      if (pendingRequestDetails[timerKey].length === 0) delete pendingRequestDetails[timerKey];
+    }
   }
 
   if (!started && error && provider) {
@@ -221,6 +239,13 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
 
   // [PENDING] console line removed; lifecycle is visible via "▶" and "📊 done" lines
   scheduleStatsEvent("pending");
+}
+
+export function updatePendingRequest(model, provider, connectionId, updates = {}) {
+  const modelKey = provider ? `${model} (${provider})` : model;
+  const timerKey = `${connectionId}|${modelKey}`;
+  const current = pendingRequestDetails[timerKey]?.[0];
+  if (current) Object.assign(current, updates);
 }
 
 export async function getActiveRequests() {
@@ -235,7 +260,16 @@ export async function getActiveRequests() {
         activeRequests.push({
           model: match ? match[1] : modelKey,
           provider: match ? match[2] : "unknown",
-          account: accountName, count,
+          account: accountName,
+          count,
+          latencyMs: pendingRequestStarts[`${connectionId}|${modelKey}`]?.[0]
+            ? Math.max(0, Date.now() - pendingRequestStarts[`${connectionId}|${modelKey}`][0])
+            : null,
+          requests: (pendingRequestDetails[`${connectionId}|${modelKey}`] || []).map((detail, index) => ({
+            ...detail,
+            id: detail.requestTag || `${connectionId}-${modelKey}-${detail.startedAt}-${index}`,
+            latencyMs: Math.max(0, Date.now() - detail.startedAt),
+          })),
         });
       }
     }

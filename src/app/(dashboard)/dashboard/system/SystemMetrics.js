@@ -15,6 +15,13 @@ const formatUptime = (seconds = 0) => {
   return days ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
 };
 
+const formatLatency = (milliseconds) => {
+  if (milliseconds == null) return "等待响应";
+  if (milliseconds < 1000) return `${milliseconds} ms`;
+  return `${(milliseconds / 1000).toFixed(1)} s`;
+};
+
+
 function MetricCard({ icon, label, value, detail, tone = "text-primary" }) {
   return (
     <Card className="p-4 sm:p-5">
@@ -119,8 +126,37 @@ export default function SystemMetrics({ initialMetrics = null }) {
           <div className="divide-y divide-border-subtle">
             {activeRequests.map((request) => (
               <div key={`${request.model}-${request.provider}-${request.account}`} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-                <div className="min-w-0"><p className="truncate text-sm font-medium text-text-main">{request.model}</p><p className="text-xs text-text-muted">{request.provider} · {request.account}</p></div>
-                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{request.count} 个请求</span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-text-main">{request.model}</p>
+                  <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
+                  <p className="mt-1 text-xs text-text-muted">
+                    当前延迟：{formatLatency(request.latencyMs)}
+                  </p>
+                  <details className="mt-2 text-xs text-text-muted">
+                    <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count} 个请求</summary>
+                    <div className="mt-2 space-y-2 rounded-lg bg-bg/70 p-3">
+                      {(request.requests || []).map((item, index) => (
+                        <div key={item.id} className="rounded-md border border-border-subtle bg-surface p-3">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium text-text-main">请求 #{index + 1}</span>
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 font-semibold tabular-nums text-primary">延迟 {formatLatency(item.latencyMs)}</span>
+                          </div>
+                          <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                            <div><dt className="inline">客户端 IP：</dt><dd className="inline text-text-main">{item.clientIp || "—"}</dd></div>
+                            <div><dt className="inline">开始时间：</dt><dd className="inline text-text-main">{item.startedAt ? new Date(item.startedAt).toLocaleTimeString() : "—"}</dd></div>
+                            <div><dt className="inline">状态：</dt><dd className="inline text-text-main">{item.stream ? "流式响应中" : "等待响应"}</dd></div>
+                            <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{item.requestBytes != null ? formatBytes(item.requestBytes) : "—"}</dd></div>
+                            <div><dt className="inline">请求端点：</dt><dd className="ml-1 break-all font-mono text-text-main">{item.endpoint || "—"}</dd></div>
+                            <div><dt className="inline">上游模型：</dt><dd className="ml-1 break-all font-mono text-text-main">{item.upstreamModel || request.model}</dd></div>
+                            <div><dt className="inline">格式：</dt><dd className="inline text-text-main">{item.sourceFormat || "—"} → {item.targetFormat || "—"}</dd></div>
+                            <div><dt className="inline">请求标识：</dt><dd className="inline font-mono text-text-main">{item.requestTag || "—"}</dd></div>
+                          </dl>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+                <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{request.count} 个请求</span>
               </div>
             ))}
           </div>

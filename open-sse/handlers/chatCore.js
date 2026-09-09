@@ -302,7 +302,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
-  trackPendingRequest(model, provider, connectionId, true);
+  trackPendingRequest(model, provider, connectionId, true, false, {
+    requestBytes: Buffer.byteLength(JSON.stringify(body || {}), "utf8"),
+    endpoint: clientRawRequest?.endpoint || null,
+    clientIp: clientRawRequest?.clientIp || null,
+    stream,
+    sourceFormat,
+    targetFormat,
+    upstreamModel,
+    requestTag: reqTag || null,
+  });
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;

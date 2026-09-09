@@ -65,7 +65,7 @@ export {
 
 // Usage
 export {
-  statsEmitter, trackPendingRequest, getActiveRequests,
+  statsEmitter, trackPendingRequest, updatePendingRequest, getActiveRequests,
   saveRequestUsage, getUsageHistory, getUsageStats, getChartData,
   getDistinctUsageProviders, getDistinctUsageModels, getDistinctUsageClientIps,
   getUsageRequestDetails,
