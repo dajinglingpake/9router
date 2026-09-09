@@ -7,6 +7,7 @@ const state = global._runtimeTraffic || {
   outputStreams: new Map(),
 };
 global._runtimeTraffic = state;
+state.outputStreams ||= new Map();
 
 function addSample(uploadBytes, downloadBytes) {
   const now = Date.now();
@@ -44,7 +45,10 @@ export function beginOutputStream() {
   state.outputStreams.set(id, { tokens: 0, firstAt: null, lastAt: null });
   return id;
 }
-export function endOutputStream(id) { if (id) state.outputStreams.delete(id); }
+export function endOutputStream(id) {
+  const stream = state.outputStreams.get(id);
+  if (stream) stream.endedAt = Date.now();
+}
 
 export function getTrafficSnapshot() {
   const now = Date.now();
@@ -53,9 +57,14 @@ export function getTrafficSnapshot() {
   const uploadWindow = state.samples.reduce((sum, sample) => sum + sample.uploadBytes, 0);
   const downloadWindow = state.samples.reduce((sum, sample) => sum + sample.downloadBytes, 0);
   let outputTokensPerSecond = 0;
-  for (const stream of state.outputStreams.values()) {
-    if (stream.firstAt && stream.lastAt > stream.firstAt) {
-      outputTokensPerSecond += stream.tokens / ((now - stream.firstAt) / 1000);
+  for (const [id, stream] of state.outputStreams) {
+    if (stream.endedAt && now - stream.endedAt > 10_000) {
+      state.outputStreams.delete(id);
+      continue;
+    }
+    if (stream.firstAt && stream.tokens > 0) {
+      const elapsedMs = Math.max(1000, (stream.endedAt || now) - stream.firstAt);
+      outputTokensPerSecond += stream.tokens / (elapsedMs / 1000);
     }
   }
   return {
