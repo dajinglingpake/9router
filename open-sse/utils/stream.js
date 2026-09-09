@@ -5,7 +5,7 @@ import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBu
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
-import { recordTraffic, recordOutputText, beginOutputStream, endOutputStream } from "@/lib/runtimeTraffic.js";
+import { recordTraffic, recordOutputChunk, beginOutputStream, endOutputStream } from "@/lib/runtimeTraffic.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 
@@ -132,6 +132,7 @@ export function createSSEStream(options = {}) {
     transform(chunk, controller) {
       const enqueue = (value) => {
         recordTraffic({ direction: "download", bytes: value?.byteLength || value?.length || 0 });
+        if (value) recordOutputChunk(value, outputStreamId);
         controller.enqueue(value);
       };
       if (!ttftAt) ttftAt = Date.now();
@@ -212,12 +213,10 @@ export function createSSEStream(options = {}) {
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;
               if (content && typeof content === "string") {
-                recordOutputText(content, outputStreamId);
                 totalContentLength += content.length;
                 accumulatedContent += content;
               }
               if (reasoning && typeof reasoning === "string") {
-                recordOutputText(reasoning, outputStreamId);
                 totalContentLength += reasoning.length;
                 accumulatedThinking += reasoning;
               }
@@ -309,26 +308,22 @@ export function createSSEStream(options = {}) {
 
         // Claude format - content
         if (parsed.delta?.text) {
-          recordOutputText(parsed.delta.text, outputStreamId);
           totalContentLength += parsed.delta.text.length;
           accumulatedContent += parsed.delta.text;
         }
         // Claude format - thinking
         if (parsed.delta?.thinking) {
-          recordOutputText(parsed.delta.thinking, outputStreamId);
           totalContentLength += parsed.delta.thinking.length;
           accumulatedThinking += parsed.delta.thinking;
         }
         
         // OpenAI format - content
         if (parsed.choices?.[0]?.delta?.content) {
-          recordOutputText(parsed.choices[0].delta.content, outputStreamId);
           totalContentLength += parsed.choices[0].delta.content.length;
           accumulatedContent += parsed.choices[0].delta.content;
         }
         // OpenAI format - reasoning
         if (parsed.choices?.[0]?.delta?.reasoning_content) {
-          recordOutputText(parsed.choices[0].delta.reasoning_content, outputStreamId);
           totalContentLength += parsed.choices[0].delta.reasoning_content.length;
           accumulatedThinking += parsed.choices[0].delta.reasoning_content;
         }
@@ -337,7 +332,6 @@ export function createSSEStream(options = {}) {
         if (parsed.candidates?.[0]?.content?.parts) {
           for (const part of parsed.candidates[0].content.parts) {
             if (part.text && typeof part.text === "string") {
-              recordOutputText(part.text, outputStreamId);
               totalContentLength += part.text.length;
               // Check if this is thinking content
               if (part.thought === true) {

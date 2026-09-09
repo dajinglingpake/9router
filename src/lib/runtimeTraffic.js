@@ -40,6 +40,26 @@ export function recordOutputText(text, streamId) {
   stream.lastAt = now;
 }
 
+export function recordOutputChunk(value, streamId) {
+  const raw = typeof value === "string" ? value : new TextDecoder().decode(value);
+  for (const line of raw.split("\n")) {
+    const payload = line.startsWith("data:") ? line.slice(5).trim() : "";
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const item = JSON.parse(payload);
+      const texts = [
+        item.choices?.[0]?.delta?.content,
+        item.choices?.[0]?.delta?.reasoning_content,
+        item.delta?.text,
+        item.delta?.thinking,
+        typeof item.delta === "string" ? item.delta : null,
+        ...(item.candidates?.[0]?.content?.parts || []).map((part) => part?.text),
+      ];
+      for (const text of texts) recordOutputText(text, streamId);
+    } catch {}
+  }
+}
+
 export function beginOutputStream() {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   state.outputStreams.set(id, { tokens: 0, firstAt: null, lastAt: null });
