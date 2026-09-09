@@ -148,7 +148,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
           <MetricCard icon="download" label="下行总流量" value={metrics ? formatBytes(metrics.traffic.downloadBytes) : "—"} detail="上游响应返回客户端的累计流量" tone="text-emerald-600" />
           <MetricCard icon="speed" label="下行实时速率" value={metrics ? `${formatBytes(metrics.traffic.downloadRateBytesPerSecond)}/s` : "—"} detail="最近 10 秒平均" tone="text-teal-600" />
           <MetricCard icon="trending_up" label="请求吞吐率" value={metrics ? `${metrics.requestStats.throughputPerMinute} req/min` : "—"} detail="5 min average" tone="text-blue-600" />
-          <MetricCard icon="check_circle" label="请求成功率" value={metrics ? `${metrics.requestStats.successRatePercent}%` : "—"} detail={metrics ? `客户端错误（4xx）${metrics.requestStats.error4xx} · 服务端错误（5xx）${metrics.requestStats.error5xx}` : "正在读取"} tone="text-emerald-600" />
+          <MetricCard icon="check_circle" label="请求成功率" value={metrics ? `${metrics.requestStats.successRatePercent}%` : "—"} detail={metrics ? `客户端错误 ${metrics.requestStats.error4xx} · 服务端错误 ${metrics.requestStats.error5xx}` : "正在读取"} tone="text-emerald-600" />
           <MetricCard icon="speed" label="输出速度" value={metrics ? `${metrics.requestStats.outputTokensPerSecond} tokens/s` : "—"} detail="基于已记录输出 Token 估算" tone="text-amber-600" />
           <MetricCard icon="wifi" label="网络连接数" value={metrics?.networkConnections ?? "—"} detail="当前活动 Socket 连接" tone="text-cyan-600" />
         </div>
