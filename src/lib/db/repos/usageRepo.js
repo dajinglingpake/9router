@@ -251,6 +251,12 @@ export function updatePendingRequest(model, provider, connectionId, updates = {}
 export async function getActiveRequests() {
   const activeRequests = [];
   const connectionMap = await getConnectionMapCached();
+  let apiKeyMap = {};
+  try {
+    const { getApiKeys } = await import("./apiKeysRepo.js");
+    const keys = await getApiKeys();
+    apiKeyMap = Object.fromEntries(keys.map((key) => [key.key, { id: key.id, name: key.name }]));
+  } catch {}
 
   for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
     for (const [modelKey, count] of Object.entries(models)) {
@@ -265,11 +271,17 @@ export async function getActiveRequests() {
           latencyMs: pendingRequestStarts[`${connectionId}|${modelKey}`]?.[0]
             ? Math.max(0, Date.now() - pendingRequestStarts[`${connectionId}|${modelKey}`][0])
             : null,
-          requests: (pendingRequestDetails[`${connectionId}|${modelKey}`] || []).map((detail, index) => ({
-            ...detail,
+          requests: (pendingRequestDetails[`${connectionId}|${modelKey}`] || []).map((detail, index) => {
+            const { apiKey, ...safeDetail } = detail;
+            return {
+            ...safeDetail,
+            apiKeyName: apiKeyMap[apiKey]?.name || (apiKey ? "未命名 API Key" : "未使用 API Key"),
+            apiKeyMasked: maskApiKey(apiKey),
+            apiKeyId: apiKeyMap[apiKey]?.id || null,
             id: detail.requestTag || `${connectionId}-${modelKey}-${detail.startedAt}-${index}`,
             latencyMs: Math.max(0, Date.now() - detail.startedAt),
-          })),
+            };
+          }),
         });
       }
     }

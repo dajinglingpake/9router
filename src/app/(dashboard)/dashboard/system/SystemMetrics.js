@@ -80,6 +80,9 @@ export default function SystemMetrics({ initialMetrics = null }) {
   }, [metrics]);
 
   const processMemory = metrics?.memory?.rss || 0;
+  const processMemoryPercent = metrics?.memory?.systemTotal
+    ? Math.round((processMemory / metrics.memory.systemTotal) * 1000) / 10
+    : 0;
   const activeRequests = metrics?.activeRequests || [];
 
   return (
@@ -108,16 +111,37 @@ export default function SystemMetrics({ initialMetrics = null }) {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section aria-labelledby="resource-metrics-title">
+        <h2 id="resource-metrics-title" className="mb-3 text-sm font-semibold text-text-main">资源占用</h2>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard icon="speed" label="系统 CPU" value={metrics ? `${metrics.cpu.systemPercent.toFixed(1)}%` : "—"} detail={metrics ? `负载 ${metrics.cpu.load1.toFixed(2)} · ${metrics.cpu.cores} 核` : "正在读取"} />
         <MetricCard icon="developer_board" label="进程 CPU" value={metrics ? `${metrics.cpu.processPercent.toFixed(1)}%` : "—"} detail={metrics ? `PID ${metrics.pid}` : "正在读取"} tone="text-blue-600" />
         <MetricCard icon="memory" label="系统内存" value={metrics ? `${memoryPercent}%` : "—"} detail={metrics ? `已用 ${formatBytes(metrics.memory.systemTotal - metrics.memory.systemFree)} / ${formatBytes(metrics.memory.systemTotal)}` : "正在读取"} tone="text-amber-600" />
-        <MetricCard icon="memory_alt" label="进程内存" value={metrics ? formatBytes(processMemory) : "—"} detail={metrics ? `Heap ${formatBytes(metrics.memory.heapUsed)} / ${formatBytes(metrics.memory.heapTotal)}` : "正在读取"} tone="text-orange-600" />
-        <MetricCard icon="sync_alt" label="当前并发" value={metrics ? metrics.concurrency : "—"} detail="正在处理的请求数" tone="text-indigo-600" />
+        <MetricCard icon="memory_alt" label="进程内存" value={metrics ? formatBytes(processMemory) : "—"} detail={metrics ? `占系统 ${processMemoryPercent}% · Heap ${formatBytes(metrics.memory.heapUsed)} / ${formatBytes(metrics.memory.heapTotal)}` : "正在读取"} tone="text-orange-600" />
         <MetricCard icon="timer" label="运行时长" value={metrics ? formatUptime(metrics.uptimeSeconds) : "—"} detail={metrics ? `更新于 ${new Date(metrics.timestamp).toLocaleTimeString()}` : "正在读取"} tone="text-emerald-600" />
         <MetricCard icon="bolt" label="事件循环 P99" value={metrics ? `${metrics.eventLoop.p99Ms} ms` : "—"} detail={metrics ? `P50 ${metrics.eventLoop.p50Ms} ms · 峰值 ${metrics.eventLoop.maxMs} ms` : "正在读取"} tone="text-rose-600" />
         <MetricCard icon="account_tree" label="活动句柄" value={metrics?.activeHandles ?? "—"} detail={metrics ? `${metrics.node} · ${metrics.platform}` : "正在读取"} tone="text-cyan-600" />
-      </div>
+        <MetricCard icon="view_module" label="进程线程数" value={metrics?.runtime?.threads ?? "—"} detail="Node.js 进程线程" tone="text-violet-600" />
+        </div>
+      </section>
+
+      <section aria-labelledby="traffic-metrics-title">
+        <h2 id="traffic-metrics-title" className="mb-3 text-sm font-semibold text-text-main">流量与请求</h2>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard icon="lan" label="当前并发" value={metrics ? metrics.requestSummary.activeRequests : "—"} detail={metrics ? `${metrics.requestSummary.models} 个模型 · ${metrics.requestSummary.clientIps} 个 IP` : "正在读取"} tone="text-blue-600" />
+          <MetricCard icon="key" label="调用方 API Key" value={metrics ? metrics.requestSummary.apiKeys : "—"} detail="当前活跃请求涉及的 Key 数" tone="text-amber-600" />
+          <MetricCard icon="speed" label="平均请求延迟" value={metrics ? formatLatency(metrics.requestSummary.averageLatencyMs) : "—"} detail={metrics ? `最长 ${formatLatency(metrics.requestSummary.maxLatencyMs)}` : "正在读取"} tone="text-rose-600" />
+          <MetricCard icon="upload" label="活跃上行流量" value={metrics ? formatBytes(metrics.requestSummary.activeUploadBytes) : "—"} detail="当前请求体累计大小" tone="text-cyan-600" />
+          <MetricCard icon="download" label="下行总流量" value={metrics ? formatBytes(metrics.traffic.downloadBytes) : "—"} detail="上游响应进入路由器的累计流量" tone="text-cyan-600" />
+          <MetricCard icon="speed" label="上行总流量" value={metrics ? formatBytes(metrics.traffic.uploadBytes) : "—"} detail={`实时 ${metrics ? formatBytes(metrics.traffic.uploadRateBytesPerSecond) : "—"}/s`} tone="text-blue-600" />
+          <MetricCard icon="speed" label="下行实时速率" value={metrics ? `${formatBytes(metrics.traffic.downloadRateBytesPerSecond)}/s` : "—"} detail="最近 10 秒平均" tone="text-emerald-600" />
+          <MetricCard icon="trending_up" label="请求吞吐率" value={metrics ? `${metrics.requestStats.throughputPerMinute} req/min` : "—"} detail="5 min average" tone="text-blue-600" />
+          <MetricCard icon="check_circle" label="请求成功率" value={metrics ? `${metrics.requestStats.successRatePercent}%` : "—"} detail={metrics ? `4xx ${metrics.requestStats.error4xx} · 5xx ${metrics.requestStats.error5xx}` : "正在读取"} tone="text-emerald-600" />
+          <MetricCard icon="speed" label="输出速度" value={metrics ? `${metrics.requestStats.outputTokensPerSecond} tokens/s` : "—"} detail="基于已记录输出 Token 估算" tone="text-amber-600" />
+          <MetricCard icon="wifi" label="网络连接数" value={metrics?.networkConnections ?? "—"} detail="当前活动 Socket 连接" tone="text-cyan-600" />
+          <MetricCard icon="hourglass_top" label="队列等待数" value={metrics?.queueWaiting ?? "—"} detail="当前无内部排队机制" tone="text-violet-600" />
+        </div>
+      </section>
 
       <Card title="活跃请求" subtitle="按模型与提供商聚合的当前请求">
         {activeRequests.length === 0 ? (
@@ -143,7 +167,9 @@ export default function SystemMetrics({ initialMetrics = null }) {
                           </div>
                           <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
                             <div><dt className="inline">客户端 IP：</dt><dd className="inline text-text-main">{item.clientIp || "—"}</dd></div>
+                            <div><dt className="inline">API Key：</dt><dd className="inline text-text-main">{item.apiKeyName || "未使用 API Key"}{item.apiKeyMasked ? `（${item.apiKeyMasked}）` : ""}</dd></div>
                             <div><dt className="inline">开始时间：</dt><dd className="inline text-text-main">{item.startedAt ? new Date(item.startedAt).toLocaleTimeString() : "—"}</dd></div>
+                            <div><dt className="inline">请求延迟：</dt><dd className="inline font-semibold tabular-nums text-text-main">{formatLatency(item.latencyMs)}</dd></div>
                             <div><dt className="inline">状态：</dt><dd className="inline text-text-main">{item.stream ? "流式响应中" : "等待响应"}</dd></div>
                             <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{item.requestBytes != null ? formatBytes(item.requestBytes) : "—"}</dd></div>
                             <div><dt className="inline">请求端点：</dt><dd className="ml-1 break-all font-mono text-text-main">{item.endpoint || "—"}</dd></div>

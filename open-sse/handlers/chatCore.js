@@ -12,6 +12,7 @@ import { createErrorResult, parseUpstreamError, formatProviderError } from "../u
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { recordTraffic } from "@/lib/runtimeTraffic.js";
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
 import { buildRequestDetail, extractRequestConfig } from "./chatCore/requestDetail.js";
@@ -302,8 +303,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
+  const requestBytes = Buffer.byteLength(JSON.stringify(body || {}), "utf8");
+  recordTraffic({ direction: "upload", bytes: requestBytes });
   trackPendingRequest(model, provider, connectionId, true, false, {
-    requestBytes: Buffer.byteLength(JSON.stringify(body || {}), "utf8"),
+    apiKey,
+    requestBytes,
     endpoint: clientRawRequest?.endpoint || null,
     clientIp: clientRawRequest?.clientIp || null,
     stream,
