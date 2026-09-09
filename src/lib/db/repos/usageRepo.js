@@ -33,6 +33,7 @@ if (!global._pendingRequestDetails) global._pendingRequestDetails = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
+if (!global._runtimeRequestErrors) global._runtimeRequestErrors = [];
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
@@ -42,6 +43,7 @@ const pendingRequestDetails = global._pendingRequestDetails;
 const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
+const runtimeRequestErrors = global._runtimeRequestErrors;
 
 export const statsEmitter = global._statsEmitter;
 
@@ -938,8 +940,20 @@ function formatLogDate(date = new Date()) {
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-// No-op: request log is now derived from usageHistory table on read.
-export async function appendRequestLog() {}
+// Keep transient failures visible to the runtime monitor even when no usage row is saved.
+export async function appendRequestLog(entry = {}) {
+  const status = String(entry.status || "");
+  if (!/^(FAILED\s+)?(?:4\d\d|5\d\d)/i.test(status)) return;
+  runtimeRequestErrors.push({ timestamp: Date.now(), status });
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  while (runtimeRequestErrors.length && runtimeRequestErrors[0].timestamp < cutoff) runtimeRequestErrors.shift();
+}
+
+export function getRuntimeRequestErrors() {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  while (runtimeRequestErrors.length && runtimeRequestErrors[0].timestamp < cutoff) runtimeRequestErrors.shift();
+  return runtimeRequestErrors.slice();
+}
 
 export async function getRecentLogs(limit = 200) {
   try {

@@ -1,7 +1,7 @@
 import os from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { NextResponse } from "next/server";
-import { getActiveRequests, getUsageHistory } from "@/lib/usageDb.js";
+import { getActiveRequests, getUsageHistory, getRuntimeRequestErrors } from "@/lib/usageDb.js";
 import fs from "node:fs/promises";
 import { getTrafficSnapshot } from "@/lib/runtimeTraffic.js";
 
@@ -16,12 +16,11 @@ async function getThreadCount() {
 
 function getRuntimeConnectionStats() {
   if (typeof process._getActiveHandles !== "function") {
-    return { networkConnections: null, queueWaiting: 0 };
+    return { networkConnections: null };
   }
   const handles = process._getActiveHandles();
   const networkConnections = handles.filter((handle) => handle?.constructor?.name === "Socket").length;
-  // 9router dispatches requests immediately; it currently has no internal wait queue.
-  return { networkConnections, queueWaiting: 0 };
+  return { networkConnections };
 }
 
 let previousCpu = null;
@@ -75,12 +74,15 @@ export async function getSystemMetrics() {
   const recentLatency = history.map((item) => item.latency?.total).filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b);
   const outputTokens = history.reduce((sum, item) => sum + (Number(item.tokens?.completion_tokens ?? item.tokens?.output_tokens) || 0), 0);
   const recentCount = history.length;
-  const successful = history.filter((item) => !/^error|failed|4\d\d|5\d\d/i.test(String(item.status || ""))).length;
+  const runtimeErrors = getRuntimeRequestErrors();
+  const runtime4xx = runtimeErrors.filter((item) => /4\d\d/.test(item.status)).length;
+  const runtime5xx = runtimeErrors.filter((item) => /5\d\d/.test(item.status)).length;
+  const successful = history.filter((item) => !/^(error|failed)|4\d\d|5\d\d/i.test(String(item.status || ""))).length;
   const requestStats = {
     throughputPerMinute: Math.round(recentCount / 5 * 10) / 10,
-    successRatePercent: recentCount ? Math.round(successful / recentCount * 1000) / 10 : 0,
-    error4xx: history.filter((item) => /4\d\d/.test(String(item.status))).length,
-    error5xx: history.filter((item) => /5\d\d|error|failed/i.test(String(item.status))).length,
+    successRatePercent: recentCount + runtimeErrors.length ? Math.round(successful / (recentCount + runtimeErrors.length) * 1000) / 10 : 0,
+    error4xx: history.filter((item) => /4\d\d/.test(String(item.status))).length + runtime4xx,
+    error5xx: history.filter((item) => /5\d\d|error|failed/i.test(String(item.status))).length + runtime5xx,
     outputTokensPerSecond: outputTokens && recentLatency.length
       ? Math.round(outputTokens / (recentLatency.reduce((sum, value) => sum + value, 0) / 1000) * 10) / 10 : 0,
   };
@@ -112,7 +114,6 @@ export async function getSystemMetrics() {
     },
     activeHandles: typeof process._getActiveHandles === "function" ? process._getActiveHandles().length : null,
     networkConnections: runtimeConnections.networkConnections,
-    queueWaiting: runtimeConnections.queueWaiting,
     concurrency,
     requestSummary,
     traffic: getTrafficSnapshot(),

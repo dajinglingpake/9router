@@ -304,6 +304,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const executor = getExecutor(provider);
   const requestBytes = Buffer.byteLength(JSON.stringify(body || {}), "utf8");
+  const thinkingConfig = extractThinking(translatedBody) || extractThinking(body) || providerThinking || null;
+  const thinkingLevel = thinkingConfig?.mode === "level"
+    ? thinkingConfig.level
+    : thinkingConfig?.mode === "budget"
+      ? `budget:${thinkingConfig.budget}`
+      : thinkingConfig?.mode || null;
   recordTraffic({ direction: "upload", bytes: requestBytes });
   trackPendingRequest(model, provider, connectionId, true, false, {
     apiKey,
@@ -314,6 +320,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     sourceFormat,
     targetFormat,
     upstreamModel,
+    thinkingLevel,
     requestTag: reqTag || null,
   });
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });

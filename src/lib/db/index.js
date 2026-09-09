@@ -69,7 +69,7 @@ export {
   saveRequestUsage, getUsageHistory, getUsageStats, getChartData,
   getDistinctUsageProviders, getDistinctUsageModels, getDistinctUsageClientIps,
   getUsageRequestDetails,
-  appendRequestLog, getRecentLogs,
+  appendRequestLog, getRuntimeRequestErrors, getRecentLogs,
 } from "./repos/usageRepo.js";
 
 // Client IP aliases
