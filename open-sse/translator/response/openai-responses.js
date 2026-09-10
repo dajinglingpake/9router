@@ -18,8 +18,24 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
   if (!chunk) {
     return flushEvents(state);
   }
-  
-  if (!chunk.choices?.length) return [];
+
+  if (chunk.usage && typeof chunk.usage === "object") {
+    state.usage = toResponsesUsage(chunk.usage);
+  }
+
+  if (!chunk.choices?.length) {
+    if (state.finishSeen && state.usage) {
+      const events = [];
+      const nextSeq = () => ++state.seq;
+      const emit = (eventType, data) => {
+        data.sequence_number = nextSeq();
+        events.push({ event: eventType, data });
+      };
+      sendCompleted(state, emit);
+      return events;
+    }
+    return [];
+  }
   
   const events = [];
   const nextSeq = () => ++state.seq;
@@ -112,7 +128,8 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
     for (const i in state.msgItemAdded) closeMessage(state, emit, i);
     closeReasoning(state, emit);
     for (const i in state.funcCallIds) closeToolCall(state, emit, i);
-    sendCompleted(state, emit);
+    state.finishSeen = true;
+    if (state.usage) sendCompleted(state, emit);
   }
 
   return events;
@@ -382,10 +399,32 @@ function sendCompleted(state, emit) {
         created_at: state.created,
         status: "completed",
         background: false,
-        error: null
+        error: null,
+        ...(state.usage ? { usage: state.usage } : {})
       }
     });
   }
+}
+
+function toResponsesUsage(usage) {
+  const inputTokens = usage.input_tokens ?? usage.prompt_tokens ?? 0;
+  const outputTokens = usage.output_tokens ?? usage.completion_tokens ?? 0;
+  const totalTokens = usage.total_tokens ?? inputTokens + outputTokens;
+  const cachedTokens = usage.input_tokens_details?.cached_tokens
+    ?? usage.prompt_tokens_details?.cached_tokens
+    ?? usage.cached_tokens
+    ?? 0;
+  const reasoningTokens = usage.output_tokens_details?.reasoning_tokens
+    ?? usage.completion_tokens_details?.reasoning_tokens
+    ?? 0;
+
+  return {
+    input_tokens: inputTokens,
+    ...(cachedTokens > 0 ? { input_tokens_details: { cached_tokens: cachedTokens } } : {}),
+    output_tokens: outputTokens,
+    ...(reasoningTokens > 0 ? { output_tokens_details: { reasoning_tokens: reasoningTokens } } : {}),
+    total_tokens: totalTokens
+  };
 }
 
 function flushEvents(state) {

@@ -22,6 +22,9 @@ export default {
   transport: {
     baseUrl: "https://api.deepseek.com/chat/completions",
     validateUrl: "https://api.deepseek.com/models",
+    quirks: {
+      includeStreamUsage: true,
+    },
     reasoningInject: {
       scope: "all",
     },

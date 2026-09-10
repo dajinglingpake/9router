@@ -67,13 +67,20 @@ export class DefaultExecutor extends BaseExecutor {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream = false, credentials = null) {
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
       // quirk: some openai-compatible providers reject Anthropic's client_metadata field
       if (this.config.quirks?.dropClientMetadata) {
         delete transformed.client_metadata;
+      }
+      const transportFormat = credentials?.runtimeTransport?.format || this.config.format || "openai";
+      if (this.config.quirks?.includeStreamUsage && stream === true && transportFormat === "openai") {
+        transformed.stream_options = {
+          ...(transformed.stream_options || {}),
+          include_usage: true,
+        };
       }
       stripUnsupportedParams(this.provider, model, transformed);
     }
