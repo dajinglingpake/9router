@@ -195,6 +195,11 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
         const res = await fetch("/api/auth/status", { cache: "no-store" });
         if (!res.ok) return;
         const data = await res.json();
+        if (data?.requireLogin && data?.authenticated === false) {
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+          window.location.assign("/login");
+          return;
+        }
         if (!cancelled) {
           setDisplayName(data?.displayName || data?.samlName || data?.samlEmail || data?.oidcName || data?.oidcEmail || "");
           setLoginMethod(data?.loginMethod || "");

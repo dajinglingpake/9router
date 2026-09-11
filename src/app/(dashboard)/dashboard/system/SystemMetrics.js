@@ -52,6 +52,11 @@ export default function SystemMetrics({ initialMetrics = null }) {
       if (active) setRefreshing(true);
       try {
         const response = await fetch("/api/system/metrics", { cache: "no-store" });
+        if (response.status === 401) {
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+          window.location.assign("/login");
+          return;
+        }
         if (!response.ok) throw new Error("Metrics unavailable");
         const next = await response.json();
         if (active) { setMetrics(next); setError(""); }
