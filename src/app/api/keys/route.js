@@ -35,8 +35,13 @@ export async function POST(request) {
     }
 
     // Always get machineId from server
+    const rawLimit = body.maxConcurrentRequests;
+    const maxConcurrentRequests = rawLimit === undefined ? 0 : Number(rawLimit);
+    if (!Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 0 || maxConcurrentRequests > 1000) {
+      return NextResponse.json({ error: "maxConcurrentRequests must be an integer between 0 and 1000" }, { status: 400 });
+    }
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId);
+    const apiKey = await createApiKey(name, machineId, maxConcurrentRequests);
 
     return NextResponse.json({
       key: apiKey.key,
@@ -44,6 +49,7 @@ export async function POST(request) {
       id: apiKey.id,
       machineId: apiKey.machineId,
       created: true,
+      maxConcurrentRequests: apiKey.maxConcurrentRequests,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

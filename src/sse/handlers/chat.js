@@ -25,6 +25,10 @@ import { extractClientIp } from "../utils/clientIp.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
+import { getApiKeyByValue } from "@/lib/localDb";
+import { getProviderConnectionById } from "@/lib/localDb";
+import { isModelLockActive } from "open-sse/services/accountFallback.js";
+import { acquireConcurrencySlot, holdConcurrencyUntilResponseDone, ConcurrencyQueueError } from "../services/concurrencyLimiter.js";
 
 /**
  * Handle chat completion request
@@ -32,6 +36,29 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  const apiKey = extractApiKey(request);
+  let permit = null;
+  if (apiKey) {
+    const record = await getApiKeyByValue(apiKey);
+    if (record?.isActive && record.maxConcurrentRequests > 0) {
+      try {
+        permit = await acquireConcurrencySlot({ scope: "apiKey", id: record.id, limit: record.maxConcurrentRequests, signal: request.signal });
+      } catch (error) {
+        if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
+        throw error;
+      }
+    }
+  }
+  try {
+    const response = await handleChatInternal(request, clientRawRequest);
+    return permit ? holdConcurrencyUntilResponseDone(response, permit.release) : response;
+  } catch (error) {
+    permit?.release();
+    throw error;
+  }
+}
+
+async function handleChatInternal(request, clientRawRequest = null) {
   let body;
   try {
     body = await request.json();
@@ -274,7 +301,38 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    const result = await handleChatCore({
+    let accountPermit;
+    try {
+      accountPermit = await acquireConcurrencySlot({
+        scope: "account",
+        id: credentials.connectionId,
+        limit: credentials.maxConcurrency,
+        signal: request?.signal,
+      });
+    } catch (error) {
+      if (error instanceof ConcurrencyQueueError) {
+        lastError = error.message;
+        lastStatus = error.status;
+        excludeConnectionIds.add(credentials.connectionId);
+        continue;
+      }
+      throw error;
+    }
+
+    // A queued request may acquire the slot after an earlier request locked
+    // this account; re-check persisted state before sending upstream traffic.
+    const liveConnection = credentials.connectionId === "noauth"
+      ? credentials
+      : await getProviderConnectionById(credentials.connectionId);
+    if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
+      accountPermit.release();
+      excludeConnectionIds.add(credentials.connectionId);
+      continue;
+    }
+
+    let result;
+    try {
+      result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -314,9 +372,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
       }
-    });
+      });
+    } catch (error) {
+      accountPermit.release();
+      throw error;
+    }
 
-    if (result.success) return result.response;
+    if (result.success) return holdConcurrencyUntilResponseDone(result.response, accountPermit.release);
+
+    // Apply fallback/cooldown state before releasing the slot so queued work
+    // observes the latest account availability.
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;
@@ -336,6 +401,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
 
     if (shouldFallback) {
+      accountPermit.release();
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
@@ -343,6 +409,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       continue;
     }
 
+    accountPermit.release();
     return result.response;
   }
 }

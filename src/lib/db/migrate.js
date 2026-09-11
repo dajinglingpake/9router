@@ -180,6 +180,8 @@ function importLegacyMain(adapter, data) {
       `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, claimedAt, allowedIps) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
       [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), k.claimedAt || null, serializeImportedAllowedIps(k.allowedIps)]
     );
+    const limit = Number(k.maxConcurrentRequests || 0);
+    if (Number.isInteger(limit) && limit > 0 && limit <= 1000) adapter.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('apiKeyConcurrency', ?, ?)`, [k.id, String(limit)]);
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
 
   importWithAssertion(adapter, "combos", data.combos || [], (c) => {

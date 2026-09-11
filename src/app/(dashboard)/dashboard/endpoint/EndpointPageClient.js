@@ -22,10 +22,14 @@ export default function APIPageClient({ machineId }) {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyConcurrency, setNewKeyConcurrency] = useState(0);
   const [createdKey, setCreatedKey] = useState(null);
   const [editingAllowedIpsKey, setEditingAllowedIpsKey] = useState(null);
+  const [editingConcurrencyKey, setEditingConcurrencyKey] = useState(null);
   const [allowedIpsText, setAllowedIpsText] = useState("");
   const [allowedIpsError, setAllowedIpsError] = useState("");
+  const [keyConcurrency, setKeyConcurrency] = useState(0);
+  const [concurrencyError, setConcurrencyError] = useState("");
   const [confirmState, setConfirmState] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
@@ -632,7 +636,7 @@ export default function APIPageClient({ machineId }) {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({ name: newKeyName, maxConcurrentRequests: newKeyConcurrency }),
       });
       const data = await res.json();
 
@@ -640,6 +644,7 @@ export default function APIPageClient({ machineId }) {
         setCreatedKey(data.key);
         await fetchData();
         setNewKeyName("");
+        setNewKeyConcurrency(0);
         setShowAddModal(false);
       }
     } catch (error) {
@@ -689,6 +694,7 @@ export default function APIPageClient({ machineId }) {
     setEditingAllowedIpsKey(key);
     setAllowedIpsText((key.allowedIps || []).join("\n"));
     setAllowedIpsError("");
+    setKeyConcurrency(key.maxConcurrentRequests || 0);
   };
 
   const handleSaveAllowedIps = async () => {
@@ -710,6 +716,33 @@ export default function APIPageClient({ machineId }) {
       setAllowedIpsText("");
     } catch (error) {
       setAllowedIpsError(error.message || "Failed to update allowed IPs");
+    }
+  };
+
+  const openConcurrencyModal = (key) => {
+    setEditingConcurrencyKey(key);
+    setKeyConcurrency(key.maxConcurrentRequests || 0);
+    setConcurrencyError("");
+  };
+
+  const handleSaveConcurrency = async () => {
+    if (!editingConcurrencyKey) return;
+    setConcurrencyError("");
+    try {
+      const res = await fetch(`/api/keys/${editingConcurrencyKey.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxConcurrentRequests: keyConcurrency }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setConcurrencyError(data.error || "Failed to update concurrency");
+        return;
+      }
+      setKeys(prev => prev.map(k => k.id === editingConcurrencyKey.id ? data.key : k));
+      setEditingConcurrencyKey(null);
+    } catch (error) {
+      setConcurrencyError(error.message || "Failed to update concurrency");
     }
   };
 
@@ -1080,7 +1113,7 @@ export default function APIPageClient({ machineId }) {
                     <button
                       onClick={() => openAllowedIpsModal(key)}
                       className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
-                      title="Edit allowed IPs"
+                      title="Edit API key settings"
                     >
                       <span className="material-symbols-outlined text-[14px]">edit</span>
                     </button>
@@ -1088,6 +1121,12 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
+                  <div className="mt-1 flex items-center gap-1 text-xs text-text-muted">
+                    <span>Max concurrency: {key.maxConcurrentRequests > 0 ? key.maxConcurrentRequests : "Unlimited"}</span>
+                    <button onClick={() => openConcurrencyModal(key)} className="rounded p-1 hover:bg-black/5 hover:text-primary dark:hover:bg-white/5" title="Edit max concurrency">
+                      <span className="material-symbols-outlined text-[14px]">edit</span>
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Toggle
@@ -1138,6 +1177,7 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <Input label="Max concurrent requests" type="number" min="0" max="1000" value={newKeyConcurrency} onChange={(e) => setNewKeyConcurrency(Math.max(0, Number.parseInt(e.target.value, 10) || 0))} hint="0 means unlimited." />
           <div className="flex gap-2">
             <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
               Create
@@ -1152,6 +1192,24 @@ export default function APIPageClient({ machineId }) {
             >
               Cancel
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!editingConcurrencyKey}
+        title="Max concurrent requests"
+        onClose={() => {
+          setEditingConcurrencyKey(null);
+          setConcurrencyError("");
+        }}
+      >
+        <div className="flex flex-col gap-4">
+          <Input label="Max concurrent requests" type="number" min="0" max="1000" value={keyConcurrency} onChange={(e) => setKeyConcurrency(Math.max(0, Number.parseInt(e.target.value, 10) || 0))} hint="0 means unlimited." />
+          {concurrencyError && <p className="text-sm text-red-500">{concurrencyError}</p>}
+          <div className="flex gap-2">
+            <Button onClick={handleSaveConcurrency} fullWidth>Save</Button>
+            <Button onClick={() => setEditingConcurrencyKey(null)} variant="ghost" fullWidth>Cancel</Button>
           </div>
         </div>
       </Modal>

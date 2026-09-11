@@ -13,6 +13,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const [formData, setFormData] = useState({
     name: "",
     priority: 1,
+    maxConcurrency: 0,
     apiKey: "",
   });
   const [azureData, setAzureData] = useState({
@@ -34,6 +35,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       setFormData({
         name: connection.name || "",
         priority: connection.priority || 1,
+        maxConcurrency: connection.maxConcurrency || 0,
         apiKey: "",
       });
       // Load Azure-specific data if present
@@ -120,6 +122,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       const updates = {
         name: formData.name,
         priority: formData.priority,
+        maxConcurrency: formData.maxConcurrency,
       };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
@@ -200,6 +203,15 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           type="number"
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
+        />
+        <Input
+          label="Max concurrent requests"
+          type="number"
+          min="0"
+          max="1000"
+          value={formData.maxConcurrency}
+          onChange={(e) => setFormData({ ...formData, maxConcurrency: Math.max(0, Number.parseInt(e.target.value, 10) || 0) })}
+          hint="0 means unlimited."
         />
 
         {!isOAuth && (
@@ -313,4 +325,3 @@ EditConnectionModal.propTypes = {
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
 };
-

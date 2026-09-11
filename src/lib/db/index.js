@@ -34,7 +34,7 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, getApiKeyByName, claimApiKeyByName, createApiKey, updateApiKey,
+  getApiKeys, getApiKeyById, getApiKeyByValue, getApiKeyByName, claimApiKeyByName, createApiKey, updateApiKey,
   deleteApiKey, validateApiKey,
 } from "./repos/apiKeysRepo.js";
 
@@ -98,7 +98,7 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, claimedAt: r.claimedAt || null, allowedIps: r.allowedIps || null })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, claimedAt: r.claimedAt || null, allowedIps: r.allowedIps || null, maxConcurrentRequests: Number(db.get(`SELECT value FROM kv WHERE scope = 'apiKeyConcurrency' AND key = ?`, [r.id])?.value || 0) })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     clientIpAliases: db.all(`SELECT ip, alias, createdAt, updatedAt FROM clientIpAliases`),
     modelAliases: {},
@@ -163,6 +163,8 @@ export async function importDb(payload) {
         `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, claimedAt, allowedIps) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
         [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), k.claimedAt || null, serializeImportedAllowedIps(k.allowedIps)]
       );
+      const limit = Number(k.maxConcurrentRequests || 0);
+      if (Number.isInteger(limit) && limit > 0 && limit <= 1000) db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('apiKeyConcurrency', ?, ?)`, [k.id, String(limit)]);
     }
     for (const c of payload.combos || []) {
       db.run(

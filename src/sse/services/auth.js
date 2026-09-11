@@ -216,6 +216,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
       },
       connectionId: connection.id,
+      maxConcurrency: connection.maxConcurrency || 0,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,

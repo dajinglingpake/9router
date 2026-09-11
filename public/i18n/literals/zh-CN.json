@@ -1398,5 +1398,15 @@
   "🔐 OAuth required. Add now and authenticate after Apply; tool list will be discovered after first connect.": "🔐 需要 OAuth。立即添加并在应用后认证；工具列表将在首次连接后自动发现。",
   "Usage by IP": "按 IP 统计",
   "Default password is ": "默认密码为 ",
-  "No custom password is set yet. The default password above will work until you change it.": "尚未设置自定义密码。在你修改之前，上面的默认密码可用。"
+  "No custom password is set yet. The default password above will work until you change it.": "尚未设置自定义密码。在你修改之前，上面的默认密码可用。",
+  "Max concurrent requests": "最大并发请求数",
+  "0 means unlimited.": "0 表示不限制",
+  "Max concurrency:": "最大并发：",
+  "Unlimited": "不限",
+  "API Key Settings": "API Key 设置",
+  "Settings": "设置",
+  "Edit API key settings": "编辑 API Key 设置",
+  "Edit Connection": "编辑账号",
+  "Concurrency:": "并发：",
+  "Edit max concurrency": "编辑最大并发"
 }

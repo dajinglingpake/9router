@@ -170,6 +170,9 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             <Badge variant="default" size="sm">
               {authLabel}
             </Badge>
+            <Badge variant="default" size="sm">
+              Concurrency: {connection.maxConcurrency > 0 ? connection.maxConcurrency : "Unlimited"}
+            </Badge>
             {hasAnyProxy && (
               <Badge variant={proxyBadgeVariant} size="sm">
                 Proxy

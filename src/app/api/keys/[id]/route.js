@@ -21,7 +21,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { isActive, allowedIps } = body;
+    const { isActive, allowedIps, maxConcurrentRequests } = body;
 
     const existing = await getApiKeyById(id);
     if (!existing) {
@@ -36,6 +36,12 @@ export async function PUT(request, { params }) {
         return NextResponse.json({ error: "Allowed IPs contain invalid addresses", invalidAllowedIps }, { status: 400 });
       }
       updateData.allowedIps = allowedIps;
+    }
+    if (maxConcurrentRequests !== undefined) {
+      if (!Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 0 || maxConcurrentRequests > 1000) {
+        return NextResponse.json({ error: "maxConcurrentRequests must be an integer between 0 and 1000" }, { status: 400 });
+      }
+      updateData.maxConcurrentRequests = maxConcurrentRequests;
     }
 
     const updated = await updateApiKey(id, updateData);

@@ -91,6 +91,7 @@ export async function PUT(request, { params }) {
     const {
       name,
       priority,
+      maxConcurrency,
       globalPriority,
       defaultModel,
       isActive,
@@ -119,6 +120,12 @@ export async function PUT(request, { params }) {
     const updateData = {};
     if (name !== undefined) updateData.name = name;
     if (priority !== undefined) updateData.priority = priority;
+    if (maxConcurrency !== undefined) {
+      if (!Number.isInteger(maxConcurrency) || maxConcurrency < 0 || maxConcurrency > 1000) {
+        return NextResponse.json({ error: "maxConcurrency must be an integer between 0 and 1000" }, { status: 400 });
+      }
+      updateData.maxConcurrency = maxConcurrency;
+    }
     if (globalPriority !== undefined) updateData.globalPriority = globalPriority;
     if (defaultModel !== undefined) updateData.defaultModel = defaultModel;
     if (isActive !== undefined) updateData.isActive = isActive;
