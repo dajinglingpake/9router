@@ -30,13 +30,23 @@ import { getProviderConnectionById } from "@/lib/localDb";
 import { isModelLockActive } from "open-sse/services/accountFallback.js";
 import { acquireConcurrencySlot, holdConcurrencyUntilResponseDone, ConcurrencyQueueError } from "../services/concurrencyLimiter.js";
 
+const requestIds = new WeakMap();
+
+function getRequestId(request) {
+  if (!request || (typeof request !== "object" && typeof request !== "function")) return null;
+  if (requestIds.has(request)) return requestIds.get(request);
+  const id = request.headers.get("x-request-id") || globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  requestIds.set(request, id);
+  return id;
+}
+
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
-  const requestId = request.headers.get("x-request-id") || globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const requestId = getRequestId(request);
   const apiKey = extractApiKey(request);
   let permit = null;
   if (apiKey) {
@@ -196,6 +206,7 @@ async function handleChatInternal(request, clientRawRequest = null) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
+  const requestId = getRequestId(request);
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -283,6 +294,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
       }
       log.warn("CHAT", "No more accounts available", { provider });
+      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+    }
+
+    // A provider selector must honor exclusions. Guard against a selector
+    // returning the same connection again (notably virtual no-auth accounts),
+    // which would otherwise turn fallback/queue failures into an infinite loop.
+    if (excludeConnectionIds.has(credentials.connectionId)) {
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
