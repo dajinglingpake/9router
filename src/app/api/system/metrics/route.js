@@ -61,11 +61,16 @@ export async function getSystemMetrics() {
   const active = await getActiveRequests();
   const history = await getUsageHistory({ startDate: new Date(Date.now() - 5 * 60 * 1000).toISOString() });
   const activeRequests = active.activeRequests || [];
-  const concurrency = activeRequests.reduce((sum, request) => sum + (Number(request.count) || 0), 0);
+  const rawConcurrency = getConcurrencySnapshot();
+  const accountConcurrency = rawConcurrency
+    .filter((item) => item.scope === "account")
+    .reduce((sum, item) => sum + (Number(item.active) || 0), 0);
+  const concurrency = accountConcurrency
+    || activeRequests.reduce((sum, request) => sum + (Number(request.count) || 0), 0);
   const requestItems = activeRequests.flatMap((request) => request.requests || []);
   const latencies = requestItems.map((request) => request.latencyMs).filter(Number.isFinite);
   const requestSummary = {
-    activeRequests: requestItems.length || concurrency,
+    activeRequests: concurrency || requestItems.length,
     models: new Set(activeRequests.map((request) => request.model)).size,
     apiKeys: new Set(requestItems.map((request) => request.apiKeyName).filter(Boolean)).size,
     clientIps: new Set(requestItems.map((request) => request.clientIp).filter(Boolean)).size,
@@ -87,7 +92,6 @@ export async function getSystemMetrics() {
   const memory = process.memoryUsage();
   const cpu = getCpuMetrics();
   const runtimeConnections = getRuntimeConnectionStats();
-  const rawConcurrency = getConcurrencySnapshot();
   const [connections, apiKeys] = await Promise.all([getProviderConnections(), getApiKeys()]);
   const labels = new Map([
     ...connections.map((item) => [`account:${item.id}`, `账号: ${item.name || item.email || item.id.slice(0, 8)}`]),
