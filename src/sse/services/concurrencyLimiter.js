@@ -72,7 +72,7 @@ function dispatch(key, pool) {
 /**
  * Acquire a FIFO concurrency slot. A non-positive limit means unlimited.
  */
-export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued }) {
+export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, requestId }) {
   const normalizedLimit = normalizeLimit(limit);
   if (!id || normalizedLimit === 0) {
     return Promise.resolve({ queued: false, waitMs: 0, release() {} });
@@ -97,6 +97,7 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued }) {
       queuedAt: Date.now(),
       timer: null,
       onAbort: null,
+      requestId: requestId || null,
     };
 
     waiter.onAbort = () => {
@@ -176,3 +177,22 @@ export const __test__ = {
     return pool ? { active: pool.active, queued: pool.queue.length, limit: pool.limit } : null;
   },
 };
+
+export function getConcurrencySnapshot() {
+  return [...pools.entries()].map(([key, pool]) => {
+    const separator = key.indexOf(":");
+    return {
+      scope: separator >= 0 ? key.slice(0, separator) : "unknown",
+      id: separator >= 0 ? key.slice(separator + 1) : key,
+      active: pool.active,
+      queued: pool.queue.length,
+      limit: pool.limit,
+      queue: pool.queue.map((waiter, index) => ({
+        requestId: waiter.requestId,
+        position: index + 1,
+        queuedAt: waiter.queuedAt,
+        waitMs: Math.max(0, Date.now() - waiter.queuedAt),
+      })),
+    };
+  });
+}

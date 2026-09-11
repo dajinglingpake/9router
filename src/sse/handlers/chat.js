@@ -36,13 +36,14 @@ import { acquireConcurrencySlot, holdConcurrencyUntilResponseDone, ConcurrencyQu
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  const requestId = request.headers.get("x-request-id") || globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const apiKey = extractApiKey(request);
   let permit = null;
   if (apiKey) {
     const record = await getApiKeyByValue(apiKey);
     if (record?.isActive && record.maxConcurrentRequests > 0) {
       try {
-        permit = await acquireConcurrencySlot({ scope: "apiKey", id: record.id, limit: record.maxConcurrentRequests, signal: request.signal });
+        permit = await acquireConcurrencySlot({ scope: "apiKey", id: record.id, limit: record.maxConcurrentRequests, signal: request.signal, requestId });
       } catch (error) {
         if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
         throw error;
@@ -308,6 +309,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         id: credentials.connectionId,
         limit: credentials.maxConcurrency,
         signal: request?.signal,
+        requestId,
       });
     } catch (error) {
       if (error instanceof ConcurrencyQueueError) {

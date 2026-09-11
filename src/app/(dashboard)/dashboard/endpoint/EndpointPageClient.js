@@ -30,6 +30,11 @@ export default function APIPageClient({ machineId }) {
   const [allowedIpsError, setAllowedIpsError] = useState("");
   const [keyConcurrency, setKeyConcurrency] = useState(0);
   const [concurrencyError, setConcurrencyError] = useState("");
+  const [selectedKeyIds, setSelectedKeyIds] = useState(new Set());
+  const [showBulkConcurrencyModal, setShowBulkConcurrencyModal] = useState(false);
+  const [bulkConcurrency, setBulkConcurrency] = useState(0);
+  const [bulkConcurrencyError, setBulkConcurrencyError] = useState("");
+  const [bulkSaving, setBulkSaving] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
 
   const [requireApiKey, setRequireApiKey] = useState(false);
@@ -746,6 +751,43 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
+  const toggleKeySelection = (id) => {
+    setSelectedKeyIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllKeySelection = () => {
+    setSelectedKeyIds((current) => current.size === keys.length ? new Set() : new Set(keys.map((key) => key.id)));
+  };
+
+  const handleBulkConcurrencySave = async () => {
+    if (selectedKeyIds.size === 0) return;
+    setBulkSaving(true);
+    setBulkConcurrencyError("");
+    try {
+      const results = await Promise.all([...selectedKeyIds].map((id) => fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxConcurrentRequests: bulkConcurrency }),
+      })));
+      const failed = results.find((response) => !response.ok);
+      if (failed) {
+        const data = await failed.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update selected keys");
+      }
+      await fetchData();
+      setSelectedKeyIds(new Set());
+      setShowBulkConcurrencyModal(false);
+    } catch (error) {
+      setBulkConcurrencyError(error.message || "Failed to update selected keys");
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const maskKey = (fullKey) => {
     if (!fullKey || fullKey.length <= 10) return fullKey || "";
     return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
@@ -1071,13 +1113,25 @@ export default function APIPageClient({ machineId }) {
           </div>
         ) : (
           <div className="flex flex-col">
+            <div className="mb-2 flex items-center justify-between rounded-lg bg-bg px-3 py-2 text-sm">
+              <label className="flex items-center gap-2 text-text-muted">
+                <input type="checkbox" checked={selectedKeyIds.size === keys.length} onChange={toggleAllKeySelection} />
+                Select all
+              </label>
+              <Button size="sm" variant="secondary" disabled={selectedKeyIds.size === 0} onClick={() => { setBulkConcurrencyError(""); setShowBulkConcurrencyModal(true); }}>
+                Set concurrency ({selectedKeyIds.size})
+              </Button>
+            </div>
             {keys.map((key) => (
               <div
                 key={key.id}
                 className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" checked={selectedKeyIds.has(key.id)} onChange={() => toggleKeySelection(key.id)} />
+                    <p className="text-sm font-medium">{key.name}</p>
+                  </div>
                   <div className="flex items-center gap-2 mt-1">
                     <code className="text-xs text-text-muted font-mono">
                       {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
@@ -1192,6 +1246,17 @@ export default function APIPageClient({ machineId }) {
             >
               Cancel
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showBulkConcurrencyModal} title="Set concurrency for selected keys" onClose={() => setShowBulkConcurrencyModal(false)}>
+        <div className="flex flex-col gap-4">
+          <Input label="Max concurrent requests" type="number" min="0" max="1000" value={bulkConcurrency} onChange={(e) => setBulkConcurrency(Math.max(0, Number.parseInt(e.target.value, 10) || 0))} hint="0 means unlimited." />
+          {bulkConcurrencyError && <p className="text-sm text-red-500">{bulkConcurrencyError}</p>}
+          <div className="flex gap-2">
+            <Button onClick={handleBulkConcurrencySave} fullWidth disabled={bulkSaving}>{bulkSaving ? "Saving..." : "Save"}</Button>
+            <Button onClick={() => setShowBulkConcurrencyModal(false)} variant="ghost" fullWidth>Cancel</Button>
           </div>
         </div>
       </Modal>

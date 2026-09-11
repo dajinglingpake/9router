@@ -89,6 +89,8 @@ export default function SystemMetrics({ initialMetrics = null }) {
     ? Math.round((processMemory / metrics.memory.systemTotal) * 1000) / 10
     : 0;
   const activeRequests = metrics?.activeRequests || [];
+  const concurrencyLimits = metrics?.concurrencyLimits || [];
+  const queuedLimits = concurrencyLimits.filter((item) => item.queued > 0);
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
@@ -149,15 +151,22 @@ export default function SystemMetrics({ initialMetrics = null }) {
       </section>
 
       <Card title="活跃请求" subtitle="按模型与提供商聚合的当前请求">
-        {activeRequests.length === 0 ? (
+        {activeRequests.length === 0 && queuedLimits.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border-subtle px-4 py-10 text-center text-sm text-text-muted">当前没有进行中的请求</div>
         ) : (
           <div className="divide-y divide-border-subtle">
             {activeRequests.map((request) => (
+              (() => {
+                const limit = concurrencyLimits.find((item) => item.scope === "account" && item.label === `账号: ${request.account}`);
+                return (
               <div key={`${request.model}-${request.provider}-${request.account}`} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-text-main">{request.model}</p>
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
+                  {limit && <p className={limit.queued > 0 ? "mt-1 text-xs text-amber-600" : "mt-1 text-xs text-emerald-600"}>{limit.queued > 0 ? `排队中 ${limit.queued}` : "运行中"} · {limit.active}/{limit.limit}</p>}
+                  {limit?.queue?.length > 0 && <div className="mt-2 space-y-1 text-xs text-amber-700">
+                    {limit.queue.map((queued) => <p key={`${queued.requestId}-${queued.position}`}>请求 {queued.requestId ? `#${queued.requestId.slice(0, 8)}` : "#未知"} · 排队中 · 位置 {queued.position} · 已等待 {formatLatency(queued.waitMs)}</p>)}
+                  </div>}
                   <p className="mt-1 text-xs text-text-muted">
                     当前延迟：{formatLatency(request.latencyMs)}
                   </p>
@@ -188,6 +197,17 @@ export default function SystemMetrics({ initialMetrics = null }) {
                   </details>
                 </div>
                 <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{request.count} 个请求</span>
+              </div>
+                );
+              })()
+            ))}
+            {queuedLimits.filter((limit) => !activeRequests.some((request) => limit.scope === "account" && `账号: ${request.account}` === limit.label)).map((limit) => (
+              <div key={`queued-${limit.scope}-${limit.id}`} className="py-3 first:pt-0 last:pb-0">
+                <p className="text-sm font-medium text-text-main">{limit.label}</p>
+                <p className="text-xs text-amber-600">排队中 {limit.queued} · {limit.active}/{limit.limit}</p>
+                <div className="mt-2 space-y-1 text-xs text-amber-700">
+                  {limit.queue.map((queued) => <p key={`${queued.requestId}-${queued.position}`}>请求 {queued.requestId ? `#${queued.requestId.slice(0, 8)}` : "#未知"} · 排队中 · 位置 {queued.position} · 已等待 {formatLatency(queued.waitMs)}</p>)}
+                </div>
               </div>
             ))}
           </div>

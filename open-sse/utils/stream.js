@@ -99,6 +99,13 @@ export function createSSEStream(options = {}) {
   let finalized = false;
   const outputStreamId = beginOutputStream();
 
+  // Shared by transform() and flush() — each receives its own controller.
+  const makeEnqueue = (controller) => (value) => {
+    recordTraffic({ direction: "download", bytes: value?.byteLength || value?.length || 0 });
+    if (value) recordOutputChunk(value, outputStreamId);
+    controller.enqueue(value);
+  };
+
   // Usage/logging tail, callable from transform() as well as flush(): a client that
   // closes right after the terminal event cancels the reader, and flush() never runs.
   const finalizeStream = () => {
@@ -130,11 +137,7 @@ export function createSSEStream(options = {}) {
 
   return new TransformStream({
     transform(chunk, controller) {
-      const enqueue = (value) => {
-        recordTraffic({ direction: "download", bytes: value?.byteLength || value?.length || 0 });
-        if (value) recordOutputChunk(value, outputStreamId);
-        controller.enqueue(value);
-      };
+      const enqueue = makeEnqueue(controller);
       if (!ttftAt) ttftAt = Date.now();
       const text = decoder.decode(chunk, { stream: true });
       buffer += text;
@@ -402,6 +405,7 @@ export function createSSEStream(options = {}) {
     },
 
     flush(controller) {
+      const enqueue = makeEnqueue(controller);
       const evtSummary = Object.entries(eventTypeCounts).map(([k, v]) => `${k}=${v}`).join(",") || "none";
       dbg("SSE", `flush | provider=${provider} | model=${model} | recvLines=${sseLineCount} | emitted=${sseEmittedCount} | events=[${evtSummary}]`);
       trackPendingRequest(model, provider, connectionId, false);

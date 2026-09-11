@@ -84,7 +84,7 @@ docker compose --env-file "$RUN_ENV" -f "$ROOT/compose.yaml" up -d --force-recre
 
 echo "[4/4] Waiting for health check..."
 for i in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
+  if curl -fsS --connect-timeout 1 --max-time 3 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>/dev/null; then
     echo "9router is healthy: $PUBLIC_URL"
     docker compose --env-file "$RUN_ENV" -f "$ROOT/compose.yaml" ps
     exit 0

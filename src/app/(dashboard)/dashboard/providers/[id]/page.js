@@ -668,6 +668,9 @@ export default function ProviderDetailPage() {
               error: valid ? null : (data.error || null),
             },
           }));
+          setConnections((prev) => prev.map((item) => item.id === connection.id
+            ? { ...item, testStatus: valid ? "active" : "error", lastError: valid ? null : (data.error || "Test failed") }
+            : item));
         } catch (error) {
           failed += 1;
           setOneByOneResults((prev) => ({
@@ -677,6 +680,9 @@ export default function ProviderDetailPage() {
               error: error.message || "Test failed",
             },
           }));
+          setConnections((prev) => prev.map((item) => item.id === connection.id
+            ? { ...item, testStatus: "error", lastError: error.message || "Test failed" }
+            : item));
         }
 
         setOneByOneSummary({
@@ -812,7 +818,14 @@ export default function ProviderDetailPage() {
         body: JSON.stringify({ isActive }),
       });
       if (res.ok) {
-        setConnections(prev => prev.map(c => c.id === id ? { ...c, isActive } : c));
+        setConnections(prev => prev.map(c => c.id === id
+          ? { ...c, isActive, testStatus: isActive ? "unknown" : "disabled", lastError: null }
+          : c));
+        setOneByOneResults((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
       }
     } catch (error) {
       console.log("Error updating connection status:", error);

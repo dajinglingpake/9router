@@ -1408,5 +1408,14 @@
   "Edit API key settings": "编辑 API Key 设置",
   "Edit Connection": "编辑账号",
   "Concurrency:": "并发：",
-  "Edit max concurrency": "编辑最大并发"
+  "Edit max concurrency": "编辑最大并发",
+  "Select all": "全选",
+  "Set concurrency": "设置并发",
+  "Set concurrency for selected keys": "设置选中密钥的并发数",
+  "Failed to update selected keys": "更新选中密钥失败",
+  "Concurrency limit status": "并发限制状态",
+  "Shows actively running and queued requests": "显示实际运行中和排队中的请求",
+  "No concurrency limits are currently active": "当前没有触发并发限制",
+  "queued": "排队中",
+  "running": "运行中"
 }

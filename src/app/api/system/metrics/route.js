@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { getActiveRequests, getUsageHistory, getRuntimeRequestErrors } from "@/lib/usageDb.js";
 import fs from "node:fs/promises";
 import { getTrafficSnapshot } from "@/lib/runtimeTraffic.js";
+import { getConcurrencySnapshot } from "@/sse/services/concurrencyLimiter.js";
+import { getProviderConnections, getApiKeys } from "@/lib/localDb";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +87,17 @@ export async function getSystemMetrics() {
   const memory = process.memoryUsage();
   const cpu = getCpuMetrics();
   const runtimeConnections = getRuntimeConnectionStats();
+  const rawConcurrency = getConcurrencySnapshot();
+  const [connections, apiKeys] = await Promise.all([getProviderConnections(), getApiKeys()]);
+  const labels = new Map([
+    ...connections.map((item) => [`account:${item.id}`, `账号: ${item.name || item.email || item.id.slice(0, 8)}`]),
+    ...apiKeys.map((item) => [`apiKey:${item.id}`, `API Key: ${item.name}`]),
+  ]);
+  const concurrencyLimits = rawConcurrency.map((item) => ({
+    ...item,
+    label: labels.get(`${item.scope}:${item.id}`) || `${item.scope}: ${item.id.slice(0, 8)}`,
+    state: item.queued > 0 ? "queued" : "running",
+  }));
   const systemTotal = os.totalmem();
   const systemFree = os.freemem();
 
@@ -113,6 +126,7 @@ export async function getSystemMetrics() {
     concurrency,
     requestSummary,
     traffic: getTrafficSnapshot(),
+    concurrencyLimits,
     runtime: { threads: await getThreadCount() },
     requestStats: { ...requestStats, outputTokensPerSecond: undefined },
     activeRequests,
