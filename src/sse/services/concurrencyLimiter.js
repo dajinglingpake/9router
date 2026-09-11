@@ -22,13 +22,14 @@ export class ConcurrencyQueueError extends Error {
   }
 }
 
-function getPool(key, limit) {
+function getPool(key, limit, hidden = false) {
   let pool = pools.get(key);
   if (!pool) {
-    pool = { active: 0, limit, queue: [] };
+    pool = { active: 0, limit, queue: [], hidden };
     pools.set(key, pool);
   } else {
     pool.limit = limit;
+    pool.hidden = pool.hidden || hidden;
   }
   return pool;
 }
@@ -72,7 +73,7 @@ function dispatch(key, pool) {
 /**
  * Acquire a FIFO concurrency slot. A non-positive limit means unlimited.
  */
-export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, requestId }) {
+export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, requestId, hideFromSnapshot = false }) {
   const normalizedLimit = normalizeLimit(limit);
   if (!id || normalizedLimit === 0) {
     return Promise.resolve({ queued: false, waitMs: 0, release() {} });
@@ -83,7 +84,7 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
   }
 
   const key = `${scope}:${id}`;
-  const pool = getPool(key, normalizedLimit);
+  const pool = getPool(key, normalizedLimit, hideFromSnapshot);
   if (pool.active < pool.limit && pool.queue.length === 0) {
     pool.active++;
     return Promise.resolve(makePermit(key, pool, 0));
@@ -180,6 +181,7 @@ export const __test__ = {
 
 export function getConcurrencySnapshot() {
   return [...pools.entries()].map(([key, pool]) => {
+    if (pool.hidden) return null;
     const separator = key.indexOf(":");
     return {
       scope: separator >= 0 ? key.slice(0, separator) : "unknown",
@@ -194,5 +196,5 @@ export function getConcurrencySnapshot() {
         waitMs: Math.max(0, Date.now() - waiter.queuedAt),
       })),
     };
-  });
+  }).filter(Boolean);
 }

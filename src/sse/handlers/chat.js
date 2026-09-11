@@ -40,6 +40,33 @@ function getRequestId(request) {
   return id;
 }
 
+async function resolveProviderScope(model, seen = new Set()) {
+  const normalizedModel = typeof model === "string" ? model.trim() : "";
+  if (!normalizedModel || seen.has(normalizedModel)) return normalizedModel || "unknown";
+  seen.add(normalizedModel);
+
+  const info = await getModelInfo(normalizedModel);
+  if (info?.provider) return info.provider;
+
+  const comboModels = await getComboModels(normalizedModel);
+  if (!comboModels?.length) return `model:${normalizedModel}`;
+
+  const providers = new Set();
+  for (const comboModel of comboModels) {
+    providers.add(await resolveProviderScope(comboModel, seen));
+  }
+  return [...providers].sort().join(",") || `model:${normalizedModel}`;
+}
+
+async function resolveRequestProviderScope(request) {
+  try {
+    const body = await request.clone().json();
+    return resolveProviderScope(body?.model);
+  } catch {
+    return "unknown";
+  }
+}
+
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
@@ -47,25 +74,48 @@ function getRequestId(request) {
  */
 export async function handleChat(request, clientRawRequest = null) {
   const requestId = getRequestId(request);
-  const apiKey = extractApiKey(request);
+  let admissionPermit = null;
   let permit = null;
-  if (apiKey) {
-    const record = await getApiKeyByValue(apiKey);
-    if (record?.isActive && record.maxConcurrentRequests > 0) {
-      try {
-        permit = await acquireConcurrencySlot({ scope: "apiKey", id: record.id, limit: record.maxConcurrentRequests, signal: request.signal, requestId });
-      } catch (error) {
-        if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
-        throw error;
-      }
-    }
-  }
   try {
+    // Admission is FIFO per provider and only covers entry into the API Key
+    // limiter. It must be released before the upstream/account work begins;
+    // otherwise a per-provider limit of 1 serializes every request and prevents
+    // account concurrency limits from ever filling up.
+    const providerScope = await resolveRequestProviderScope(request);
+    admissionPermit = await acquireConcurrencySlot({
+      scope: "providerAdmission",
+      id: providerScope,
+      limit: 1,
+      signal: request.signal,
+      requestId,
+      hideFromSnapshot: true,
+    });
+
+    try {
+      const apiKey = extractApiKey(request);
+      if (apiKey) {
+        const record = await getApiKeyByValue(apiKey);
+        if (record?.isActive && record.maxConcurrentRequests > 0) {
+          try {
+            permit = await acquireConcurrencySlot({ scope: "apiKey", id: record.id, limit: record.maxConcurrentRequests, signal: request.signal, requestId });
+          } catch (error) {
+            if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
+            throw error;
+          }
+        }
+      }
+    } finally {
+      admissionPermit?.release();
+      admissionPermit = null;
+    }
+
     const response = await handleChatInternal(request, clientRawRequest);
     return permit ? holdConcurrencyUntilResponseDone(response, permit.release) : response;
   } catch (error) {
     permit?.release();
     throw error;
+  } finally {
+    admissionPermit?.release();
   }
 }
 

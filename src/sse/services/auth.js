@@ -5,12 +5,59 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
+import { getConcurrencySnapshot } from "./concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
+const selectionCursors = new Map();
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
+
+function preferConnectionsWithCapacity(connections) {
+  if (connections.length < 2) return connections;
+
+  const loads = new Map(
+    getConcurrencySnapshot()
+      .filter((item) => item.scope === "account")
+      .map((item) => [item.id, item])
+  );
+  const getLoad = (connection) => {
+    const limit = Number(connection.maxConcurrency) || 0;
+    const pool = loads.get(connection.id);
+    const active = pool?.active || 0;
+    const queued = pool?.queued || 0;
+    return { limit, active, queued };
+  };
+
+  // Prefer accounts that can start immediately. This prevents fill-first from
+  // sending every request to the first account while another account is idle.
+  const ready = connections.filter((connection) => {
+    const { limit, active, queued } = getLoad(connection);
+    return limit === 0 || (active < limit && queued === 0);
+  });
+  if (ready.length > 0) return ready;
+
+  // If every account is busy, prefer the least-loaded account so new waiters
+  // do not keep piling onto the first account's queue.
+  return [...connections].sort((a, b) => {
+    const left = getLoad(a);
+    const right = getLoad(b);
+    const leftQueued = left.queued;
+    const rightQueued = right.queued;
+    if (leftQueued !== rightQueued) return leftQueued - rightQueued;
+    if (left.limit === 0 || right.limit === 0) return left.limit === 0 ? -1 : 1;
+    return (left.active / left.limit) - (right.active / right.limit);
+  });
+}
+
+function pickNextConnection(connections, providerId) {
+  if (connections.length === 0) return null;
+  const cursor = selectionCursors.get(providerId) || 0;
+  const connection = connections[cursor % connections.length];
+  selectionCursors.set(providerId, (cursor + 1) % connections.length);
+  return connection;
+}
 
 function githubMonthlyResetMs(status, errorText, provider) {
   if (resolveProviderId(provider) !== "github" || Number(status) !== 402) return null;
@@ -99,7 +146,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return true;
     });
 
-    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
+    const capacityConnections = preferConnectionsWithCapacity(availableConnections);
+
+    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
       const locked = isModelLockActive(c, model);
@@ -148,13 +197,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
     }
-    if (connection) {
-      // skip strategy
-    } else if (strategy === "round-robin") {
+    if (!connection && strategy === "round-robin") {
+      const hasConcurrencyLimits = capacityConnections.some((item) => Number(item.maxConcurrency) > 0);
+      if (hasConcurrencyLimits) {
+        // Concurrency-aware routing takes precedence over sticky rotation:
+        // otherwise a high sticky limit can fill one account while peers idle.
+        connection = pickNextConnection(capacityConnections, `${providerId}:capacity`);
+      }
+    }
+    if (!connection && strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
       // Sort by lastUsed (most recent first) to find current candidate
-      const byRecency = [...availableConnections].sort((a, b) => {
+      const byRecency = [...capacityConnections].sort((a, b) => {
         if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
         if (!a.lastUsedAt) return 1;
         if (!b.lastUsedAt) return -1;
@@ -174,7 +229,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         });
       } else {
         // Pick the least recently used (excluding current if possible)
-        const sortedByOldest = [...availableConnections].sort((a, b) => {
+        const sortedByOldest = [...capacityConnections].sort((a, b) => {
           if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
           if (!a.lastUsedAt) return -1;
           if (!b.lastUsedAt) return 1;
@@ -189,9 +244,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           consecutiveUseCount: 1
         });
       }
-    } else {
+    } else if (!connection) {
       // Default: fill-first (already sorted by priority in getProviderConnections)
-      connection = availableConnections[0];
+      connection = capacityConnections.some((item) => Number(item.maxConcurrency) > 0)
+        ? pickNextConnection(capacityConnections, `${providerId}:capacity`)
+        : capacityConnections[0];
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});

@@ -37,6 +37,23 @@ function MetricCard({ icon, label, value, detail, tone = "text-primary" }) {
   );
 }
 
+function QueuedRequestDetails({ queue = [], startIndex = 0 }) {
+  return queue.map((queued, index) => (
+    <div key={`${queued.requestId || "unknown"}-${queued.position}`} className="rounded-md border border-amber-200 bg-amber-50/60 p-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium text-text-main">请求 #{startIndex + index + 1}</span>
+        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-semibold tabular-nums text-amber-700">排队中</span>
+      </div>
+      <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+        <div><dt className="inline">状态：</dt><dd className="inline font-semibold text-amber-700">正在排队</dd></div>
+        <div><dt className="inline">队列位置：</dt><dd className="inline text-text-main">{queued.position}</dd></div>
+        <div><dt className="inline">已等待：</dt><dd className="inline text-text-main">{formatLatency(queued.waitMs)}</dd></div>
+        <div><dt className="inline">请求 ID：</dt><dd className="inline font-mono text-text-main">{queued.requestId ? `#${queued.requestId.slice(0, 8)}` : "—"}</dd></div>
+      </dl>
+    </div>
+  ));
+}
+
 export default function SystemMetrics({ initialMetrics = null }) {
   const [metrics, setMetrics] = useState(initialMetrics);
   const [error, setError] = useState("");
@@ -163,15 +180,12 @@ export default function SystemMetrics({ initialMetrics = null }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-text-main">{request.model}</p>
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
-                  {limit && <p className={limit.queued > 0 ? "mt-1 text-xs text-amber-600" : "mt-1 text-xs text-emerald-600"}>{limit.queued > 0 ? `排队中 ${limit.queued}` : "运行中"} · {limit.active}/{limit.limit}</p>}
-                  {limit?.queue?.length > 0 && <div className="mt-2 space-y-1 text-xs text-amber-700">
-                    {limit.queue.map((queued) => <p key={`${queued.requestId}-${queued.position}`}>请求 {queued.requestId ? `#${queued.requestId.slice(0, 8)}` : "#未知"} · 排队中 · 位置 {queued.position} · 已等待 {formatLatency(queued.waitMs)}</p>)}
-                  </div>}
+                  {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
                   <p className="mt-1 text-xs text-text-muted">
                     当前延迟：{formatLatency(request.latencyMs)}
                   </p>
                   <details className="mt-2 text-xs text-text-muted">
-                    <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count} 个请求</summary>
+                    <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count + (limit?.queue?.length || 0)} 个请求</summary>
                     <div className="mt-2 space-y-2 rounded-lg bg-bg/70 p-3">
                       {(request.requests || []).map((item, index) => (
                         <div key={item.id} className="rounded-md border border-border-subtle bg-surface p-3">
@@ -193,6 +207,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
                           </dl>
                         </div>
                       ))}
+                      <QueuedRequestDetails queue={limit?.queue} startIndex={request.count} />
                     </div>
                   </details>
                 </div>
@@ -204,10 +219,13 @@ export default function SystemMetrics({ initialMetrics = null }) {
             {queuedLimits.filter((limit) => !activeRequests.some((request) => limit.scope === "account" && `账号: ${request.account}` === limit.label)).map((limit) => (
               <div key={`queued-${limit.scope}-${limit.id}`} className="py-3 first:pt-0 last:pb-0">
                 <p className="text-sm font-medium text-text-main">{limit.label}</p>
-                <p className="text-xs text-amber-600">排队中 {limit.queued} · {limit.active}/{limit.limit}</p>
-                <div className="mt-2 space-y-1 text-xs text-amber-700">
-                  {limit.queue.map((queued) => <p key={`${queued.requestId}-${queued.position}`}>请求 {queued.requestId ? `#${queued.requestId.slice(0, 8)}` : "#未知"} · 排队中 · 位置 {queued.position} · 已等待 {formatLatency(queued.waitMs)}</p>)}
-                </div>
+                <p className="text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>
+                <details className="mt-2 text-xs text-text-muted">
+                  <summary className="cursor-pointer select-none text-primary hover:underline">展开 {limit.queue.length} 个请求</summary>
+                  <div className="mt-2 space-y-2 rounded-lg bg-bg/70 p-3">
+                    <QueuedRequestDetails queue={limit.queue} />
+                  </div>
+                </details>
               </div>
             ))}
           </div>
