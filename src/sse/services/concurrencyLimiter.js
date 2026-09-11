@@ -3,6 +3,8 @@ const DEFAULT_QUEUE_TIMEOUT_MS = 10 * 60 * 1000;
 const pools = globalThis.__ninerouterConcurrencyPools || new Map();
 globalThis.__ninerouterConcurrencyPools = pools;
 
+let releaseHook = null;
+
 function normalizeLimit(value) {
   const limit = Number.parseInt(value, 10);
   return Number.isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : 0;
@@ -22,14 +24,15 @@ export class ConcurrencyQueueError extends Error {
   }
 }
 
-function getPool(key, limit, hidden = false) {
+function getPool(key, limit, hidden = false, metadata = null) {
   let pool = pools.get(key);
   if (!pool) {
-    pool = { active: 0, limit, queue: [], hidden };
+    pool = { active: 0, limit, queue: [], hidden, metadata };
     pools.set(key, pool);
   } else {
     pool.limit = limit;
     pool.hidden = pool.hidden || hidden;
+    pool.metadata = metadata || pool.metadata;
   }
   return pool;
 }
@@ -49,11 +52,70 @@ function makePermit(key, pool, queuedAt) {
       released = true;
       pool.active = Math.max(0, pool.active - 1);
       dispatch(key, pool);
+      notifyRelease();
     },
   };
 }
 
+export function setConcurrencyReleaseHook(hook) {
+  releaseHook = hook;
+}
+
+export function getConcurrencyPools() {
+  return pools;
+}
+
+function notifyRelease() {
+  if (!releaseHook) return;
+  Promise.resolve()
+    .then(() => releaseHook())
+    .catch(() => {});
+}
+
+export function bypassQueuedWaiters(predicate) {
+  for (const [key, pool] of pools.entries()) {
+    if (!predicate(pool) || pool.queue.length === 0) continue;
+
+    while (pool.queue.length > 0) {
+      const waiter = pool.queue.shift();
+      clearTimeout(waiter.timer);
+      waiter.signal?.removeEventListener("abort", waiter.onAbort);
+      if (waiter.signal?.aborted) {
+        waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
+        continue;
+      }
+      waiter.resolve({
+        queued: true,
+        waitMs: Math.max(0, Date.now() - waiter.queuedAt),
+        release() {},
+      });
+    }
+
+    if (pool.active === 0 && pool.queue.length === 0) pools.delete(key);
+  }
+}
+
 function dispatch(key, pool) {
+  // A limit of 0 means unlimited. If a limit is changed to 0 while requests
+  // are waiting, release those waiters immediately instead of leaving stale
+  // entries until the old queue timeout expires.
+  if (pool.limit === 0) {
+    while (pool.queue.length > 0) {
+      const waiter = pool.queue.shift();
+      if (waiter.signal?.aborted) {
+        waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
+        continue;
+      }
+      clearTimeout(waiter.timer);
+      waiter.signal?.removeEventListener("abort", waiter.onAbort);
+      waiter.resolve({
+        queued: true,
+        waitMs: Math.max(0, Date.now() - waiter.queuedAt),
+        release() {},
+      });
+    }
+  }
+
   while (pool.active < pool.limit && pool.queue.length > 0) {
     const waiter = pool.queue.shift();
     if (waiter.signal?.aborted) {
@@ -73,9 +135,20 @@ function dispatch(key, pool) {
 /**
  * Acquire a FIFO concurrency slot. A non-positive limit means unlimited.
  */
-export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, requestId, hideFromSnapshot = false }) {
+export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, requestId, hideFromSnapshot = false, metadata = null }) {
   const normalizedLimit = normalizeLimit(limit);
-  if (!id || normalizedLimit === 0) {
+  if (!id) {
+    return Promise.resolve({ queued: false, waitMs: 0, release() {} });
+  }
+
+  const key = `${scope}:${id}`;
+  const existingPool = pools.get(key);
+  if (normalizedLimit === 0) {
+    if (existingPool) {
+      existingPool.limit = 0;
+      existingPool.hidden = existingPool.hidden || hideFromSnapshot;
+      dispatch(key, existingPool);
+    }
     return Promise.resolve({ queued: false, waitMs: 0, release() {} });
   }
 
@@ -83,8 +156,7 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
     return Promise.reject(new ConcurrencyQueueError("Request aborted before entering concurrency queue", "queue_aborted", 499));
   }
 
-  const key = `${scope}:${id}`;
-  const pool = getPool(key, normalizedLimit, hideFromSnapshot);
+  const pool = getPool(key, normalizedLimit, hideFromSnapshot, metadata);
   if (pool.active < pool.limit && pool.queue.length === 0) {
     pool.active++;
     return Promise.resolve(makePermit(key, pool, 0));
@@ -181,7 +253,10 @@ export const __test__ = {
 
 export function getConcurrencySnapshot() {
   return [...pools.entries()].map(([key, pool]) => {
-    if (pool.hidden) return null;
+    // Unlimited pools do not represent a visible concurrency constraint. This
+    // also hides the short-lived pool left by requests that started before a
+    // limit was changed to 0.
+    if (pool.hidden || pool.limit === 0) return null;
     const separator = key.indexOf(":");
     return {
       scope: separator >= 0 ? key.slice(0, separator) : "unknown",

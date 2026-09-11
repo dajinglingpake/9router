@@ -21,6 +21,7 @@ services:
       OBSERVABILITY_ENABLED: "${OBSERVABILITY_ENABLED:-true}"
       AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-false}"
       REQUIRE_API_KEY: "${REQUIRE_API_KEY:-false}"
+      CONCURRENCY_QUEUE_TIMEOUT_MS: "${CONCURRENCY_QUEUE_TIMEOUT_MS:-600000}"
       BASE_URL: "${BASE_URL:-http://localhost:${PORT:-20128}}"
       CLOUD_URL: "${CLOUD_URL:-https://9router.com}"
       NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL:-http://localhost:${PORT:-20128}}"

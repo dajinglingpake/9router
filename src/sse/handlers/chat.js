@@ -25,10 +25,17 @@ import { extractClientIp } from "../utils/clientIp.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
-import { getApiKeyByValue } from "@/lib/localDb";
-import { getProviderConnectionById } from "@/lib/localDb";
+import { getApiKeyByValue, getProviderConnectionById, getProviderConnections } from "@/lib/localDb";
 import { isModelLockActive } from "open-sse/services/accountFallback.js";
-import { acquireConcurrencySlot, holdConcurrencyUntilResponseDone, ConcurrencyQueueError } from "../services/concurrencyLimiter.js";
+import {
+  acquireConcurrencySlot,
+  holdConcurrencyUntilResponseDone,
+  ConcurrencyQueueError,
+  getConcurrencySnapshot,
+  bypassQueuedWaiters,
+  getConcurrencyPools,
+  setConcurrencyReleaseHook,
+} from "../services/concurrencyLimiter.js";
 
 const requestIds = new WeakMap();
 
@@ -67,37 +74,113 @@ async function resolveRequestProviderScope(request) {
   }
 }
 
+async function getProviderCapacityState(providerScope) {
+  const providerIds = String(providerScope || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const connections = (await Promise.all(
+    providerIds.map((providerId) => getProviderConnections({ provider: providerId, isActive: true }))
+  )).flat();
+
+  const connectionIds = new Set(connections.map((connection) => connection.id));
+  const totalLimit = connections.reduce((sum, connection) => sum + (Number(connection.maxConcurrency) || 0), 0);
+  const active = getConcurrencySnapshot()
+    .filter((item) => item.scope === "account" && connectionIds.has(item.id))
+    .reduce((sum, item) => sum + (Number(item.active) || 0), 0);
+
+  return {
+    totalLimit,
+    active,
+    full: totalLimit > 0 && active >= totalLimit,
+  };
+}
+
+let concurrencyReleaseHookRegistered = false;
+function registerConcurrencyReleaseHook() {
+  if (concurrencyReleaseHookRegistered) return;
+  concurrencyReleaseHookRegistered = true;
+
+  setConcurrencyReleaseHook(async () => {
+    const providerScopes = new Set();
+    for (const [key, pool] of getConcurrencyPools().entries()) {
+      if (!key.startsWith("apiKey:") || pool.queue.length === 0) continue;
+      const providerScope = pool.metadata?.providerScope;
+      if (providerScope) providerScopes.add(providerScope);
+    }
+
+    for (const providerScope of providerScopes) {
+      const capacity = await getProviderCapacityState(providerScope);
+      if (capacity.full) continue;
+      bypassQueuedWaiters((pool) => (
+        pool.metadata?.providerScope === providerScope
+        && pool.queue.length > 0
+      ));
+    }
+  });
+}
+
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  registerConcurrencyReleaseHook();
+
   const requestId = getRequestId(request);
   let admissionPermit = null;
   let permit = null;
+  const releaseAdmission = () => {
+    admissionPermit?.release();
+    admissionPermit = null;
+  };
   try {
     // Admission is FIFO per provider and only covers entry into the API Key
     // limiter. It must be released before the upstream/account work begins;
     // otherwise a per-provider limit of 1 serializes every request and prevents
     // account concurrency limits from ever filling up.
     const providerScope = await resolveRequestProviderScope(request);
-    admissionPermit = await acquireConcurrencySlot({
-      scope: "providerAdmission",
-      id: providerScope,
-      limit: 1,
-      signal: request.signal,
-      requestId,
-      hideFromSnapshot: true,
-    });
+    try {
+      admissionPermit = await acquireConcurrencySlot({
+        scope: "providerAdmission",
+        id: providerScope,
+        limit: 1,
+        signal: request.signal,
+        requestId,
+        hideFromSnapshot: true,
+      });
+    } catch (error) {
+      if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
+      throw error;
+    }
 
     try {
       const apiKey = extractApiKey(request);
       if (apiKey) {
         const record = await getApiKeyByValue(apiKey);
-        if (record?.isActive && record.maxConcurrentRequests > 0) {
+        const providerCapacity = await getProviderCapacityState(providerScope);
+        const shouldApplyApiKeyLimit = record?.isActive
+          && record.maxConcurrentRequests > 0
+          && providerCapacity.full;
+
+        if (!record?.isActive || !shouldApplyApiKeyLimit) {
+          log.debug("LIMITER", `Bypass API Key limit for ${record?.id || "unknown"} (provider active ${providerCapacity.active}/${providerCapacity.totalLimit})`);
+        }
+
+        if (shouldApplyApiKeyLimit) {
           try {
-            permit = await acquireConcurrencySlot({ scope: "apiKey", id: record.id, limit: record.maxConcurrentRequests, signal: request.signal, requestId });
+            permit = await acquireConcurrencySlot({
+              scope: "apiKey",
+              id: record.id,
+              limit: record.maxConcurrentRequests,
+              signal: request.signal,
+              requestId,
+              metadata: { providerScope },
+              // Keep this key's queue FIFO without blocking unrelated keys
+              // behind a request waiting for this key's own slot.
+              onQueued: releaseAdmission,
+            });
           } catch (error) {
             if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
             throw error;
@@ -105,8 +188,7 @@ export async function handleChat(request, clientRawRequest = null) {
         }
       }
     } finally {
-      admissionPermit?.release();
-      admissionPermit = null;
+      releaseAdmission();
     }
 
     const response = await handleChatInternal(request, clientRawRequest);
@@ -115,7 +197,7 @@ export async function handleChat(request, clientRawRequest = null) {
     permit?.release();
     throw error;
   } finally {
-    admissionPermit?.release();
+    releaseAdmission();
   }
 }
 
@@ -378,13 +460,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         limit: credentials.maxConcurrency,
         signal: request?.signal,
         requestId,
+        metadata: { providerScope: provider },
       });
     } catch (error) {
       if (error instanceof ConcurrencyQueueError) {
-        lastError = error.message;
-        lastStatus = error.status;
-        excludeConnectionIds.add(credentials.connectionId);
-        continue;
+        // A queue timeout is a capacity failure for this request, not an
+        // upstream account error. Return immediately instead of waiting on
+        // every account in sequence.
+        return errorResponse(error.status, error.message);
       }
       throw error;
     }
