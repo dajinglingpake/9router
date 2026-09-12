@@ -84,7 +84,9 @@ async function getProviderCapacityState(providerScope) {
   )).flat();
 
   const connectionIds = new Set(connections.map((connection) => connection.id));
-  const totalLimit = connections.reduce((sum, connection) => sum + (Number(connection.maxConcurrency) || 0), 0);
+  const accountLimits = connections.map((connection) => Number(connection.maxConcurrency) || 0);
+  const totalLimit = accountLimits.reduce((sum, limit) => sum + limit, 0);
+  const hasUnlimitedAccount = accountLimits.some((limit) => limit === 0);
   const active = getConcurrencySnapshot()
     .filter((item) => item.scope === "account" && connectionIds.has(item.id))
     .reduce((sum, item) => sum + (Number(item.active) || 0), 0);
@@ -92,7 +94,8 @@ async function getProviderCapacityState(providerScope) {
   return {
     totalLimit,
     active,
-    full: totalLimit > 0 && active >= totalLimit,
+    hasUnlimitedAccount,
+    full: !hasUnlimitedAccount && totalLimit > 0 && active >= totalLimit,
   };
 }
 
@@ -112,10 +115,16 @@ function registerConcurrencyReleaseHook() {
     for (const providerScope of providerScopes) {
       const capacity = await getProviderCapacityState(providerScope);
       if (capacity.full) continue;
+      const availableSlots = capacity.hasUnlimitedAccount
+        ? Infinity
+        : Math.max(0, capacity.totalLimit - capacity.active);
+      if (availableSlots === 0) continue;
+      // Release only the capacity that is available. The waiter sequence is
+      // global, so different API Key queues still observe provider FIFO order.
       bypassQueuedWaiters((pool) => (
         pool.metadata?.providerScope === providerScope
         && pool.queue.length > 0
-      ));
+      ), availableSlots);
     }
   });
 }

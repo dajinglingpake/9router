@@ -4,6 +4,9 @@ const pools = globalThis.__ninerouterConcurrencyPools || new Map();
 globalThis.__ninerouterConcurrencyPools = pools;
 
 let releaseHook = null;
+let waiterSequence = 0;
+let releaseNotificationPending = false;
+let releaseNotificationAgain = false;
 
 function normalizeLimit(value) {
   const limit = Number.parseInt(value, 10);
@@ -67,32 +70,54 @@ export function getConcurrencyPools() {
 
 function notifyRelease() {
   if (!releaseHook) return;
+  if (releaseNotificationPending) {
+    releaseNotificationAgain = true;
+    return;
+  }
+  releaseNotificationPending = true;
   Promise.resolve()
     .then(() => releaseHook())
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => {
+      releaseNotificationPending = false;
+      if (releaseNotificationAgain) {
+        releaseNotificationAgain = false;
+        notifyRelease();
+      }
+    });
 }
 
-export function bypassQueuedWaiters(predicate) {
-  for (const [key, pool] of pools.entries()) {
-    if (!predicate(pool) || pool.queue.length === 0) continue;
-
-    while (pool.queue.length > 0) {
-      const waiter = pool.queue.shift();
-      clearTimeout(waiter.timer);
-      waiter.signal?.removeEventListener("abort", waiter.onAbort);
-      if (waiter.signal?.aborted) {
-        waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
-        continue;
+export function bypassQueuedWaiters(predicate, maxCount = Infinity) {
+  let bypassed = 0;
+  while (bypassed < maxCount) {
+    let selected = null;
+    for (const [key, pool] of pools.entries()) {
+      if (!predicate(pool) || pool.queue.length === 0) continue;
+      const waiter = pool.queue[0];
+      if (!selected || waiter.sequence < selected.waiter.sequence) {
+        selected = { key, pool, waiter };
       }
-      waiter.resolve({
-        queued: true,
-        waitMs: Math.max(0, Date.now() - waiter.queuedAt),
-        release() {},
-      });
     }
+    if (!selected) break;
+
+    const { key, pool, waiter } = selected;
+    pool.queue.shift();
+    clearTimeout(waiter.timer);
+    waiter.signal?.removeEventListener("abort", waiter.onAbort);
+    if (waiter.signal?.aborted) {
+      waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
+      continue;
+    }
+    waiter.resolve({
+      queued: true,
+      waitMs: Math.max(0, Date.now() - waiter.queuedAt),
+      release() {},
+    });
+    bypassed++;
 
     if (pool.active === 0 && pool.queue.length === 0) pools.delete(key);
   }
+  return bypassed;
 }
 
 function dispatch(key, pool) {
@@ -168,6 +193,7 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
       reject,
       signal,
       queuedAt: Date.now(),
+      sequence: ++waiterSequence,
       timer: null,
       onAbort: null,
       requestId: requestId || null,
@@ -244,6 +270,9 @@ export const __test__ = {
       }
     }
     pools.clear();
+    waiterSequence = 0;
+    releaseNotificationPending = false;
+    releaseNotificationAgain = false;
   },
   snapshot(scope, id) {
     const pool = pools.get(`${scope}:${id}`);
