@@ -8,6 +8,41 @@ let waiterSequence = 0;
 let releaseNotificationPending = false;
 let releaseNotificationAgain = false;
 
+// Queue entries are exposed to the dashboard, so keep only the small,
+// display-safe request summary rather than headers, bodies, or raw API keys.
+const QUEUE_METADATA_KEYS = [
+  "providerScope",
+  "apiKeyName",
+  "apiKeyMasked",
+  "clientIp",
+  "endpoint",
+  "requestedModel",
+  "upstreamModel",
+  "thinkingLevel",
+  "sourceFormat",
+  "targetFormat",
+  "requestBytes",
+  "stream",
+];
+
+function sanitizeMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object") return null;
+  const safe = {};
+  for (const key of QUEUE_METADATA_KEYS) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.length <= 512) safe[key] = value;
+    else if (typeof value === "number" && Number.isFinite(value)) safe[key] = value;
+    else if (typeof value === "boolean") safe[key] = value;
+  }
+  return Object.keys(safe).length > 0 ? safe : null;
+}
+
+function displayMetadata(metadata) {
+  const safe = metadata ? { ...metadata } : {};
+  delete safe.providerScope;
+  return safe;
+}
+
 function normalizeLimit(value) {
   const limit = Number.parseInt(value, 10);
   return Number.isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : 0;
@@ -28,14 +63,15 @@ export class ConcurrencyQueueError extends Error {
 }
 
 function getPool(key, limit, hidden = false, metadata = null) {
+  const safeMetadata = sanitizeMetadata(metadata);
   let pool = pools.get(key);
   if (!pool) {
-    pool = { active: 0, limit, queue: [], hidden, metadata };
+    pool = { active: 0, limit, queue: [], hidden, metadata: safeMetadata };
     pools.set(key, pool);
   } else {
     pool.limit = limit;
     pool.hidden = pool.hidden || hidden;
-    pool.metadata = metadata || pool.metadata;
+    pool.metadata = safeMetadata || pool.metadata;
   }
   return pool;
 }
@@ -181,6 +217,7 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
     return Promise.reject(new ConcurrencyQueueError("Request aborted before entering concurrency queue", "queue_aborted", 499));
   }
 
+  const safeMetadata = sanitizeMetadata(metadata);
   const pool = getPool(key, normalizedLimit, hideFromSnapshot, metadata);
   if (pool.active < pool.limit && pool.queue.length === 0) {
     pool.active++;
@@ -197,6 +234,7 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
       timer: null,
       onAbort: null,
       requestId: requestId || null,
+      metadata: safeMetadata,
     };
 
     waiter.onAbort = () => {
@@ -298,6 +336,7 @@ export function getConcurrencySnapshot() {
         position: index + 1,
         queuedAt: waiter.queuedAt,
         waitMs: Math.max(0, Date.now() - waiter.queuedAt),
+        ...displayMetadata(waiter.metadata),
       })),
     };
   }).filter(Boolean);

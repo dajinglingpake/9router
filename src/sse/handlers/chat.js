@@ -19,7 +19,10 @@ import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "o
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
+import { detectFormat, getTargetFormat, resolveTransport } from "open-sse/services/provider.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
+import { extractThinking } from "open-sse/translator/concerns/thinkingUnified.js";
+import { getModelTargetFormat, getModelSupportedFormats, getModelUpstreamId, PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 import * as log from "../utils/logger.js";
 import { extractClientIp } from "../utils/clientIp.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
@@ -45,6 +48,47 @@ function getRequestId(request) {
   const id = request.headers.get("x-request-id") || globalThis.crypto?.randomUUID?.() || `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   requestIds.set(request, id);
   return id;
+}
+
+function thinkingLevelFromConfig(config) {
+  if (!config) return null;
+  if (config.mode === "level") return config.level || null;
+  if (config.mode === "budget") return Number.isFinite(config.budget) ? `budget:${config.budget}` : null;
+  return config.mode || null;
+}
+
+function buildConcurrencyMetadata({ body, clientRawRequest, request, provider, model, credentials = null, apiKey = null, providerThinking = null }) {
+  const rawBody = body && typeof body === "object" ? body : {};
+  const endpoint = clientRawRequest?.endpoint || (() => {
+    try { return new URL(request?.url || "").pathname || null; } catch { return null; }
+  })();
+  const sourceFormat = detectFormatByEndpoint(endpoint || "", rawBody) || detectFormat(rawBody);
+  const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
+  const runtimeTransport = resolveTransport(provider, sourceFormat);
+  const supportedFormats = getModelSupportedFormats(alias, model);
+  const useTransport = (!supportedFormats || supportedFormats.includes(sourceFormat)) ? runtimeTransport : null;
+  const targetFormat = useTransport?.format
+    || getModelTargetFormat(alias, model)
+    || getTargetFormat(provider, credentials);
+  const requestedModel = typeof rawBody.model === "string" && rawBody.model.trim()
+    ? rawBody.model.trim()
+    : (model ? `${provider}/${model}` : null);
+  const thinkingLevel = thinkingLevelFromConfig(extractThinking(rawBody) || providerThinking);
+  const requestBytes = Buffer.byteLength(JSON.stringify(rawBody), "utf8");
+
+  return {
+    apiKeyName: clientRawRequest?.apiKeyName || (apiKey ? "未命名 API Key" : "未使用 API Key"),
+    apiKeyMasked: clientRawRequest?.apiKeyMasked || (apiKey ? log.maskKey(apiKey) : null),
+    clientIp: clientRawRequest?.clientIp || extractClientIp(request),
+    endpoint,
+    requestedModel,
+    upstreamModel: model ? getModelUpstreamId(alias, model) : null,
+    thinkingLevel,
+    sourceFormat,
+    targetFormat,
+    requestBytes,
+    stream: rawBody.stream !== false,
+  };
 }
 
 async function resolveProviderScope(model, seen = new Set()) {
@@ -138,6 +182,19 @@ export async function handleChat(request, clientRawRequest = null) {
   registerConcurrencyReleaseHook();
 
   const requestId = getRequestId(request);
+  let requestBody = clientRawRequest?.body || null;
+  if (!requestBody) {
+    try { requestBody = await request.clone().json(); } catch { requestBody = null; }
+  }
+  const requestContext = {
+    ...(clientRawRequest || {}),
+    endpoint: clientRawRequest?.endpoint || (() => {
+      try { return new URL(request.url).pathname; } catch { return null; }
+    })(),
+    body: requestBody,
+    headers: clientRawRequest?.headers || Object.fromEntries(request.headers.entries()),
+    clientIp: clientRawRequest?.clientIp || extractClientIp(request),
+  };
   let admissionPermit = null;
   let permit = null;
   const releaseAdmission = () => {
@@ -168,6 +225,8 @@ export async function handleChat(request, clientRawRequest = null) {
       const apiKey = extractApiKey(request);
       if (apiKey) {
         const record = await getApiKeyByValue(apiKey);
+        requestContext.apiKeyName = record?.name || "未命名 API Key";
+        requestContext.apiKeyMasked = log.maskKey(apiKey);
         const providerCapacity = await getProviderCapacityState(providerScope);
         const shouldApplyApiKeyLimit = record?.isActive
           && record.maxConcurrentRequests > 0
@@ -185,7 +244,17 @@ export async function handleChat(request, clientRawRequest = null) {
               limit: record.maxConcurrentRequests,
               signal: request.signal,
               requestId,
-              metadata: { providerScope },
+              metadata: {
+                providerScope,
+                ...buildConcurrencyMetadata({
+                  body: requestBody,
+                  clientRawRequest: requestContext,
+                  request,
+                  provider: providerScope.includes(",") ? null : providerScope,
+                  model: requestBody?.model,
+                  apiKey,
+                }),
+              },
               // Keep this key's queue FIFO without blocking unrelated keys
               // behind a request waiting for this key's own slot.
               onQueued: releaseAdmission,
@@ -200,7 +269,7 @@ export async function handleChat(request, clientRawRequest = null) {
       releaseAdmission();
     }
 
-    const response = await handleChatInternal(request, clientRawRequest);
+    const response = await handleChatInternal(request, requestContext);
     return permit ? holdConcurrencyUntilResponseDone(response, permit.release) : response;
   } catch (error) {
     permit?.release();
@@ -469,7 +538,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         limit: credentials.maxConcurrency,
         signal: request?.signal,
         requestId,
-        metadata: { providerScope: provider },
+        metadata: {
+          providerScope: provider,
+          ...buildConcurrencyMetadata({
+            body,
+            clientRawRequest,
+            request,
+            provider,
+            model,
+            credentials: refreshedCredentials,
+            apiKey,
+            providerThinking,
+          }),
+        },
       });
     } catch (error) {
       if (error instanceof ConcurrencyQueueError) {

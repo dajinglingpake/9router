@@ -48,6 +48,16 @@ function QueuedRequestDetails({ queue = [], startIndex = 0 }) {
         <div><dt className="inline">状态：</dt><dd className="inline font-semibold text-amber-700">正在排队</dd></div>
         <div><dt className="inline">队列位置：</dt><dd className="inline text-text-main">{queued.position}</dd></div>
         <div><dt className="inline">已等待：</dt><dd className="inline text-text-main">{formatLatency(queued.waitMs)}</dd></div>
+        <div><dt className="inline">客户端 IP：</dt><dd className="inline text-text-main">{queued.clientIp || "—"}</dd></div>
+        <div><dt className="inline">API Key：</dt><dd className="inline text-text-main">{queued.apiKeyName || "未使用 API Key"}{queued.apiKeyMasked ? `（${queued.apiKeyMasked}）` : ""}</dd></div>
+        <div><dt className="inline">入队时间：</dt><dd className="inline text-text-main">{queued.queuedAt ? new Date(queued.queuedAt).toLocaleTimeString() : "—"}</dd></div>
+        <div><dt className="inline">客户端模型：</dt><dd className="inline break-all font-mono text-text-main">{queued.requestedModel || "—"}</dd></div>
+        <div><dt className="inline">上游模型：</dt><dd className="inline break-all font-mono text-text-main">{queued.upstreamModel || "—"}</dd></div>
+        <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{queued.requestBytes != null ? formatBytes(queued.requestBytes) : "—"}</dd></div>
+        <div><dt className="inline">请求端点：</dt><dd className="inline break-all font-mono text-text-main">{queued.endpoint || "—"}</dd></div>
+        <div><dt className="inline">模型级别：</dt><dd className="inline font-semibold text-text-main">{queued.thinkingLevel || "auto"}</dd></div>
+        <div><dt className="inline">格式：</dt><dd className="inline text-text-main">{queued.sourceFormat || "—"} → {queued.targetFormat || "—"}</dd></div>
+        <div><dt className="inline">响应模式：</dt><dd className="inline text-text-main">{queued.stream == null ? "—" : queued.stream ? "流式" : "JSON"}</dd></div>
         <div><dt className="inline">请求 ID：</dt><dd className="inline font-mono text-text-main">{queued.requestId ? `#${queued.requestId.slice(0, 8)}` : "—"}</dd></div>
       </dl>
     </div>
