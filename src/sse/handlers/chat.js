@@ -30,14 +30,12 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getApiKeyByValue, getProviderConnectionById, getProviderConnections } from "@/lib/localDb";
 import { isModelLockActive } from "open-sse/services/accountFallback.js";
+import { resolveProviderId } from "@/shared/constants/providers.js";
 import {
   acquireConcurrencySlot,
   holdConcurrencyUntilResponseDone,
   ConcurrencyQueueError,
   getConcurrencySnapshot,
-  bypassQueuedWaiters,
-  getConcurrencyPools,
-  setConcurrencyReleaseHook,
 } from "../services/concurrencyLimiter.js";
 
 const requestIds = new WeakMap();
@@ -118,15 +116,9 @@ async function resolveRequestProviderScope(request) {
   }
 }
 
-async function getProviderCapacityState(providerScope) {
-  const providerIds = String(providerScope || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const connections = (await Promise.all(
-    providerIds.map((providerId) => getProviderConnections({ provider: providerId, isActive: true }))
-  )).flat();
-
+async function getProviderCapacityState(provider) {
+  const providerId = resolveProviderId(provider);
+  const connections = await getProviderConnections({ provider: providerId, isActive: true });
   const connectionIds = new Set(connections.map((connection) => connection.id));
   const accountLimits = connections.map((connection) => Number(connection.maxConcurrency) || 0);
   const totalLimit = accountLimits.reduce((sum, limit) => sum + limit, 0);
@@ -143,44 +135,12 @@ async function getProviderCapacityState(providerScope) {
   };
 }
 
-let concurrencyReleaseHookRegistered = false;
-function registerConcurrencyReleaseHook() {
-  if (concurrencyReleaseHookRegistered) return;
-  concurrencyReleaseHookRegistered = true;
-
-  setConcurrencyReleaseHook(async () => {
-    const providerScopes = new Set();
-    for (const [key, pool] of getConcurrencyPools().entries()) {
-      if (!key.startsWith("apiKey:") || pool.queue.length === 0) continue;
-      const providerScope = pool.metadata?.providerScope;
-      if (providerScope) providerScopes.add(providerScope);
-    }
-
-    for (const providerScope of providerScopes) {
-      const capacity = await getProviderCapacityState(providerScope);
-      if (capacity.full) continue;
-      const availableSlots = capacity.hasUnlimitedAccount
-        ? Infinity
-        : Math.max(0, capacity.totalLimit - capacity.active);
-      if (availableSlots === 0) continue;
-      // Release only the capacity that is available. The waiter sequence is
-      // global, so different API Key queues still observe provider FIFO order.
-      bypassQueuedWaiters((pool) => (
-        pool.metadata?.providerScope === providerScope
-        && pool.queue.length > 0
-      ), availableSlots);
-    }
-  });
-}
-
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
-  registerConcurrencyReleaseHook();
-
   const requestId = getRequestId(request);
   let requestBody = clientRawRequest?.body || null;
   if (!requestBody) {
@@ -196,16 +156,15 @@ export async function handleChat(request, clientRawRequest = null) {
     clientIp: clientRawRequest?.clientIp || extractClientIp(request),
   };
   let admissionPermit = null;
-  let permit = null;
   const releaseAdmission = () => {
     admissionPermit?.release();
     admissionPermit = null;
   };
   try {
-    // Admission is FIFO per provider and only covers entry into the API Key
-    // limiter. It must be released before the upstream/account work begins;
-    // otherwise a per-provider limit of 1 serializes every request and prevents
-    // account concurrency limits from ever filling up.
+    // Admission is FIFO per provider and only covers API Key resolution before
+    // the provider/account work begins. It must not be held during upstream
+    // work, otherwise a per-provider limit of 1 serializes every request and
+    // prevents account concurrency limits from ever filling up.
     const providerScope = await resolveRequestProviderScope(request);
     try {
       admissionPermit = await acquireConcurrencySlot({
@@ -227,42 +186,13 @@ export async function handleChat(request, clientRawRequest = null) {
         const record = await getApiKeyByValue(apiKey);
         requestContext.apiKeyName = record?.name || "未命名 API Key";
         requestContext.apiKeyMasked = log.maskKey(apiKey);
-        const providerCapacity = await getProviderCapacityState(providerScope);
-        const shouldApplyApiKeyLimit = record?.isActive
-          && record.maxConcurrentRequests > 0
-          && providerCapacity.full;
+        requestContext.apiKeyRecordId = record?.id || null;
+        requestContext.apiKeyLimit = record?.isActive
+          ? (Number(record.maxConcurrentRequests) || 0)
+          : 0;
 
-        if (!record?.isActive || !shouldApplyApiKeyLimit) {
-          log.debug("LIMITER", `Bypass API Key limit for ${record?.id || "unknown"} (provider active ${providerCapacity.active}/${providerCapacity.totalLimit})`);
-        }
-
-        if (shouldApplyApiKeyLimit) {
-          try {
-            permit = await acquireConcurrencySlot({
-              scope: "apiKey",
-              id: record.id,
-              limit: record.maxConcurrentRequests,
-              signal: request.signal,
-              requestId,
-              metadata: {
-                providerScope,
-                ...buildConcurrencyMetadata({
-                  body: requestBody,
-                  clientRawRequest: requestContext,
-                  request,
-                  provider: providerScope.includes(",") ? null : providerScope,
-                  model: requestBody?.model,
-                  apiKey,
-                }),
-              },
-              // Keep this key's queue FIFO without blocking unrelated keys
-              // behind a request waiting for this key's own slot.
-              onQueued: releaseAdmission,
-            });
-          } catch (error) {
-            if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
-            throw error;
-          }
+        if (!record?.isActive || requestContext.apiKeyLimit === 0) {
+          log.debug("LIMITER", `Bypass API Key limit for ${record?.id || "unknown"} (inactive or unlimited)`);
         }
       }
     } finally {
@@ -270,9 +200,8 @@ export async function handleChat(request, clientRawRequest = null) {
     }
 
     const response = await handleChatInternal(request, requestContext);
-    return permit ? holdConcurrencyUntilResponseDone(response, permit.release) : response;
+    return response;
   } catch (error) {
-    permit?.release();
     throw error;
   } finally {
     releaseAdmission();
@@ -530,6 +459,46 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    const concurrencyMetadata = buildConcurrencyMetadata({
+      body,
+      clientRawRequest,
+      request,
+      provider,
+      model,
+      credentials: refreshedCredentials,
+      apiKey,
+      providerThinking,
+    });
+    const apiKeyRecordId = clientRawRequest?.apiKeyRecordId || null;
+    const apiKeyLimit = Number(clientRawRequest?.apiKeyLimit) || 0;
+    let apiKeyPermit = null;
+
+    // API Key limits are a backstop, not a hard admission gate. Let requests
+    // fill the account slots first; only once this provider's account slots are
+    // all occupied do we throttle the caller by API Key before it can queue for
+    // an account.
+    if (apiKeyRecordId && apiKeyLimit > 0) {
+      const providerCapacity = await getProviderCapacityState(provider);
+      if (providerCapacity.full) {
+        try {
+          apiKeyPermit = await acquireConcurrencySlot({
+            scope: "apiKey",
+            id: apiKeyRecordId,
+            limit: apiKeyLimit,
+            signal: request?.signal,
+            requestId,
+            metadata: {
+              providerScope: provider,
+              ...concurrencyMetadata,
+            },
+          });
+        } catch (error) {
+          if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
+          throw error;
+        }
+      }
+    }
+
     let accountPermit;
     try {
       accountPermit = await acquireConcurrencySlot({
@@ -540,19 +509,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         requestId,
         metadata: {
           providerScope: provider,
-          ...buildConcurrencyMetadata({
-            body,
-            clientRawRequest,
-            request,
-            provider,
-            model,
-            credentials: refreshedCredentials,
-            apiKey,
-            providerThinking,
-          }),
+          ...concurrencyMetadata,
         },
       });
     } catch (error) {
+      apiKeyPermit?.release();
       if (error instanceof ConcurrencyQueueError) {
         // A queue timeout is a capacity failure for this request, not an
         // upstream account error. Return immediately instead of waiting on
@@ -569,6 +530,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       : await getProviderConnectionById(credentials.connectionId);
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
       accountPermit.release();
+      apiKeyPermit?.release();
       excludeConnectionIds.add(credentials.connectionId);
       continue;
     }
@@ -618,10 +580,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       });
     } catch (error) {
       accountPermit.release();
+      apiKeyPermit?.release();
       throw error;
     }
 
-    if (result.success) return holdConcurrencyUntilResponseDone(result.response, accountPermit.release);
+    if (result.success) {
+      return holdConcurrencyUntilResponseDone(result.response, () => {
+        accountPermit.release();
+        apiKeyPermit?.release();
+      });
+    }
 
     // Apply fallback/cooldown state before releasing the slot so queued work
     // observes the latest account availability.
@@ -645,6 +613,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (shouldFallback) {
       accountPermit.release();
+      apiKeyPermit?.release();
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
@@ -653,6 +622,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
 
     accountPermit.release();
+    apiKeyPermit?.release();
     return result.response;
   }
 }

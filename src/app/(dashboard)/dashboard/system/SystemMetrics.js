@@ -118,6 +118,11 @@ export default function SystemMetrics({ initialMetrics = null }) {
   const activeRequests = metrics?.activeRequests || [];
   const concurrencyLimits = metrics?.concurrencyLimits || [];
   const queuedLimits = concurrencyLimits.filter((item) => item.queued > 0);
+  const runningLimits = concurrencyLimits.filter((item) => item.active > 0);
+  const representedLimitKeys = new Set(activeRequests.flatMap((request) => {
+    const limit = concurrencyLimits.find((item) => item.scope === "account" && item.label === `账号: ${request.account}`);
+    return limit ? [`${limit.scope}:${limit.id}`] : [];
+  }));
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
@@ -178,7 +183,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
       </section>
 
       <Card title="活跃请求" subtitle="按模型与提供商聚合的当前请求">
-        {activeRequests.length === 0 && queuedLimits.length === 0 ? (
+        {activeRequests.length === 0 && queuedLimits.length === 0 && runningLimits.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border-subtle px-4 py-10 text-center text-sm text-text-muted">当前没有进行中的请求</div>
         ) : (
           <div className="divide-y divide-border-subtle">
@@ -225,6 +230,15 @@ export default function SystemMetrics({ initialMetrics = null }) {
               </div>
                 );
               })()
+            ))}
+            {runningLimits.filter((limit) => !representedLimitKeys.has(`${limit.scope}:${limit.id}`)).map((limit) => (
+              <div key={`running-${limit.scope}-${limit.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-text-main">{limit.label}</p>
+                  <p className="text-xs text-text-muted">{limit.scope === "account" ? "账号并发槽位" : "API Key 并发槽位"} · 并发 {limit.active}/{limit.limit}</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{limit.active} 个请求</span>
+              </div>
             ))}
             {queuedLimits.filter((limit) => !activeRequests.some((request) => limit.scope === "account" && `账号: ${request.account}` === limit.label)).map((limit) => (
               <div key={`queued-${limit.scope}-${limit.id}`} className="py-3 first:pt-0 last:pb-0">
