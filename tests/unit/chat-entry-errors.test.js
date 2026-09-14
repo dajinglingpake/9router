@@ -59,12 +59,12 @@ it("records an invalid model as a caller error", async () => {
   expect(mocks.appendRequestLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: "client", message: "Invalid model format" }));
 });
 
-it("records missing provider credentials as a router error even though the status is 404", async () => {
+it("records missing provider credentials as a router error", async () => {
   const response = await handleChat(new Request("http://localhost/v1/chat/completions", {
-    method: "POST", body: JSON.stringify({ model: "test-model", messages: [] }),
+    method: "POST", headers: { "x-session-id": "session-a" }, body: JSON.stringify({ model: "test-model", messages: [] }),
   }));
-  expect(response.status).toBe(404);
-  expect(mocks.appendRequestLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: "router", status: "FAILED 404" }));
+  expect(response.status).toBe(503);
+  expect(mocks.appendRequestLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: "router", status: "FAILED 503" }));
 });
 
 it.each([null, "Bearer invalid-secret"])("records caller authentication failure with header %s", async (authorization) => {

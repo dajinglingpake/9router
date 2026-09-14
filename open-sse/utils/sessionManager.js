@@ -135,7 +135,7 @@ function extractAntigravitySession(body) {
     return m ? normalizeSessionId(m[1]) : null;
 }
 
-function extractClientSessionId(headers, body, scope = "") {
+export function extractClientSessionId(headers, body, scope = "", stableOnly = false) {
     // Claude Code sends the session in a header AND in metadata.user_id; the header
     // survives translation to formats that drop metadata (e.g. Responses API).
     const claude = extractClaudeCodeSession(body?.metadata?.user_id)
@@ -147,13 +147,14 @@ function extractClientSessionId(headers, body, scope = "") {
         const v = headerValue(headers, key);
         if (v) return v;
     }
-    const requestId = scope === "kiro" ? null : headerValue(headers, "x-client-request-id");
+    const requestId = stableOnly || scope === "kiro" ? null : headerValue(headers, "x-client-request-id");
     if (requestId) return requestId;
     const fromBody =
+        (stableOnly && (normalizeSessionId(body?.session_id) || normalizeSessionId(body?.conversation_id))) ||
         normalizeSessionId(body?.prompt_cache_key) ||
         normalizeSessionId(body?.session_id) ||
         normalizeSessionId(body?.conversation_id) ||
-        (scope === "kiro" ? null : normalizeSessionId(body?.metadata?.user_id));
+        (stableOnly || scope === "kiro" ? null : normalizeSessionId(body?.metadata?.user_id));
     return fromBody || null;
 }
 

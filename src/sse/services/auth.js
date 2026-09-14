@@ -7,10 +7,14 @@ import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
 import { getConcurrencySnapshot } from "./concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
+import { getSessionBinding, bindSession } from "./sessionRouting.js";
 
-// Mutex to prevent race conditions during account selection
-let selectionMutex = Promise.resolve();
-const selectionCursors = new Map();
+// Share selection state across route bundles and development reloads.
+const selectionState = globalThis.__ninerouterAccountSelection ||= {
+  mutex: Promise.resolve(), cursors: new Map(), reservations: new Map(),
+};
+const selectionCursors = selectionState.cursors;
+const selectionReservations = selectionState.reservations;
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 
@@ -25,7 +29,7 @@ function preferConnectionsWithCapacity(connections) {
   const getLoad = (connection) => {
     const limit = Number(connection.maxConcurrency) || 0;
     const pool = loads.get(connection.id);
-    const active = pool?.active || 0;
+    const active = (pool?.active || 0) + (selectionReservations.get(connection.id) || 0);
     const queued = pool?.queued || 0;
     return { limit, active, queued };
   };
@@ -80,15 +84,20 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
   // Acquire mutex to prevent race conditions
-  const currentMutex = selectionMutex;
+  const currentMutex = selectionState.mutex;
   let resolveMutex;
-  selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
+  selectionState.mutex = new Promise(resolve => { resolveMutex = resolve; });
 
   try {
     await currentMutex;
 
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
     const providerId = resolveProviderId(provider);
+    const sessionKey = options.sessionKey;
+    const binding = await getSessionBinding(sessionKey);
+    if (binding && binding.provider !== providerId) {
+      return { sessionUnavailable: true, lastErrorCode: 409, lastError: "当前会话已绑定其他提供商，不能切换。" };
+    }
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
@@ -102,6 +111,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
+      if (sessionKey && !binding) await bindSession(sessionKey, providerId, "noauth");
       return {
         id: "noauth",
         connectionId: "noauth",
@@ -122,6 +132,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
+      if (binding) return { sessionUnavailable: true, lastErrorCode: 503, lastError: "当前会话绑定的账号已停用或删除。" };
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
     }
@@ -147,6 +158,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     });
 
     const capacityConnections = preferConnectionsWithCapacity(availableConnections);
+    if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
+      const bound = connections.find((item) => item.id === binding.connectionId);
+      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。" };
+    }
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
     connections.forEach(c => {
@@ -190,8 +205,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
     let connection;
+    if (sessionKey || options.fillFirst) {
+      // Fill the first available account only once; a bound session ignores load.
+      connection = binding
+        ? availableConnections.find((item) => item.id === binding.connectionId)
+        : capacityConnections[0];
+    }
     // Pin to preferred connection if specified and available
-    if (preferredConnectionId) {
+    if (!connection && preferredConnectionId) {
       connection = availableConnections.find((c) => c.id === preferredConnectionId);
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
@@ -252,6 +273,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+    if (sessionKey && !binding) await bindSession(sessionKey, providerId, connection.id);
+    let releaseSelection;
+    if (sessionKey || options.fillFirst) {
+      selectionReservations.set(connection.id, (selectionReservations.get(connection.id) || 0) + 1);
+      let released = false;
+      releaseSelection = () => {
+        if (released) return;
+        released = true;
+        const remaining = (selectionReservations.get(connection.id) || 1) - 1;
+        if (remaining) selectionReservations.set(connection.id, remaining);
+        else selectionReservations.delete(connection.id);
+      };
+    }
 
     return {
       authType: connection.authType,
@@ -274,6 +308,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
       },
       connectionId: connection.id,
+      releaseSelection,
       maxConcurrency: connection.maxConcurrency || 0,
       // Include current status for optimization check
       testStatus: connection.testStatus,

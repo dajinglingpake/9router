@@ -641,6 +641,7 @@ export default function BasicChatPageClient() {
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
+          "x-session-id": sessionId,
         },
         body: JSON.stringify({
           model: model.requestModel || model.id,

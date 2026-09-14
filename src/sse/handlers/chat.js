@@ -10,14 +10,13 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { appendRequestLog } from "@/lib/usageDb.js";
+import { getSessionRoutingKey, NEW_SESSION_HINT } from "../services/sessionRouting.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
-import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
-import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
-import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
+import { errorResponse } from "open-sse/utils/error.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormat, getTargetFormat, resolveTransport } from "open-sse/services/provider.js";
@@ -282,130 +281,24 @@ async function handleChatInternal(request, clientRawRequest = null) {
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
-  const requiredCapabilities = detectRequiredCapabilities(body);
-
-  // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
-  if (comboModels) {
-    // Check for combo-specific strategy first, fallback to global
-    const comboStrategies = settings.comboStrategies || {};
-    const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
-    const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const augmentedModels = augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings);
-    const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
-
-    if (comboStrategy === "fusion") {
-      log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
-      return handleFusionChat({
-        body,
-        models: comboModels,
-        handleSingleModel: (b, m, isPanel) => {
-          let cleanRawReq = clientRawRequest;
-          if (isPanel && clientRawRequest) {
-            const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
-            cleanRawReq = { ...clientRawRequest, body: cleanBody };
-          }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
-        },
-        log,
-        comboName: modelStr,
-        judgeModel: comboStrategies[modelStr]?.judgeModel,
-        tuning: comboStrategies[modelStr]?.fusionTuning,
-      });
-    }
-
-    const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
-      body,
-      models: augmentedModels,
-      handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
-        adapterAdded
-      ),
-      log,
-      comboName: modelStr,
-      comboStrategy,
-      comboStickyLimit
-    });
-  }
-
-  // Single model request — may still switch to a capacity-adapter model if the
-  // target lacks a capability the request needs (e.g. no vision, request has an image).
-  const soloAugmented = augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings);
-  if (soloAugmented.length > 1) {
-    const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
-    log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
-    return handleComboChat({
-      body,
-      models: soloAugmented,
-      handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
-        adapterAdded
-      ),
-      log,
-      comboName: modelStr,
-      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
-    });
-  }
-
   return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
 }
 
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set()) {
+  if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
+  seenModels.add(modelStr);
   const requestId = getRequestId(request);
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
     const comboModels = await getComboModels(modelStr);
-    if (comboModels) {
-      const chatSettings = await getSettings();
-      // Check for combo-specific strategy first, fallback to global
-      const comboStrategies = chatSettings.comboStrategies || {};
-      const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
-      const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
-      const requiredCapabilities = detectRequiredCapabilities(body);
-      const augmentedModels = augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, chatSettings);
-      const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
-
-      if (comboStrategy === "fusion") {
-        log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
-        return handleFusionChat({
-          body,
-          models: comboModels,
-          handleSingleModel: (b, m, isPanel) => {
-            let cleanRawReq = clientRawRequest;
-            if (isPanel && clientRawRequest) {
-              const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
-              cleanRawReq = { ...clientRawRequest, body: cleanBody };
-            }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
-          },
-          log,
-          comboName: modelStr,
-          judgeModel: comboStrategies[modelStr]?.judgeModel,
-          tuning: comboStrategies[modelStr]?.fusionTuning,
-        });
-      }
-
-      const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
-      log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-      return handleComboChat({
-        body,
-        models: augmentedModels,
-        handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
-          adapterAdded
-        ),
-        log,
-        comboName: modelStr,
-        comboStrategy,
-        comboStickyLimit
-      });
+    if (comboModels?.length) {
+      // A combo resolves its first model; failures never trigger another route.
+      return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts);
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid model format", clientRawRequest);
@@ -418,47 +311,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
-  // Try with available accounts (fallback on errors)
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
+  const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
+  const sessionHint = sessionKey ? ` ${NEW_SESSION_HINT}` : "";
+  const credentials = await getProviderCredentials(provider, excludedAccounts, model, { sessionKey, fillFirst: true });
+  if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
+    const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
+    if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。");
+    return rejectChatRequest(status, `${credentials?.lastError || "暂无可用账号。"}${sessionHint}`, clientRawRequest, "router");
+  }
 
-  while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
-
-    // All accounts unavailable
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        // Preserve a real upstream rate-limit status so clients can honor
-        // Retry-After instead of seeing a generic 503 and retrying too soon.
-        const lastErrorStatus = Number(credentials.lastErrorCode || lastStatus);
-        const status = lastErrorStatus === HTTP_STATUS.RATE_LIMITED
-          ? HTTP_STATUS.RATE_LIMITED
-          : HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        // A cached account lock can reject a request before an upstream attempt.
-        if (!lastError) {
-          appendRequestLog({ model, provider, status: `FAILED ${status}`, message: errorMsg, source: "upstream", endpoint: clientRawRequest?.endpoint }).catch(() => {});
-        }
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (excludeConnectionIds.size === 0) {
-        log.warn("AUTH", `No active credentials for provider: ${provider}`);
-        return rejectChatRequest(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`, clientRawRequest, "router");
-      }
-      log.warn("CHAT", "No more accounts available", { provider });
-      if (!lastError) return rejectChatRequest(HTTP_STATUS.SERVICE_UNAVAILABLE, "All accounts unavailable", clientRawRequest, "router");
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    // A provider selector must honor exclusions. Guard against a selector
-    // returning the same connection again (notably virtual no-auth accounts),
-    // which would otherwise turn fallback/queue failures into an infinite loop.
-    if (excludeConnectionIds.has(credentials.connectionId)) {
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
+  let apiKeyPermit = null;
+  let accountPermit = null;
+  let responseOwnsPermits = false;
+  try {
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
@@ -487,7 +352,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     });
     const apiKeyRecordId = clientRawRequest?.apiKeyRecordId || null;
     const apiKeyLimit = Number(clientRawRequest?.apiKeyLimit) || 0;
-    let apiKeyPermit = null;
 
     // API Key limits are a backstop, not a hard admission gate. Let requests
     // fill the account slots first; only once this provider's account slots are
@@ -515,9 +379,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
     }
 
-    let accountPermit;
     try {
-      accountPermit = await acquireConcurrencySlot({
+      const accountPermitPromise = acquireConcurrencySlot({
         scope: "account",
         id: credentials.connectionId,
         limit: credentials.maxConcurrency,
@@ -528,8 +391,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           ...concurrencyMetadata,
         },
       });
+      // Register the active/queued slot before releasing the selection reservation.
+      credentials.releaseSelection?.();
+      accountPermit = await accountPermitPromise;
     } catch (error) {
-      apiKeyPermit?.release();
       if (error instanceof ConcurrencyQueueError) {
         // A queue timeout is a capacity failure for this request, not an
         // upstream account error. Return immediately instead of waiting on
@@ -545,15 +410,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       ? credentials
       : await getProviderConnectionById(credentials.connectionId);
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
-      accountPermit.release();
-      apiKeyPermit?.release();
-      excludeConnectionIds.add(credentials.connectionId);
-      continue;
+      if (!sessionKey) {
+        excludedAccounts.add(credentials.connectionId);
+        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts);
+      }
+      return rejectChatRequest(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, `${liveConnection?.lastError || "当前会话绑定的账号暂不可用。"}${sessionHint}`, clientRawRequest, "router");
     }
 
-    let result;
-    try {
-      result = await handleChatCore({
+    const result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -595,20 +459,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         clearAntigravityStrikes(credentials.connectionId, model);
       }
       });
-    } catch (error) {
-      accountPermit.release();
-      apiKeyPermit?.release();
-      throw error;
-    }
 
     if (result.success) {
-      return holdConcurrencyUntilResponseDone(result.response, () => {
+      const response = holdConcurrencyUntilResponseDone(result.response, () => {
         accountPermit.release();
         apiKeyPermit?.release();
       }, { signal: request?.signal });
+      responseOwnsPermits = true;
+      return response;
     }
+    if (result.status === 499) return result.response;
 
-    // Apply fallback/cooldown state before releasing the slot so queued work
+    // Apply cooldown state before releasing the slot so queued work
     // observes the latest account availability.
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
@@ -624,22 +486,30 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
     // Do not persist a modelLock_* for this path.
-    const shouldFallback = provider === "antigravity" && quotaResetMs
-      ? true
-      : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
-
-    if (shouldFallback) {
-      accountPermit.release();
-      apiKeyPermit?.release();
-      log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
+    let shouldFallback = !!quotaResetMs;
+    if (!(provider === "antigravity" && quotaResetMs)) {
+      ({ shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
-
-    accountPermit.release();
-    apiKeyPermit?.release();
-    return result.response;
+    if (!sessionKey && shouldFallback && credentials.connectionId !== "noauth") {
+      excludedAccounts.add(credentials.connectionId);
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts);
+    }
+    const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`);
+    const retryAfter = result.response?.headers.get("retry-after");
+    if (retryAfter) response.headers.set("Retry-After", retryAfter);
+    return response;
+  } catch (error) {
+    const cancelled = request?.signal?.aborted || error.name === "AbortError";
+    if (!cancelled) {
+      await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.BAD_GATEWAY, error.message, provider, model)
+        .catch((lockError) => log.warn("AUTH", `Failed to record account error: ${lockError.message}`));
+    }
+    return rejectChatRequest(cancelled ? 499 : HTTP_STATUS.BAD_GATEWAY, cancelled ? "请求已取消。" : `${error.message || "账号请求失败。"}${sessionHint}`, clientRawRequest, "router");
+  } finally {
+    credentials.releaseSelection?.();
+    if (!responseOwnsPermits) {
+      accountPermit?.release();
+      apiKeyPermit?.release();
+    }
   }
 }
