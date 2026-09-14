@@ -556,6 +556,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
+      clientAbortSignal: request?.signal,
       pxpipeEnabled: !!chatSettings.pxpipeEnabled,
       pxpipeMinChars: chatSettings.pxpipeMinChars,
       pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
@@ -588,7 +589,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return holdConcurrencyUntilResponseDone(result.response, () => {
         accountPermit.release();
         apiKeyPermit?.release();
-      });
+      }, { signal: request?.signal });
     }
 
     // Apply fallback/cooldown state before releasing the slot so queued work

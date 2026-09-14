@@ -15,11 +15,23 @@ function getTimeString() {
  * @param {string} options.provider - Provider name
  * @param {string} options.model - Model name
  */
-export function createStreamController({ onDisconnect, onError, log, provider, model, reqTag = "" } = {}) {
+export function createStreamController({ onDisconnect, onError, log, provider, model, reqTag = "", externalSignal = null } = {}) {
   const abortController = new AbortController();
   const startTime = Date.now();
   let disconnected = false;
   let abortTimeout = null;
+
+  // Next.js does not reliably call ReadableStream.cancel() when the browser
+  // disconnects. Forwarding request.signal here gives stall/abort handling a
+  // deterministic trigger instead of depending on stream cancellation alone.
+  if (externalSignal) {
+    const forwardExternalAbort = () => abortController.abort(externalSignal.reason);
+    if (externalSignal.aborted) {
+      forwardExternalAbort();
+    } else {
+      externalSignal.addEventListener("abort", forwardExternalAbort, { once: true });
+    }
+  }
 
   // Only abnormal terminations are logged; normal completion is covered by "📊 done".
   // isError uses errorLine (always shown, ignores LOG_LEVEL) so failures survive quiet levels.
@@ -101,6 +113,46 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
 
+  const readWithAbort = (signal) => {
+    if (!signal) return reader.read();
+    if (signal.aborted) {
+      const reason = signal.reason;
+      const error = reason instanceof Error ? reason : new Error(String(reason || "Request aborted"));
+      if (!error.name) error.name = "AbortError";
+      return Promise.reject(error);
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const reason = signal.reason;
+        const error = reason instanceof Error ? reason : new Error(String(reason || "Request aborted"));
+        if (!error.name) error.name = "AbortError";
+        reject(error);
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+      reader.read().then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(error);
+        }
+      );
+    });
+  };
+
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
     if (terminalEmitted || !onAbortTerminal) return;
@@ -120,7 +172,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
       }
 
       try {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithAbort(streamController.signal);
 
         if (done) {
           streamController.handleComplete();
@@ -252,4 +304,3 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     onAbortTerminal
   );
 }
-

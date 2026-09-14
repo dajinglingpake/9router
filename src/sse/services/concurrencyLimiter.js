@@ -193,10 +193,28 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
  * Streaming responses retain their slot until EOF/cancel. JSON responses can
  * release immediately because the upstream work is already complete.
  */
-export function holdConcurrencyUntilResponseDone(response, release) {
+export function holdConcurrencyUntilResponseDone(response, release, { signal = null } = {}) {
+  let released = false;
+  let abortListener = null;
+  const releaseOnce = () => {
+    if (released) return;
+    released = true;
+    if (abortListener && signal) signal.removeEventListener("abort", abortListener);
+    release();
+  };
+
+  if (signal) {
+    abortListener = releaseOnce;
+    if (signal.aborted) {
+      releaseOnce();
+    } else {
+      signal.addEventListener("abort", abortListener, { once: true });
+    }
+  }
+
   const contentType = response?.headers?.get?.("content-type") || "";
   if (!response?.body || !contentType.toLowerCase().includes("text/event-stream")) {
-    release();
+    releaseOnce();
     return response;
   }
 
@@ -206,13 +224,13 @@ export function holdConcurrencyUntilResponseDone(response, release) {
       try {
         const result = await reader.read();
         if (result.done) {
-          release();
+          releaseOnce();
           controller.close();
           return;
         }
         controller.enqueue(result.value);
       } catch (error) {
-        release();
+        releaseOnce();
         controller.error(error);
       }
     },
@@ -220,7 +238,7 @@ export function holdConcurrencyUntilResponseDone(response, release) {
       try {
         await reader.cancel(reason);
       } finally {
-        release();
+        releaseOnce();
       }
     },
   });
