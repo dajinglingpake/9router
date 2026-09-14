@@ -6,6 +6,9 @@ services:
     working_dir: /app
     command: ["node", "custom-server.js"]
     network_mode: host
+    dns:
+      - 223.5.5.5
+      - 223.6.6.6
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
