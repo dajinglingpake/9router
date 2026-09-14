@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import { getTrafficSnapshot } from "@/lib/runtimeTraffic.js";
 import { getConcurrencySnapshot } from "@/sse/services/concurrencyLimiter.js";
 import { getProviderConnections, getApiKeys } from "@/lib/localDb";
+import { getRequestErrorInfo } from "@/lib/requestErrorInfo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -80,14 +81,23 @@ export async function getSystemMetrics() {
   };
   const recentCount = history.length;
   const runtimeErrors = getRuntimeRequestErrors();
-  const runtime4xx = runtimeErrors.filter((item) => /4\d\d/.test(item.status)).length;
-  const runtime5xx = runtimeErrors.filter((item) => /5\d\d/.test(item.status)).length;
-  const successful = history.filter((item) => !/^(error|failed)|4\d\d|5\d\d/i.test(String(item.status || ""))).length;
+  const errors = [...runtimeErrors, ...history.filter((item) => getRequestErrorInfo(item)).map((item) => ({
+    timestamp: item.timestamp, status: item.status,
+    provider: item.provider, model: item.model, connectionId: item.connectionId,
+    message: "",
+  }))].map((item) => ({ ...item, ...getRequestErrorInfo(item) }));
+  const successful = history.filter((item) => !getRequestErrorInfo(item)).length;
+  const clientErrors = errors.filter((item) => item.category === "client").length;
+  const serverErrors = errors.filter((item) => item.category === "server").length;
+  const completedCount = successful + clientErrors + serverErrors;
   const requestStats = {
     throughputPerMinute: Math.round(recentCount / 5 * 10) / 10,
-    successRatePercent: recentCount + runtimeErrors.length ? Math.round(successful / (recentCount + runtimeErrors.length) * 1000) / 10 : 0,
-    error4xx: history.filter((item) => /4\d\d/.test(String(item.status))).length + runtime4xx,
-    error5xx: history.filter((item) => /5\d\d|error|failed/i.test(String(item.status))).length + runtime5xx,
+    successRatePercent: completedCount ? Math.round(successful / completedCount * 1000) / 10 : 0,
+    clientErrors,
+    serverErrors,
+    cancelledRequests: errors.filter((item) => item.category === "cancelled").length,
+    error4xx: errors.filter((item) => item.statusCode >= 400 && item.statusCode < 500).length,
+    error5xx: errors.filter((item) => item.statusCode >= 500).length,
   };
   const memory = process.memoryUsage();
   const cpu = getCpuMetrics();
@@ -97,6 +107,10 @@ export async function getSystemMetrics() {
     ...connections.map((item) => [`account:${item.id}`, `账号: ${item.name || item.email || item.id.slice(0, 8)}`]),
     ...apiKeys.map((item) => [`apiKey:${item.id}`, `API Key: ${item.name}`]),
   ]);
+  const requestErrors = errors.map((item) => ({
+    ...item,
+    account: labels.get(`account:${item.connectionId}`) || item.connectionId || "—",
+  })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const concurrencyLimits = rawConcurrency.map((item) => ({
     ...item,
     label: labels.get(`${item.scope}:${item.id}`) || `${item.scope}: ${item.id.slice(0, 8)}`,
@@ -133,6 +147,7 @@ export async function getSystemMetrics() {
     concurrencyLimits,
     runtime: { threads: await getThreadCount() },
     requestStats: { ...requestStats, outputTokensPerSecond: undefined },
+    requestErrors,
     activeRequests,
   };
 }

@@ -9,6 +9,7 @@ import {
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
+import { appendRequestLog } from "@/lib/usageDb.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -39,6 +40,15 @@ import {
 } from "../services/concurrencyLimiter.js";
 
 const requestIds = new WeakMap();
+
+function rejectChatRequest(status, message, context, source = "client") {
+  appendRequestLog({
+    status: `FAILED ${status}`, message, source,
+    model: typeof context?.body?.model === "string" ? context.body.model : null,
+    endpoint: context?.endpoint || null,
+  }).catch(() => {});
+  return errorResponse(status, message);
+}
 
 function getRequestId(request) {
   if (!request || (typeof request !== "object" && typeof request !== "function")) return null;
@@ -176,7 +186,7 @@ export async function handleChat(request, clientRawRequest = null) {
         hideFromSnapshot: true,
       });
     } catch (error) {
-      if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
+      if (error instanceof ConcurrencyQueueError) return rejectChatRequest(error.status, error.message, requestContext, "router");
       throw error;
     }
 
@@ -212,9 +222,10 @@ async function handleChatInternal(request, clientRawRequest = null) {
   let body;
   try {
     body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid JSON body");
   } catch {
     log.warn("CHAT", "Invalid JSON body");
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+    return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body", clientRawRequest);
   }
 
   // Build clientRawRequest for logging (if not provided)
@@ -252,18 +263,18 @@ async function handleChatInternal(request, clientRawRequest = null) {
   if (settings.requireApiKey) {
     if (!apiKey) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
+      return rejectChatRequest(HTTP_STATUS.UNAUTHORIZED, "Missing API key", clientRawRequest);
     }
     const valid = await isValidApiKey(apiKey, request);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
+      return rejectChatRequest(HTTP_STATUS.UNAUTHORIZED, "Invalid API key", clientRawRequest);
     }
   }
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+    return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Missing model", clientRawRequest);
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
@@ -397,7 +408,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
+    return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid model format", clientRawRequest);
   }
 
   const { provider, model } = modelInfo;
@@ -426,13 +437,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           ? HTTP_STATUS.RATE_LIMITED
           : HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
+        // A cached account lock can reject a request before an upstream attempt.
+        if (!lastError) {
+          appendRequestLog({ model, provider, status: `FAILED ${status}`, message: errorMsg, source: "upstream", endpoint: clientRawRequest?.endpoint }).catch(() => {});
+        }
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
       }
       if (excludeConnectionIds.size === 0) {
         log.warn("AUTH", `No active credentials for provider: ${provider}`);
-        return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
+        return rejectChatRequest(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`, clientRawRequest, "router");
       }
       log.warn("CHAT", "No more accounts available", { provider });
+      if (!lastError) return rejectChatRequest(HTTP_STATUS.SERVICE_UNAVAILABLE, "All accounts unavailable", clientRawRequest, "router");
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
@@ -493,7 +509,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             },
           });
         } catch (error) {
-          if (error instanceof ConcurrencyQueueError) return errorResponse(error.status, error.message);
+          if (error instanceof ConcurrencyQueueError) return rejectChatRequest(error.status, error.message, clientRawRequest, "router");
           throw error;
         }
       }
@@ -518,7 +534,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // A queue timeout is a capacity failure for this request, not an
         // upstream account error. Return immediately instead of waiting on
         // every account in sequence.
-        return errorResponse(error.status, error.message);
+        return rejectChatRequest(error.status, error.message, clientRawRequest, "router");
       }
       throw error;
     }

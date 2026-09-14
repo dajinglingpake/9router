@@ -1,0 +1,31 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../src/lib/db/driver.js", () => ({ getAdapter: vi.fn() }));
+
+import { appendRequestLog, getRuntimeRequestErrors } from "../../src/lib/db/repos/usageRepo.js";
+
+describe("runtime request error details", () => {
+  beforeEach(() => {
+    global._runtimeRequestErrors.length = 0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("retains upstream error context without retaining unrelated credentials", async () => {
+    await appendRequestLog({ status: "FAILED 503", model: "test-model", provider: "test", connectionId: "account-1", message: "overloaded Bearer private-token sk-secret", apiKey: "private-key" });
+    expect(getRuntimeRequestErrors()).toEqual([{
+      timestamp: Date.now(), status: "FAILED 503", model: "test-model", provider: "test", connectionId: "account-1",
+      source: "upstream", endpoint: null,
+      message: "overloaded Bearer [REDACTED] [REDACTED]",
+    }]);
+  });
+
+  it("ignores successful requests and expires errors after five minutes", async () => {
+    await appendRequestLog({ status: "200 OK" });
+    await appendRequestLog({ status: "PENDING" });
+    expect(getRuntimeRequestErrors()).toEqual([]);
+    await appendRequestLog({ status: "FAILED 502" });
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+    expect(getRuntimeRequestErrors()).toEqual([]);
+  });
+});

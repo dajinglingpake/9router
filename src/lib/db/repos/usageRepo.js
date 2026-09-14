@@ -945,7 +945,18 @@ function formatLogDate(date = new Date()) {
 export async function appendRequestLog(entry = {}) {
   const status = String(entry.status || "");
   if (!/^(FAILED\s+)?(?:4\d\d|5\d\d)/i.test(status)) return;
-  runtimeRequestErrors.push({ timestamp: Date.now(), status });
+  runtimeRequestErrors.push({
+    timestamp: Date.now(), status,
+    model: entry.model || null,
+    provider: entry.provider || null,
+    connectionId: entry.connectionId || null,
+    source: entry.source || "upstream",
+    endpoint: entry.endpoint || null,
+    message: String(entry.message || "")
+      .replace(/\bBearer\s+[\w.+/=-]+/gi, "Bearer [REDACTED]")
+      .replace(/\bsk-[\w-]+/g, "[REDACTED]")
+      .slice(0, 8000),
+  });
   const cutoff = Date.now() - 5 * 60 * 1000;
   while (runtimeRequestErrors.length && runtimeRequestErrors[0].timestamp < cutoff) runtimeRequestErrors.shift();
 }
