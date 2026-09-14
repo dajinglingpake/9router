@@ -291,15 +291,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
   seenModels.add(modelStr);
   const requestId = getRequestId(request);
+  // Resolve combo aliases (including cc/<name>) before provider prefixes.
+  const comboModels = await getComboModels(modelStr);
+  if (comboModels?.length) {
+    return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts);
+  }
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
-    const comboModels = await getComboModels(modelStr);
-    if (comboModels?.length) {
-      // A combo resolves its first model; failures never trigger another route.
-      return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts);
-    }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid model format", clientRawRequest);
   }

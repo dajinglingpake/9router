@@ -26,8 +26,8 @@ vi.mock("@/lib/network/connectionProxy", () => ({
 }));
 vi.mock("@/lib/usageDb.js", () => ({ appendRequestLog: vi.fn().mockResolvedValue() }));
 vi.mock("../../src/sse/services/model.js", () => ({
-  getModelInfo: async (model) => model === "combo" ? {} : { provider: "codex", model: "test-model" },
-  getComboModels: async (model) => model === "combo" ? state.comboModels : null,
+  getModelInfo: async (model) => model === "combo" ? {} : { provider: model.startsWith("cc/") ? "claude-code" : "codex", model: "test-model" },
+  getComboModels: async (model) => ["combo", "cc/combo"].includes(model) ? state.comboModels : null,
 }));
 vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
   checkAndRefreshToken: state.checkAndRefreshToken, updateProviderCredentials: vi.fn(),
@@ -61,6 +61,16 @@ const request = (sessionId, model = "codex/test-model", signal) => new Request("
 const successfulStream = () => ({ success: true, response: new Response("ok") });
 
 describe("strict session account routing", () => {
+  it("resolves cc combo names before provider prefixes for existing conversations", async () => {
+    state.comboModels = ["codex/test-model"];
+    const key = getSessionRoutingKey({ "x-session-id": "existing" }, {}, null);
+    state.bindings.set(`chat-session:${key}`, JSON.stringify({ provider: "codex", connectionId: "b" }));
+    const response = await handleChat(request("existing", "cc/combo"));
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(state.handleChatCore.mock.calls[0][0].connectionId).toBe("b");
+    expect(state.handleChatCore.mock.calls[0][0].modelInfo.provider).toBe("codex");
+  });
   it("ignores per-request IDs, isolates callers, and recognizes Claude/Codex sessions", () => {
     expect(getSessionRoutingKey({ "x-client-request-id": "one-request" }, {}, "caller")).toBeNull();
     const key = getSessionRoutingKey({ "session_id": "conversation" }, {}, "caller");
