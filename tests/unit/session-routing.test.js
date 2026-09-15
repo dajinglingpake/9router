@@ -26,7 +26,7 @@ vi.mock("@/lib/network/connectionProxy", () => ({
 }));
 vi.mock("@/lib/usageDb.js", () => ({ appendRequestLog: vi.fn().mockResolvedValue() }));
 vi.mock("../../src/sse/services/model.js", () => ({
-  getModelInfo: async (model) => model === "combo" ? {} : { provider: model.startsWith("cc/") ? "claude-code" : "codex", model: "test-model" },
+  getModelInfo: async (model) => model === "combo" ? {} : { provider: model.startsWith("cc/") ? "claude-code" : "codex", model: model.endsWith("other-model") ? "other-model" : "test-model" },
   getComboModels: async (model) => ["combo", "cc/combo"].includes(model) ? state.comboModels : null,
 }));
 vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
@@ -38,7 +38,7 @@ vi.mock("../../src/sse/utils/logger.js", () => ({
 }));
 
 import { getSessionRoutingKey, getSessionBinding } from "../../src/sse/services/sessionRouting.js";
-import { getProviderCredentials } from "../../src/sse/services/auth.js";
+import { getProviderCredentials, clearAccountError } from "../../src/sse/services/auth.js";
 import { handleChat } from "../../src/sse/handlers/chat.js";
 import { getConcurrencySnapshot } from "../../src/sse/services/concurrencyLimiter.js";
 
@@ -125,6 +125,30 @@ describe("strict session account routing", () => {
     await (await first).text();
     await (await second).text();
     expect(state.handleChatCore.mock.calls.map(([args]) => args.connectionId)).toEqual(["a", "a"]);
+  });
+
+  it("cools all models on an overloaded account for 30 seconds without moving existing sessions", async () => {
+    const staleCredentials = { ...state.connections[0] };
+    state.connections[0]["modelLock_other-model"] = new Date(Date.now() - 1000).toISOString();
+    state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "Our servers are currently overloaded", response: new Response("overloaded", { status: 503 }) });
+    expect((await handleChat(request("overloaded-old"))).status).toBe(503);
+    const remaining = new Date(state.connections[0].modelLock___all).getTime() - Date.now();
+    expect(remaining).toBeGreaterThan(29000);
+    expect(remaining).toBeLessThanOrEqual(30000);
+    // A success from a request already in flight cannot clear the new cooldown.
+    await clearAccountError("a", staleCredentials, "test-model");
+    expect(state.connections[0].errorCode).toBe(503);
+    expect(state.connections[0].modelLock___all).toBeTruthy();
+    const blocked = await handleChat(request("overloaded-old", "codex/other-model"));
+    expect(blocked.status).toBe(503);
+    expect(blocked.headers.get("retry-after")).toBe("30");
+    expect(await blocked.text()).toContain("请在 30 秒后重试");
+    expect(state.handleChatCore).toHaveBeenCalledTimes(1);
+    await (await handleChat(request("overloaded-new", "codex/other-model"))).text();
+    expect(state.handleChatCore.mock.calls[1][0].connectionId).toBe("b");
+    state.connections[0].modelLock___all = new Date(Date.now() - 1).toISOString();
+    await (await handleChat(request("overloaded-old"))).text();
+    expect(state.handleChatCore.mock.calls[2][0].connectionId).toBe("a");
   });
 
   it("returns a quota error without fallback; old sessions stay blocked and new sessions use B", async () => {

@@ -118,10 +118,14 @@ export function getModelLockKey(model) {
  * Reads flat field `modelLock_${model}` (or `modelLock___all` when model=null).
  */
 export function isModelLockActive(connection, model) {
-  const key = getModelLockKey(model);
-  const expiry = connection[key] || connection[MODEL_LOCK_ALL];
-  if (!expiry) return false;
-  return new Date(expiry).getTime() > Date.now();
+  const expiry = getModelLockUntil(connection, model);
+  return !!expiry && new Date(expiry).getTime() > Date.now();
+}
+
+// An expired model lock must not hide an active account-wide lock.
+export function getModelLockUntil(connection, model) {
+  return [connection?.[getModelLockKey(model)], connection?.[MODEL_LOCK_ALL]]
+    .filter(Boolean).sort().at(-1) || null;
 }
 
 /**

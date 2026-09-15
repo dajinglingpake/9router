@@ -29,7 +29,7 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getApiKeyByValue, getProviderConnectionById, getProviderConnections } from "@/lib/localDb";
-import { isModelLockActive } from "open-sse/services/accountFallback.js";
+import { isModelLockActive, getModelLockUntil } from "open-sse/services/accountFallback.js";
 import { resolveProviderId } from "@/shared/constants/providers.js";
 import {
   acquireConcurrencySlot,
@@ -317,7 +317,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
     if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。");
-    return rejectChatRequest(status, `${credentials?.lastError || "暂无可用账号。"}${sessionHint}`, clientRawRequest, "router");
+    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest);
   }
 
   let apiKeyPermit = null;
@@ -414,7 +414,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         excludedAccounts.add(credentials.connectionId);
         return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts);
       }
-      return rejectChatRequest(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, `${liveConnection?.lastError || "当前会话绑定的账号暂不可用。"}${sessionHint}`, clientRawRequest, "router");
+      return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "当前会话绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
     }
 
     const result = await handleChatCore({
@@ -512,4 +512,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       apiKeyPermit?.release();
     }
   }
+}
+
+function rejectAccountCooldown(status, message, retryAfter, sessionHint, clientRawRequest) {
+  const seconds = Math.max(0, Math.ceil((new Date(retryAfter).getTime() - Date.now()) / 1000)) || 0;
+  const reason = seconds && /overloaded/i.test(message) ? "当前账号暂时过载。" : message;
+  const waitHint = seconds ? ` 请在 ${seconds} 秒后重试。` : "";
+  const response = rejectChatRequest(status, `${reason}${waitHint}${sessionHint}`, clientRawRequest, "router");
+  if (seconds) response.headers.set("Retry-After", String(seconds));
+  return response;
 }
