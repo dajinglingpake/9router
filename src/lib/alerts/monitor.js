@@ -1,5 +1,6 @@
 import { getSettings } from "../db/repos/settingsRepo.js";
 import { getProviderConnections, getProviderConnectionById } from "../db/repos/connectionsRepo.js";
+import { getAdapter } from "../db/driver.js";
 import { getAccountExpiry } from "../accountExpiry.js";
 import { queueAlert } from "./wecom.js";
 import { ALERT_DEFAULTS, ALERT_DAILY_MS, ALERT_POLL_MS, ALERT_USAGE_TIMEOUT_MS } from "./config.js";
@@ -59,6 +60,31 @@ export function getAccountAlerts(connection, usage, config, now = Date.now()) {
   return alerts;
 }
 
+// Reuse quota responses already requested by the dashboard.
+export async function notifyAccountUsage(connection, usage) {
+  if (connection.isActive === false) return;
+  const config = { ...ALERT_DEFAULTS, ...(await getSettings()).wecomAlerts };
+  if (!config.enabled || !config.webhookUrl) return;
+  for (const alert of getAccountAlerts(connection, usage, config)) {
+    void queueAlert(alert).catch(() => console.warn("[Alerts] Unable to queue account alert"));
+  }
+}
+
+async function claimDailyQuotaCheck(connectionId) {
+  const db = await getAdapter();
+  let claimed = false;
+  db.transaction(() => {
+    const key = `wecomQuotaCheck:${connectionId}`;
+    const previous = Number(db.get("SELECT value FROM _meta WHERE key = ?", [key])?.value);
+    const now = Date.now();
+    if (previous && now - previous < ALERT_DAILY_MS) return;
+    // Persist before the call: failed queries and restarts must not cause frequent retries.
+    db.run("INSERT INTO _meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, String(now)]);
+    claimed = true;
+  });
+  return claimed;
+}
+
 export async function checkAccountAlerts() {
   if (state.running) return;
   state.running = true;
@@ -68,14 +94,15 @@ export async function checkAccountAlerts() {
     const { loadConnectionUsage, supportsConnectionUsage } = await import("../providerUsage.js");
     for (let connection of await getProviderConnections({ isActive: true })) {
       let usage;
-      if (supportsConnectionUsage(connection)) {
+      if (supportsConnectionUsage(connection) && await claimDailyQuotaCheck(connection.id)) {
         try {
           usage = await loadConnectionUsage(connection, { signal: AbortSignal.timeout(ALERT_USAGE_TIMEOUT_MS) });
           connection = await getProviderConnectionById(connection.id) || connection;
         } catch {
-          console.warn(`[Alerts] Quota check failed for ${connection.provider}`);
+          console.warn(`[Alerts] Daily quota check failed for ${connection.provider}`);
         }
       }
+      // Expiry checks use local records, independent of the daily provider query.
       for (const alert of getAccountAlerts(connection, usage, config)) {
         void queueAlert(alert).catch(() => console.warn("[Alerts] Unable to queue account alert"));
       }

@@ -4,15 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { createSqlJsAdapter } from "../../src/lib/db/adapters/sqljsAdapter.js";
 
-const mocks = vi.hoisted(() => ({ db: null, settings: {}, fetch: vi.fn(), connection: { id: "a", provider: "codex", name: "Account A" } }));
+const mocks = vi.hoisted(() => ({ db: null, settings: {}, fetch: vi.fn(), loadUsage: vi.fn(), connection: { id: "a", provider: "codex", name: "Account A" } }));
 vi.mock("undici", () => ({ fetch: mocks.fetch }));
 vi.mock("../../src/lib/db/driver.js", () => ({ getAdapter: async () => mocks.db }));
 vi.mock("../../src/lib/db/repos/settingsRepo.js", () => ({ getSettings: async () => mocks.settings, updateSettings: async value => Object.assign(mocks.settings, value) }));
 vi.mock("../../src/lib/db/repos/connectionsRepo.js", () => ({ getProviderConnectionById: async () => mocks.connection, getProviderConnections: async () => [mocks.connection] }));
-vi.mock("../../src/lib/providerUsage.js", () => ({ supportsConnectionUsage: () => true, loadConnectionUsage: async () => ({ quotas: { session: { used: 95, total: 100 } } }) }));
+vi.mock("../../src/lib/providerUsage.js", () => ({ supportsConnectionUsage: () => true, loadConnectionUsage: mocks.loadUsage }));
 import { ALERT_DEFAULTS, normalizeAlertConfig, publicAlertConfig } from "../../src/lib/alerts/config.js";
 import { queueAlert, notifyRequestError, sendWecomMessage, getAlertStatus } from "../../src/lib/alerts/wecom.js";
-import { getAccountAlerts, checkAccountAlerts } from "../../src/lib/alerts/monitor.js";
+import { getAccountAlerts, checkAccountAlerts, notifyAccountUsage } from "../../src/lib/alerts/monitor.js";
 import { getAccountExpiry } from "../../src/lib/accountExpiry.js";
 import { GET, PATCH, POST } from "../../src/app/api/settings/alerts/route.js";
 
@@ -29,6 +29,7 @@ beforeEach(async () => {
   mocks.settings = { wecomAlerts: { ...ALERT_DEFAULTS, enabled: true, webhookUrl } };
   mocks.connection = { id: "a", provider: "codex", name: "Account A" };
   mocks.fetch.mockReset().mockResolvedValue({ ok: true, json: async () => ({ errcode: 0 }) });
+  mocks.loadUsage.mockReset();
 });
 afterEach(async () => {
   await vi.runAllTimersAsync();
@@ -141,13 +142,53 @@ it("ignores expired CodeBuddy bonuses and never assumes stale or unknown packs a
   }
 });
 
-it("polls quota without a browser and stops when alerts are disabled", async () => {
+it("queries quota once per 24 hours while checking local expiry between queries", async () => {
+  await checkAccountAlerts();
+  await globalThis._wecomAlerts.pending;
+  expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(mocks.loadUsage).toHaveBeenCalledTimes(1);
+  const key = `wecomQuotaCheck:${mocks.connection.id}`;
+  expect(Number(mocks.db.get("SELECT value FROM _meta WHERE key = ?", [key]).value)).toBe(now);
+  mocks.connection.accountExpiresAt = "2026-09-16";
+  // Reopening the persisted DB simulates a service restart.
+  mocks.db.close();
+  mocks.db = await createSqlJsAdapter(path.join(tempDir, "test.sqlite"));
+  vi.setSystemTime(now + 5 * 60000);
   await checkAccountAlerts();
   await globalThis._wecomAlerts.pending;
   expect(mocks.fetch).toHaveBeenCalledTimes(1);
-  mocks.settings.wecomAlerts.enabled = false;
+  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body).text.content).toContain("账号即将到期");
+  expect(mocks.loadUsage).toHaveBeenCalledTimes(1);
   vi.setSystemTime(now + 86401000);
   await checkAccountAlerts();
+  await globalThis._wecomAlerts.pending;
+  expect(mocks.loadUsage).toHaveBeenCalledTimes(2);
+  mocks.settings.wecomAlerts.enabled = false;
+  vi.setSystemTime(now + 2 * 86401000);
+  await checkAccountAlerts();
+  expect(mocks.loadUsage).toHaveBeenCalledTimes(2);
+});
+
+it("does not retry a failed daily query on the next timer tick or settings update", async () => {
+  mocks.loadUsage.mockRejectedValue(new Error("upstream unavailable"));
+  await checkAccountAlerts();
+  vi.setSystemTime(now + 5 * 60000);
+  await checkAccountAlerts();
+  const request = new Request("http://localhost/api/settings/alerts", { method: "PATCH", body: JSON.stringify({ quotaPercent: 20 }) });
+  await PATCH(request);
+  await Promise.resolve();
+  expect(mocks.loadUsage).toHaveBeenCalledTimes(1);
+});
+
+it("evaluates an already-fetched quota response without sending another provider request", async () => {
+  await notifyAccountUsage(mocks.connection, { quotas: { session: { used: 95, total: 100 } } });
+  await globalThis._wecomAlerts.pending;
+  expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  expect(mocks.fetch.mock.calls[0][0]).toBe(webhookUrl);
+  expect(mocks.loadUsage).not.toHaveBeenCalled();
+  mocks.settings.wecomAlerts.enabled = false;
+  vi.setSystemTime(now + 86401000);
+  await notifyAccountUsage(mocks.connection, { quotas: { session: { used: 100, total: 100 } } });
   expect(mocks.fetch).toHaveBeenCalledTimes(1);
 });
 

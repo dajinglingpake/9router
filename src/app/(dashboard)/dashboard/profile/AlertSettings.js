@@ -73,7 +73,7 @@ export default function AlertSettings() {
           <Input key={key} label={label} type="number" min={min} max={max} step={key === "balanceThreshold" ? "0.01" : "1"} value={config[key]} disabled={loading || busy}
             onChange={e => setConfig({ ...config, [key]: Number(e.target.value) })} />)}
       </div>
-      <p className="text-xs text-text-muted">限流、过载和凭证失效即时提醒；额度与到期每 5 分钟检查，每类每天最多提醒一次。余额阈值适用于 DeepSeek。</p>
+      <p className="text-xs text-text-muted">异常请求即时提醒；每个账号每 24 小时自动查询一次额度，也使用额度页已有查询结果。到期每 5 分钟仅检查本地记录。额度与到期每类每天最多提醒一次，余额阈值适用于 DeepSeek。</p>
       <div className="flex items-center gap-2">
         <Button disabled={loading || busy} onClick={() => submit(false)}>保存</Button>
         <Button variant="secondary" disabled={loading || busy || !config.configured} onClick={() => submit(true)}>测试推送</Button>
