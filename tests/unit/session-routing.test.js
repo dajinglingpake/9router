@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   bindings: new Map(),
@@ -40,7 +40,13 @@ vi.mock("../../src/sse/utils/logger.js", () => ({
 import { getSessionRoutingKey, getSessionBinding } from "../../src/sse/services/sessionRouting.js";
 import { getProviderCredentials, clearAccountError } from "../../src/sse/services/auth.js";
 import { handleChat } from "../../src/sse/handlers/chat.js";
-import { getConcurrencySnapshot } from "../../src/sse/services/concurrencyLimiter.js";
+import { getConcurrencySnapshot, acquireConcurrencySlot, pauseAccountQueue, resumeAccountQueue, __test__ as concurrencyTest } from "../../src/sse/services/concurrencyLimiter.js";
+
+afterEach(() => {
+  concurrencyTest.reset();
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -61,6 +67,64 @@ const request = (sessionId, model = "codex/test-model", signal) => new Request("
 const successfulStream = () => ({ success: true, response: new Response("ok") });
 
 describe("strict session account routing", () => {
+  it("restarts the whole account cooldown and releases only one recovery request", async () => {
+    vi.useFakeTimers();
+    pauseAccountQueue("a", Date.now() + 30000);
+    const first = acquireConcurrencySlot({ scope: "account", id: "a", limit: 4 });
+    let secondReady = false;
+    const second = acquireConcurrencySlot({ scope: "account", id: "a", limit: 4 }).then(p => { secondReady = true; return p; });
+    await vi.advanceTimersByTimeAsync(20000);
+    pauseAccountQueue("a", Date.now() + 30000);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(getConcurrencySnapshot()[0]).toMatchObject({ active: 0, queued: 2, state: "cooldown", cooldownRemainingMs: 20000 });
+    expect(getConcurrencySnapshot()[0].queue[0]).toMatchObject({ state: "cooldown", cooldownRemainingMs: 20000, timeoutRemainingMs: 570000 });
+    await vi.advanceTimersByTimeAsync(20000);
+    const permit = await first;
+    expect(secondReady).toBe(false);
+    expect(getConcurrencySnapshot()[0]).toMatchObject({ active: 1, queued: 1, state: "recovering" });
+    resumeAccountQueue("a");
+    (await second).release();
+    permit.release();
+  });
+
+  it("returns 503 only after ten minutes of repeated overload without resetting the deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "600000");
+    state.handleChatCore.mockImplementation(async () => ({ success: false, status: 503, error: "overloaded", response: new Response("overloaded", { status: 503 }) }));
+    const pending = handleChat(request("keeps-waiting"));
+    await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
+    await vi.advanceTimersByTimeAsync(600000);
+    const response = await pending;
+    expect(response.status).toBe(503);
+    expect(await response.text()).toMatch(/timed out|超时/);
+    expect(state.handleChatCore).toHaveBeenCalledTimes(20);
+    expect(state.handleChatCore.mock.calls.every(([args]) => args.connectionId === "a")).toBe(true);
+    expect(getConcurrencySnapshot().every(p => p.queued === 0)).toBe(true);
+  });
+
+  it("cancels a request waiting for account cooldown without switching accounts", async () => {
+    state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "overloaded", response: new Response("overloaded", { status: 503 }) });
+    const controller = new AbortController();
+    const pending = handleChat(request("cancel-cooldown", "codex/test-model", controller.signal));
+    await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
+    controller.abort();
+    expect((await pending).status).toBe(499);
+    expect(state.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(getConcurrencySnapshot().every(p => p.queued === 0)).toBe(true);
+  });
+
+  it("returns 503 when the shared deadline expires during an upstream attempt", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "600000");
+    state.handleChatCore.mockImplementation(({ clientAbortSignal }) => new Promise(resolve => {
+      clientAbortSignal.addEventListener("abort", () => resolve({ success: false, status: 499, response: new Response("aborted", { status: 499 }) }), { once: true });
+    }));
+    const pending = handleChat(request("stalled"));
+    await vi.waitFor(() => expect(state.handleChatCore).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(600000);
+    expect((await pending).status).toBe(503);
+    expect(getConcurrencySnapshot()).toEqual([]);
+  });
   it("resolves cc combo names before provider prefixes for existing conversations", async () => {
     state.comboModels = ["codex/test-model"];
     const key = getSessionRoutingKey({ "x-session-id": "existing" }, {}, null);
@@ -128,10 +192,12 @@ describe("strict session account routing", () => {
   });
 
   it("cools all models on an overloaded account for 30 seconds without moving existing sessions", async () => {
+    vi.useFakeTimers();
     const staleCredentials = { ...state.connections[0] };
     state.connections[0]["modelLock_other-model"] = new Date(Date.now() - 1000).toISOString();
     state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "Our servers are currently overloaded", response: new Response("overloaded", { status: 503 }) });
-    expect((await handleChat(request("overloaded-old"))).status).toBe(503);
+    const pending = handleChat(request("overloaded-old"));
+    await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
     const remaining = new Date(state.connections[0].modelLock___all).getTime() - Date.now();
     expect(remaining).toBeGreaterThan(29000);
     expect(remaining).toBeLessThanOrEqual(30000);
@@ -139,15 +205,14 @@ describe("strict session account routing", () => {
     await clearAccountError("a", staleCredentials, "test-model");
     expect(state.connections[0].errorCode).toBe(503);
     expect(state.connections[0].modelLock___all).toBeTruthy();
-    const blocked = await handleChat(request("overloaded-old", "codex/other-model"));
-    expect(blocked.status).toBe(503);
-    expect(blocked.headers.get("retry-after")).toBe("30");
-    expect(await blocked.text()).toContain("请在 30 秒后重试");
+    const blocked = handleChat(request("overloaded-old", "codex/other-model"));
+    await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(2));
     expect(state.handleChatCore).toHaveBeenCalledTimes(1);
     await (await handleChat(request("overloaded-new", "codex/other-model"))).text();
     expect(state.handleChatCore.mock.calls[1][0].connectionId).toBe("b");
-    state.connections[0].modelLock___all = new Date(Date.now() - 1).toISOString();
-    await (await handleChat(request("overloaded-old"))).text();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect((await pending).status).toBe(200);
+    expect((await blocked).status).toBe(200);
     expect(state.handleChatCore.mock.calls[2][0].connectionId).toBe("a");
   });
 
@@ -199,6 +264,7 @@ describe("strict session account routing", () => {
   });
 
   it("does not switch models in a combo after failure", async () => {
+    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "50");
     state.comboModels = ["codex/test-model", "another-provider/model"];
     state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "overloaded", response: new Response("overloaded", { status: 503 }) });
     const response = await handleChat(request("combo-session", "combo"));

@@ -38,17 +38,24 @@ function MetricCard({ icon, label, value, detail, tone = "text-primary" }) {
   );
 }
 
+function queueStatus(item) {
+  if (item?.state === "cooldown") return `账号冷却 ${Math.ceil(item.cooldownRemainingMs / 1000)} 秒`;
+  if (item?.state === "recovering") return "等待恢复试请求";
+  return "等待并发";
+}
+
 function QueuedRequestDetails({ queue = [], startIndex = 0 }) {
   return queue.map((queued, index) => (
     <div key={`${queued.requestId || "unknown"}-${queued.position}`} className="rounded-md border border-amber-200 bg-amber-50/60 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium text-text-main">请求 #{startIndex + index + 1}</span>
-        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-semibold tabular-nums text-amber-700">排队中</span>
+        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-semibold tabular-nums text-amber-700">{queueStatus(queued)}</span>
       </div>
       <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
-        <div><dt className="inline">状态：</dt><dd className="inline font-semibold text-amber-700">正在排队</dd></div>
+        <div><dt className="inline">状态：</dt><dd className="inline font-semibold text-amber-700">{queueStatus(queued)}</dd></div>
         <div><dt className="inline">队列位置：</dt><dd className="inline text-text-main">{queued.position}</dd></div>
         <div><dt className="inline">已等待：</dt><dd className="inline text-text-main">{formatLatency(queued.waitMs)}</dd></div>
+        <div><dt className="inline">距离超时：</dt><dd className="inline text-text-main">{formatLatency(queued.timeoutRemainingMs)}</dd></div>
         <div><dt className="inline">客户端 IP：</dt><dd className="inline text-text-main">{queued.clientIp || "—"}</dd></div>
         <div><dt className="inline">API Key：</dt><dd className="inline text-text-main">{queued.apiKeyName || "未使用 API Key"}{queued.apiKeyMasked ? `（${queued.apiKeyMasked}）` : ""}</dd></div>
         <div><dt className="inline">入队时间：</dt><dd className="inline text-text-main">{queued.queuedAt ? new Date(queued.queuedAt).toLocaleTimeString() : "—"}</dd></div>
@@ -235,7 +242,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-text-main">{request.model}</p>
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
-                  {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
+                  {limit && <p className="mt-1 text-xs text-text-muted">执行 {limit.active}/{limit.limit || "不限"} · 排队 {limit.queued}{limit.state === "cooldown" || limit.state === "recovering" ? ` · ${queueStatus(limit)}` : ""}</p>}
                   <p className="mt-1 text-xs text-text-muted">
                     当前延迟：{formatLatency(request.latencyMs)}
                   </p>
@@ -253,7 +260,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
                             <div><dt className="inline">API Key：</dt><dd className="inline text-text-main">{item.apiKeyName || "未使用 API Key"}{item.apiKeyMasked ? `（${item.apiKeyMasked}）` : ""}</dd></div>
                             <div><dt className="inline">开始时间：</dt><dd className="inline text-text-main">{item.startedAt ? new Date(item.startedAt).toLocaleTimeString() : "—"}</dd></div>
                             <div><dt className="inline">请求延迟：</dt><dd className="inline font-semibold tabular-nums text-text-main">{formatLatency(item.latencyMs)}</dd></div>
-                            <div><dt className="inline">状态：</dt><dd className="inline text-text-main">{item.stream ? "流式响应中" : "等待响应"}</dd></div>
+                            <div><dt className="inline">状态：</dt><dd className="inline text-text-main">{limit?.state === "recovering" ? "恢复试请求中" : "请求执行中"}</dd></div>
                             <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{item.requestBytes != null ? formatBytes(item.requestBytes) : "—"}</dd></div>
                             <div><dt className="inline">请求端点：</dt><dd className="ml-1 break-all font-mono text-text-main">{item.endpoint || "—"}</dd></div>
                             <div><dt className="inline">上游模型：</dt><dd className="ml-1 break-all font-mono text-text-main">{item.upstreamModel || request.model}</dd></div>
@@ -275,7 +282,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
               <div key={`running-${limit.scope}-${limit.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-text-main">{limit.label}</p>
-                  <p className="text-xs text-text-muted">{limit.scope === "account" ? "账号并发槽位" : "API Key 并发槽位"} · 并发 {limit.active}/{limit.limit}</p>
+                  <p className="text-xs text-text-muted">执行 {limit.active}/{limit.limit || "不限"}{limit.state === "recovering" ? " · 恢复试请求中" : limit.state === "cooldown" ? ` · ${queueStatus(limit)}` : ""}</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{limit.active} 个请求</span>
               </div>
@@ -283,7 +290,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
             {queuedLimits.filter((limit) => !activeRequests.some((request) => limit.scope === "account" && `账号: ${request.account}` === limit.label)).map((limit) => (
               <div key={`queued-${limit.scope}-${limit.id}`} className="py-3 first:pt-0 last:pb-0">
                 <p className="text-sm font-medium text-text-main">{limit.label}</p>
-                <p className="text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>
+                <p className="text-xs text-text-muted">{queueStatus(limit)} · 执行 {limit.active}/{limit.limit || "不限"} · 排队 {limit.queued}</p>
                 <details className="mt-2 text-xs text-text-muted">
                   <summary className="cursor-pointer select-none text-primary hover:underline">展开 {limit.queue.length} 个请求</summary>
                   <div className="mt-2 space-y-2 rounded-lg bg-bg/70 p-3">

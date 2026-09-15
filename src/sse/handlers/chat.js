@@ -36,6 +36,9 @@ import {
   holdConcurrencyUntilResponseDone,
   ConcurrencyQueueError,
   getConcurrencySnapshot,
+  pauseAccountQueue,
+  resumeAccountQueue,
+  queueTimeoutMs,
 } from "../services/concurrencyLimiter.js";
 
 const requestIds = new WeakMap();
@@ -287,14 +290,14 @@ async function handleChatInternal(request, clientRawRequest = null) {
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set()) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set(), deadline = Date.now() + queueTimeoutMs()) {
   if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
   seenModels.add(modelStr);
   const requestId = getRequestId(request);
   // Resolve combo aliases (including cc/<name>) before provider prefixes.
   const comboModels = await getComboModels(modelStr);
   if (comboModels?.length) {
-    return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts);
+    return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts, deadline);
   }
   const modelInfo = await getModelInfo(modelStr);
 
@@ -313,7 +316,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const sessionHint = sessionKey ? ` ${NEW_SESSION_HINT}` : "";
-  const credentials = await getProviderCredentials(provider, excludedAccounts, model, { sessionKey, fillFirst: true });
+  const credentials = await getProviderCredentials(provider, excludedAccounts, model, { sessionKey, fillFirst: true, waitForCooldown: true });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
     if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。");
@@ -365,6 +368,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             scope: "apiKey",
             id: apiKeyRecordId,
             limit: apiKeyLimit,
+            deadline,
             signal: request?.signal,
             requestId,
             metadata: {
@@ -380,10 +384,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
 
     try {
+      const lockedUntil = new Date(getModelLockUntil(credentials._connection, model)).getTime();
+      if (sessionKey && Number(credentials._connection?.errorCode) === 503 && lockedUntil > Date.now()) {
+        pauseAccountQueue(credentials.connectionId, lockedUntil);
+      }
       const accountPermitPromise = acquireConcurrencySlot({
         scope: "account",
         id: credentials.connectionId,
         limit: credentials.maxConcurrency,
+        deadline,
         signal: request?.signal,
         requestId,
         metadata: {
@@ -412,12 +421,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
       if (!sessionKey) {
         excludedAccounts.add(credentials.connectionId);
-        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts);
+        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline);
+      }
+      if (liveConnection?.isActive && Number(liveConnection.errorCode) === 503 && isModelLockActive(liveConnection, model)) {
+        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline);
       }
       return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "当前会话绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
     }
 
-    const result = await handleChatCore({
+    const attemptTimeout = new AbortController();
+    const attemptTimer = sessionKey ? setTimeout(() => attemptTimeout.abort(), Math.max(0, deadline - Date.now())) : null;
+    let result;
+    try {
+      result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -436,7 +452,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
-      clientAbortSignal: request?.signal,
+      clientAbortSignal: sessionKey ? AbortSignal.any([request?.signal, attemptTimeout.signal].filter(Boolean)) : request?.signal,
       pxpipeEnabled: !!chatSettings.pxpipeEnabled,
       pxpipeMinChars: chatSettings.pxpipeMinChars,
       pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
@@ -459,8 +475,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         clearAntigravityStrikes(credentials.connectionId, model);
       }
       });
+    } finally {
+      clearTimeout(attemptTimer);
+    }
+    if (attemptTimeout.signal.aborted && !request?.signal?.aborted) {
+      await result.response?.body?.cancel().catch(() => {});
+      return rejectChatRequest(503, "账号繁忙，等待重试已超过时限，请稍后重试。", clientRawRequest, "router");
+    }
 
     if (result.success) {
+      resumeAccountQueue(credentials.connectionId);
       const response = holdConcurrencyUntilResponseDone(result.response, () => {
         accountPermit.release();
         apiKeyPermit?.release();
@@ -490,15 +514,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (!(provider === "antigravity" && quotaResetMs)) {
       ({ shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
+    if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
+      await result.response?.body?.cancel().catch(() => {});
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline);
+    }
     if (!sessionKey && shouldFallback && credentials.connectionId !== "noauth") {
       excludedAccounts.add(credentials.connectionId);
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts);
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline);
     }
     const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`);
     const retryAfter = result.response?.headers.get("retry-after");
     if (retryAfter) response.headers.set("Retry-After", retryAfter);
     return response;
   } catch (error) {
+    if (sessionKey && Date.now() >= deadline && !request?.signal?.aborted) {
+      return rejectChatRequest(503, "账号繁忙，等待重试已超过时限，请稍后重试。", clientRawRequest, "router");
+    }
     const cancelled = request?.signal?.aborted || error.name === "AbortError";
     if (!cancelled) {
       await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.BAD_GATEWAY, error.message, provider, model)

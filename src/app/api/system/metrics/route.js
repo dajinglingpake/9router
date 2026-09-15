@@ -114,7 +114,7 @@ export async function getSystemMetrics() {
   const concurrencyLimits = rawConcurrency.map((item) => ({
     ...item,
     label: labels.get(`${item.scope}:${item.id}`) || `${item.scope}: ${item.id.slice(0, 8)}`,
-    state: item.queued > 0 ? "queued" : "running",
+    state: item.state || (item.queued > 0 ? "queued" : "running"),
   }));
   const systemTotal = os.totalmem();
   const systemFree = os.freemem();

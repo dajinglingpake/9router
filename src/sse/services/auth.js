@@ -5,7 +5,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, getModelLockUn
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
-import { getConcurrencySnapshot } from "./concurrencyLimiter.js";
+import { getConcurrencySnapshot, pauseAccountQueue } from "./concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
 import { getSessionBinding, bindSession } from "./sessionRouting.js";
 
@@ -144,7 +144,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model)) return false;
+      if (isModelLockActive(c, model) && !(options.waitForCooldown && binding?.connectionId === c.id && Number(c.errorCode) === 503)) return false;
       // Antigravity: skip if live quota exhausted for this model
       if (isAntigravity && model && antigravityQuotaCache) {
         const quota = antigravityQuotaCache.get(c.id)?.[model];
@@ -370,6 +370,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     lastErrorAt: new Date().toISOString(),
     backoffLevel: newBackoffLevel ?? backoffLevel
   });
+  if (overloaded) pauseAccountQueue(connectionId, new Date(lockUpdate.modelLock___all).getTime());
 
   const lockKey = Object.keys(lockUpdate)[0];
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);

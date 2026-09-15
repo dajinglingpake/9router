@@ -13,7 +13,9 @@ vi.mock("@/lib/usageDb.js", () => ({
   ],
 }));
 vi.mock("@/lib/runtimeTraffic.js", () => ({ getTrafficSnapshot: () => ({}) }));
-vi.mock("@/sse/services/concurrencyLimiter.js", () => ({ getConcurrencySnapshot: () => [] }));
+vi.mock("@/sse/services/concurrencyLimiter.js", () => ({ getConcurrencySnapshot: () => [
+  { scope: "account", id: "account-1", active: 0, queued: 1, limit: 4, state: "cooldown", cooldownRemainingMs: 25000, queue: [{ state: "cooldown", timeoutRemainingMs: 500000 }] },
+] }));
 vi.mock("@/lib/localDb", () => ({ getProviderConnections: async () => [{ id: "account-1", name: "Test account" }], getApiKeys: async () => [] }));
 
 import { getSystemMetrics } from "../../src/app/api/system/metrics/route.js";
@@ -26,4 +28,5 @@ it("counts upstream rate limits as server errors and excludes cancellations from
   expect(metrics.requestErrors[1]).toMatchObject({ category: "server", status: "FAILED 429", message: "" });
   expect(metrics.requestErrors[2]).toMatchObject({ category: "cancelled" });
   expect(metrics.requestErrors[3]).toMatchObject({ category: "client", summary: "调用密钥无效或已停用" });
+  expect(metrics.concurrencyLimits[0]).toMatchObject({ state: "cooldown", cooldownRemainingMs: 25000, label: "账号: Test account", queue: [{ state: "cooldown", timeoutRemainingMs: 500000 }] });
 });
