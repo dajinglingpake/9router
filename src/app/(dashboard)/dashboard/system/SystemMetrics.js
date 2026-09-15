@@ -30,8 +30,8 @@ function MetricCard({ icon, label, value, detail, tone = "text-primary" }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-text-muted">{label}</p>
-          <p className={`mt-2 text-2xl font-semibold tabular-nums ${tone}`}>{value}</p>
-          <p className="mt-1 text-xs text-text-muted">{detail}</p>
+          <p data-i18n-skip className={`mt-2 text-2xl font-semibold tabular-nums ${tone}`}>{value}</p>
+          <p data-i18n-skip className="mt-1 text-xs text-text-muted">{detail}</p>
         </div>
         <span className="material-symbols-outlined rounded-lg bg-bg p-2 text-xl text-text-muted" aria-hidden="true">{icon}</span>
       </div>
