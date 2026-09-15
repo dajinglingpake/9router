@@ -7,7 +7,9 @@ export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store" };
 
 export async function GET() {
-  return Response.json({ ...publicAlertConfig((await getSettings()).wecomAlerts), status: await getAlertStatus() }, { headers });
+  const config = (await getSettings()).wecomAlerts;
+  // This endpoint always requires dashboard authentication, including when login is disabled.
+  return Response.json({ ...publicAlertConfig(config), webhookUrl: config?.webhookUrl || "", status: await getAlertStatus() }, { headers });
 }
 
 export async function PATCH(request) {

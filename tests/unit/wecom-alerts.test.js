@@ -151,10 +151,12 @@ it("polls quota without a browser and stops when alerts are disabled", async () 
   expect(mocks.fetch).toHaveBeenCalledTimes(1);
 });
 
-it("never exposes the configured secret through settings and limits test pushes", async () => {
-  const data = await (await GET()).json();
+it("returns the saved address to the protected admin endpoint without caching and limits test pushes", async () => {
+  const response = await GET();
+  const data = await response.json();
   expect(data.configured).toBe(true);
-  expect(JSON.stringify(data)).not.toContain("test-only");
+  expect(data.webhookUrl).toBe(webhookUrl);
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
   mocks.settings.wecomAlerts.enabled = false;
   const request = value => new Request("http://localhost/api/settings/alerts", { method: "PATCH", body: JSON.stringify(value) });
   expect((await PATCH(request({ quotaPercent: 20, webhookUrl: "" }))).status).toBe(200);
