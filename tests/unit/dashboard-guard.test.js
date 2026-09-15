@@ -54,6 +54,14 @@ function localRequest(pathname, headers = {}) {
 }
 
 describe("dashboard guard public LLM API access", () => {
+  it("requires dashboard login for alert configuration and test pushes even with login disabled", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+    for (const method of ["GET", "PATCH", "POST"]) {
+      expect((await proxy({ ...request("/api/settings/alerts"), method })).status).toBe(401);
+    }
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    expect(await proxy({ ...request("/api/settings/alerts"), method: "POST" })).toBe(mocks.nextResponse);
+  });
   it("requires dashboard authentication to clear error logs even with login disabled", async () => {
     mocks.getSettings.mockResolvedValue({ requireLogin: false });
     const req = { ...request("/api/system/errors"), method: "DELETE" };

@@ -292,6 +292,9 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 }
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
+  if (proxyOptions?.signal) {
+    options = { ...options, signal: options.signal ? AbortSignal.any([options.signal, proxyOptions.signal]) : proxyOptions.signal };
+  }
   const targetUrl = typeof url === "string" ? url : url.toString();
 
   // Vercel relay: forward request via relay headers

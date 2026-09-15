@@ -10,5 +10,7 @@ export async function register() {
 
     const { startModelCatalogSync } = await import("@/lib/modelCatalog/sync.js");
     startModelCatalogSync();
+    const { startAlertMonitor } = await import("@/lib/alerts/monitor.js");
+    startAlertMonitor();
   }
 }

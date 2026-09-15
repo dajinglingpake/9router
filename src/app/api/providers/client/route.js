@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/localDb";
 import { backfillCodexEmails } from "@/lib/oauth/providers";
+import { getAccountExpiry } from "@/lib/accountExpiry";
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 
 const SAFE_FIELDS = [
   "id", "provider", "authType", "name", "email", "displayName",
   "priority", "globalPriority", "isActive", "defaultModel",
   "testStatus", "lastError", "lastErrorAt", "errorCode",
-  "expiresAt", "lastUsedAt", "consecutiveUseCount",
+  "expiresAt", "accountExpiresAt", "lastUsedAt", "consecutiveUseCount",
   "createdAt", "updatedAt",
 ];
 
@@ -30,7 +31,7 @@ function maskName(name) {
 }
 
 function sanitize(c) {
-  const safe = {};
+  const safe = { accountExpiry: getAccountExpiry(c) };
   for (const f of SAFE_FIELDS) if (c[f] !== undefined) safe[f] = c[f];
   if (safe.name) safe.name = maskName(safe.name);
   if (c.providerSpecificData) {

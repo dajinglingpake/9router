@@ -5,6 +5,7 @@ import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/c
 import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
+import AccountExpiry from "@/shared/components/AccountExpiry";
 
 export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
@@ -160,6 +161,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{displayName}</p>
+          <AccountExpiry connection={connection} />
           {secondaryDisplayName && (
             <p className="text-xs text-text-muted truncate">{secondaryDisplayName}</p>
           )}

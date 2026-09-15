@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAccountExpiry } from "@/lib/accountExpiry";
 import {
   getProviderConnectionById,
   getProxyPoolById,
@@ -70,7 +71,7 @@ export async function GET(request, { params }) {
     }
 
     // Hide sensitive fields
-    const result = { ...connection };
+    const result = { ...connection, accountExpiry: getAccountExpiry(connection) };
     delete result.apiKey;
     delete result.accessToken;
     delete result.refreshToken;
@@ -118,6 +119,12 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (body.accountExpiresAt !== undefined) {
+      if (body.accountExpiresAt !== null && (typeof body.accountExpiresAt !== "string" || !Number.isFinite(new Date(body.accountExpiresAt).getTime()))) {
+        return NextResponse.json({ error: "账号到期时间无效" }, { status: 400 });
+      }
+      updateData.accountExpiresAt = body.accountExpiresAt === null ? null : new Date(body.accountExpiresAt).toISOString();
+    }
     if (name !== undefined) updateData.name = name;
     if (priority !== undefined) updateData.priority = priority;
     if (maxConcurrency !== undefined) {
@@ -165,7 +172,7 @@ export async function PUT(request, { params }) {
     const updated = await updateProviderConnection(id, updateData);
 
     // Hide sensitive fields
-    const result = { ...updated };
+    const result = { ...updated, accountExpiry: getAccountExpiry(updated) };
     delete result.apiKey;
     delete result.accessToken;
     delete result.refreshToken;

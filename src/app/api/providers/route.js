@@ -9,6 +9,7 @@ import {
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
+import { getAccountExpiry } from "@/lib/accountExpiry";
 
 export const dynamic = "force-dynamic";
 
@@ -69,6 +70,7 @@ export async function GET() {
       return {
         ...c,
         name,
+        accountExpiry: getAccountExpiry(c),
         apiKey: undefined,
         accessToken: undefined,
         refreshToken: undefined,

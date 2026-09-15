@@ -9,12 +9,20 @@ import Badge from "@/shared/components/Badge";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import Select from "@/shared/components/Select";
 
+function localDateInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 export default function EditConnectionModal({ isOpen, connection, proxyPools, onSave, onClose }) {
   const [formData, setFormData] = useState({
     name: "",
     priority: 1,
     maxConcurrency: 0,
     apiKey: "",
+    accountExpiresAt: "",
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -37,6 +45,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         priority: connection.priority || 1,
         maxConcurrency: connection.maxConcurrency || 0,
         apiKey: "",
+        accountExpiresAt: localDateInput(connection.accountExpiresAt),
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
@@ -123,6 +132,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: formData.name,
         priority: formData.priority,
         maxConcurrency: formData.maxConcurrency,
+        accountExpiresAt: formData.accountExpiresAt ? new Date(formData.accountExpiresAt).toISOString() : null,
       };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
@@ -192,6 +202,9 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder={isOAuth ? "Account name" : "Production Key"}
         />
+        <Input label="账号到期时间" type="datetime-local" value={formData.accountExpiresAt}
+          onChange={e => setFormData({ ...formData, accountExpiresAt: e.target.value })}
+          hint="可手动填写；留空使用上游订阅记录。不会修改登录凭证的有效期。" />
         {isOAuth && connection.email && (
           <div className="bg-sidebar/50 p-3 rounded-lg">
             <p className="text-sm text-text-muted mb-1">Email</p>
