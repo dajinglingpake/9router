@@ -16,7 +16,6 @@ function apiKeyIdentity(key) {
   return createHash("sha256").update(key).digest("hex").slice(0, 16);
 }
 
-const PENDING_TIMEOUT_MS = 60 * 1000;
 const RING_CAP = 50;
 const CONN_CACHE_TTL_MS = 30 * 1000;
 const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 5184000000 };
@@ -28,7 +27,6 @@ if (!global._statsEmitter) {
   global._statsEmitter = new EventEmitter();
   global._statsEmitter.setMaxListeners(50);
 }
-if (!global._pendingTimers) global._pendingTimers = {};
 if (!global._pendingRequestStarts) global._pendingRequestStarts = {};
 if (!global._pendingRequestDetails) global._pendingRequestDetails = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
@@ -38,7 +36,6 @@ if (!global._runtimeRequestErrors) global._runtimeRequestErrors = [];
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
-const pendingTimers = global._pendingTimers;
 const pendingRequestStarts = global._pendingRequestStarts;
 const pendingRequestDetails = global._pendingRequestDetails;
 const recentRing = global._recentRing;
@@ -186,62 +183,53 @@ async function calculateCost(provider, model, tokens) {
   }
 }
 
-export function trackPendingRequest(model, provider, connectionId, started, error = false, details = {}) {
-  const modelKey = provider ? `${model} (${provider})` : model;
-  const timerKey = `${connectionId}|${modelKey}`;
-
-  if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
-  pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
-  if (pendingRequests.byModel[modelKey] === 0) delete pendingRequests.byModel[modelKey];
-
+function updatePendingCount(modelKey, connectionId, delta) {
+  pendingRequests.byModel[modelKey] = Math.max(0, (pendingRequests.byModel[modelKey] || 0) + delta);
+  if (!pendingRequests.byModel[modelKey]) delete pendingRequests.byModel[modelKey];
   if (connectionId) {
-    if (!pendingRequests.byAccount[connectionId]) pendingRequests.byAccount[connectionId] = {};
-    if (!pendingRequests.byAccount[connectionId][modelKey]) pendingRequests.byAccount[connectionId][modelKey] = 0;
-    pendingRequests.byAccount[connectionId][modelKey] = Math.max(0, pendingRequests.byAccount[connectionId][modelKey] + (started ? 1 : -1));
-    if (pendingRequests.byAccount[connectionId][modelKey] === 0) {
-      delete pendingRequests.byAccount[connectionId][modelKey];
-      if (Object.keys(pendingRequests.byAccount[connectionId]).length === 0) {
-        delete pendingRequests.byAccount[connectionId];
-      }
-    }
+    const models = pendingRequests.byAccount[connectionId] ||= {};
+    models[modelKey] = Math.max(0, (models[modelKey] || 0) + delta);
+    if (!models[modelKey]) delete models[modelKey];
+    if (!Object.keys(models).length) delete pendingRequests.byAccount[connectionId];
   }
+}
 
-  if (started) {
-    if (!pendingRequestStarts[timerKey]) pendingRequestStarts[timerKey] = [];
-    pendingRequestStarts[timerKey].push(Date.now());
-    if (!pendingRequestDetails[timerKey]) pendingRequestDetails[timerKey] = [];
-    pendingRequestDetails[timerKey].push({ ...details, startedAt: Date.now() });
-    clearTimeout(pendingTimers[timerKey]);
-    pendingTimers[timerKey] = setTimeout(() => {
-      delete pendingTimers[timerKey];
-      delete pendingRequestStarts[timerKey];
-      delete pendingRequestDetails[timerKey];
-      if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-      if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-        pendingRequests.byAccount[connectionId][modelKey] = 0;
-      }
-      scheduleStatsEvent("pending");
-    }, PENDING_TIMEOUT_MS);
-  } else {
-    clearTimeout(pendingTimers[timerKey]);
-    delete pendingTimers[timerKey];
-    if (pendingRequestStarts[timerKey]?.length) {
-      pendingRequestStarts[timerKey].shift();
-      if (pendingRequestStarts[timerKey].length === 0) delete pendingRequestStarts[timerKey];
-    }
-    if (pendingRequestDetails[timerKey]?.length) {
-      pendingRequestDetails[timerKey].shift();
-      if (pendingRequestDetails[timerKey].length === 0) delete pendingRequestDetails[timerKey];
-    }
+function finishPendingRequest(modelKey, provider, connectionId, entry, error) {
+  const timerKey = `${connectionId}|${modelKey}`;
+  const entries = pendingRequestDetails[timerKey];
+  const index = entries?.indexOf(entry) ?? -1;
+  // Completion, cancellation and error callbacks may all run for one request.
+  if (index < 0) return;
+  entries.splice(index, 1);
+  pendingRequestStarts[timerKey]?.splice(index, 1);
+  if (!entries.length) {
+    delete pendingRequestDetails[timerKey];
+    delete pendingRequestStarts[timerKey];
   }
-
-  if (!started && error && provider) {
+  updatePendingCount(modelKey, connectionId, -1);
+  if (error && provider) {
     lastErrorProvider.provider = provider.toLowerCase();
     lastErrorProvider.ts = Date.now();
   }
-
-  // [PENDING] console line removed; lifecycle is visible via "▶" and "📊 done" lines
   scheduleStatsEvent("pending");
+}
+
+export function trackPendingRequest(model, provider, connectionId, started, error = false, details = {}) {
+  const modelKey = provider ? `${model} (${provider})` : model;
+  const timerKey = `${connectionId}|${modelKey}`;
+  if (!started) {
+    // Legacy callers without a completion handle can still finish their first entry.
+    finishPendingRequest(modelKey, provider, connectionId, pendingRequestDetails[timerKey]?.[0], error);
+    return;
+  }
+  const entry = { ...details, startedAt: Date.now() };
+  (pendingRequestDetails[timerKey] ||= []).push(entry);
+  (pendingRequestStarts[timerKey] ||= []).push(entry.startedAt);
+  updatePendingCount(modelKey, connectionId, 1);
+  scheduleStatsEvent("pending");
+  // Keep long-running requests visible until their actual lifecycle ends.
+  // Capture this entry so out-of-order completion cannot remove another request.
+  return (failed = false) => finishPendingRequest(modelKey, provider, connectionId, entry, failed);
 }
 
 export function updatePendingRequest(model, provider, connectionId, updates = {}) {

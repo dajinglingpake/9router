@@ -192,7 +192,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   } else {
     translatedBody = translateRequest(sourceFormat, targetFormat, upstreamModel, body, stream, credentials, provider, reqLogger, stripList, connectionId, clientTool);
     if (!translatedBody) {
-      trackPendingRequest(model, provider, connectionId, false, true);
       appendRequestLog({ model, provider, connectionId, source: "router", status: `FAILED ${HTTP_STATUS.BAD_REQUEST}`, message: `Failed to translate request for ${sourceFormat} → ${targetFormat}` }).catch(() => { });
       return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Failed to translate request for ${sourceFormat} → ${targetFormat}`);
     }
@@ -313,7 +312,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       ? `budget:${thinkingConfig.budget}`
       : thinkingConfig?.mode || null;
   recordTraffic({ direction: "upload", bytes: requestBytes });
-  trackPendingRequest(model, provider, connectionId, true, false, {
+  const finishPending = trackPendingRequest(model, provider, connectionId, true, false, {
     retryCount,
     requestId,
     requestedModel: clientRawRequest?.body?.model || body.model,
@@ -328,6 +327,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     thinkingLevel,
     requestTag: reqTag || null,
   });
+  const trackDone = (failed = false) => finishPending?.(failed);
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;
@@ -335,10 +335,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const streamController = createStreamController({
     onDisconnect: (reason) => {
-      trackPendingRequest(model, provider, connectionId, false);
+      trackDone();
       if (onDisconnect) onDisconnect(reason);
     },
-    onError: () => trackPendingRequest(model, provider, connectionId, false),
+    onError: () => trackDone(true),
+    onComplete: () => trackDone(),
     log, provider, model, reqTag,
     externalSignal: clientAbortSignal
   });
@@ -402,7 +403,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     providerResponseFormat = result.responseFormat || targetFormat;
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
-    trackPendingRequest(model, provider, connectionId, false, true);
+    trackDone(true);
     appendRequestLog({ model, provider, connectionId, requestId, retryCount, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}`, message: error.message || String(error) }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
@@ -477,7 +478,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Provider returned error
   if (!providerResponse.ok) {
-    trackPendingRequest(model, provider, connectionId, false, true);
+    trackDone(true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
     appendRequestLog({ model, provider, connectionId, requestId, retryCount, status: `FAILED ${statusCode}`, message }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
@@ -502,29 +503,33 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, onRequestComplete, pxpipe: pxpipeSummary, reqTag, log };
   const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
-  const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
 
-  // Provider forced streaming but client wants JSON
-  if (!clientRequestedStreaming && providerRequiresStreaming) {
-    const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, trackDone, appendLog });
-    if (result) {
+  try {
+    // Provider forced streaming but client wants JSON
+    if (!clientRequestedStreaming && providerRequiresStreaming) {
+      const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, appendLog });
+      if (result) {
+        if (result.success) onRequestComplete?.();
+        streamController.handleComplete();
+        return result;
+      }
+    }
+
+    // True non-streaming response
+    if (!stream) {
+      const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, appendLog });
       if (result.success) onRequestComplete?.();
       streamController.handleComplete();
       return result;
     }
-  }
 
-  // True non-streaming response
-  if (!stream) {
-    const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, trackDone, appendLog });
-    if (result.success) onRequestComplete?.();
-    streamController.handleComplete();
-    return result;
+    // Streaming response
+    const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
+    return await handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, credentials });
+  } catch (error) {
+    streamController.handleError(error);
+    throw error;
   }
-
-  // Streaming response
-  const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
-  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, credentials });
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {
