@@ -59,7 +59,7 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, clientAbortSignal = null, retryCount = 0, requestId = null, diagnosticContext = null }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, clientAbortSignal = null, retryCount = 0, requestId = null, diagnosticContext = null, onUpstreamOverload = null, onRequestComplete = null }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -384,6 +384,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   try {
     const result = await executor.execute({
       diagnosticContext,
+      onUpstreamOverload,
       model,
       body: translatedBody,
       stream,
@@ -449,6 +450,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         try {
           const retryResult = await executor.execute({
             diagnosticContext,
+            onUpstreamOverload,
             model,
             body: translatedBody,
             stream,
@@ -498,19 +500,24 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return createErrorResult(statusCode, errMsg, resetsAtMs);
   }
 
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, pxpipe: pxpipeSummary, reqTag, log };
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, onRequestComplete, pxpipe: pxpipeSummary, reqTag, log };
   const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
 
   // Provider forced streaming but client wants JSON
   if (!clientRequestedStreaming && providerRequiresStreaming) {
     const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, trackDone, appendLog });
-    if (result) { streamController.handleComplete(); return result; }
+    if (result) {
+      if (result.success) onRequestComplete?.();
+      streamController.handleComplete();
+      return result;
+    }
   }
 
   // True non-streaming response
   if (!stream) {
     const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, trackDone, appendLog });
+    if (result.success) onRequestComplete?.();
     streamController.handleComplete();
     return result;
   }

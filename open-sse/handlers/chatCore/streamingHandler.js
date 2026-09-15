@@ -110,10 +110,11 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log }) {
+export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log, onRequestComplete }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
+    if (contentObj?.successful) onRequestComplete?.();
     const latency = {
       ttft: ttftAt ? ttftAt - requestStartTime : Date.now() - requestStartTime,
       total: Date.now() - requestStartTime

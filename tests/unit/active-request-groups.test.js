@@ -1,6 +1,19 @@
 import { expect, it } from "vitest";
 import { groupActiveRequests } from "../../src/lib/activeRequestGroups.js";
 
+it("attaches model totals to the matching account, including queued groups", () => {
+  const stats = [
+    { connectionId: "a", provider: "codex", model: "sol", requests: 42, overloaded: 8, recovered: 8 },
+    { connectionId: "b", provider: "codex", model: "sol", requests: 20, overloaded: 0, recovered: 0 },
+    { connectionId: "a", provider: "codex", model: "astra", requests: 7, overloaded: 5, recovered: 5 },
+  ];
+  const groups = groupActiveRequests([
+    { connectionId: "a", provider: "codex", model: "sol", count: 1 },
+    { connectionId: "b", provider: "codex", model: "sol", count: 1 },
+  ], [{ scope: "account", id: "a", queue: [{ provider: "codex", routingModel: "astra" }] }], stats);
+  expect(groups.map(group => group.stats)).toEqual(stats);
+});
+
 it("keeps queued GPT-6 requests out of an active GPT-5.6 group", () => {
   const queue = [
     { requestId: "same", routingModel: "gpt-5.6-sol", provider: "codex" },

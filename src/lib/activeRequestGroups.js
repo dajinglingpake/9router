@@ -1,5 +1,5 @@
 // Match by account identity and routed model, never by account alone.
-export function groupActiveRequests(active = [], limits = []) {
+export function groupActiveRequests(active = [], limits = [], stats = []) {
   const groups = active.map(request => ({
     ...request,
     queue: [],
@@ -23,5 +23,8 @@ export function groupActiveRequests(active = [], limits = []) {
       group.queue.push(queued);
     }
   }
-  return groups;
+  return groups.map(group => ({
+    ...group,
+    stats: stats.find(item => item.connectionId === group.connectionId && item.provider === group.provider && item.model === group.model),
+  }));
 }

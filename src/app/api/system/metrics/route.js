@@ -7,6 +7,7 @@ import { getTrafficSnapshot } from "@/lib/runtimeTraffic.js";
 import { getConcurrencySnapshot } from "@/sse/services/concurrencyLimiter.js";
 import { getProviderConnections, getApiKeys } from "@/lib/localDb";
 import { getRequestErrorInfo } from "@/lib/requestErrorInfo.js";
+import { getModelRequestStats } from "@/lib/runtimeModelStats.js";
 
 export const dynamic = "force-dynamic";
 
@@ -148,6 +149,7 @@ export async function getSystemMetrics() {
     runtime: { threads: await getThreadCount() },
     requestStats: { ...requestStats, outputTokensPerSecond: undefined },
     requestErrors,
+    modelRequestStats: getModelRequestStats(),
     activeRequests,
   };
 }

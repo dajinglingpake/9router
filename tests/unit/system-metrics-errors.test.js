@@ -19,9 +19,14 @@ vi.mock("@/sse/services/concurrencyLimiter.js", () => ({ getConcurrencySnapshot:
 vi.mock("@/lib/localDb", () => ({ getProviderConnections: async () => [{ id: "account-1", name: "Test account" }], getApiKeys: async () => [] }));
 
 import { getSystemMetrics } from "../../src/app/api/system/metrics/route.js";
+import { trackModelRequest } from "../../src/lib/runtimeModelStats.js";
 
 it("counts upstream rate limits as server errors and excludes cancellations from success rate", async () => {
+  const tracker = trackModelRequest({}, { connectionId: "account-1", provider: "codex", model: "test-model" });
+  tracker.onOverload();
+  tracker.onComplete();
   const metrics = await getSystemMetrics();
+  expect(metrics.modelRequestStats).toContainEqual({ connectionId: "account-1", provider: "codex", model: "test-model", requests: 1, overloaded: 1, recovered: 1 });
   expect(metrics.requestStats).toMatchObject({ clientErrors: 1, serverErrors: 2, cancelledRequests: 1, successRatePercent: 25 });
   expect(metrics.requestErrors).toHaveLength(4);
   expect(metrics.requestErrors[0]).toMatchObject({ category: "server", message: "overloaded", account: "账号: Test account", summary: "上游服务繁忙或暂不可用" });

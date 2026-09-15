@@ -40,6 +40,7 @@ vi.mock("../../src/sse/utils/logger.js", () => ({
 import { getSessionRoutingKey, getSessionBinding } from "../../src/sse/services/sessionRouting.js";
 import { getProviderCredentials, clearAccountError } from "../../src/sse/services/auth.js";
 import { handleChat } from "../../src/sse/handlers/chat.js";
+import { getModelRequestStats } from "../../src/lib/runtimeModelStats.js";
 import { getConcurrencySnapshot, acquireConcurrencySlot, pauseAccountQueue, resumeAccountQueue, __test__ as concurrencyTest } from "../../src/sse/services/concurrencyLimiter.js";
 
 afterEach(() => {
@@ -49,6 +50,8 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  globalThis._runtimeModelStats.groups.clear();
+  globalThis._runtimeModelStats.requests = new WeakMap();
   vi.clearAllMocks();
   state.bindings.clear();
   state.comboModels = null;
@@ -67,6 +70,26 @@ const request = (sessionId, model = "codex/test-model", signal) => new Request("
 const successfulStream = () => ({ success: true, response: new Response("ok") });
 
 describe("strict session account routing", () => {
+  it("counts a request once across account cooldown and internal retries", async () => {
+    vi.useFakeTimers();
+    state.handleChatCore
+      .mockImplementationOnce(async ({ onUpstreamOverload }) => {
+        onUpstreamOverload();
+        onUpstreamOverload();
+        return { success: false, status: 503, error: "overloaded", response: new Response("overloaded", { status: 503 }) };
+      })
+      .mockImplementationOnce(async ({ onRequestComplete }) => {
+        onRequestComplete();
+        return successfulStream();
+      });
+    const pending = handleChat(request("stats-retry"));
+    await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
+    expect(getModelRequestStats()).toEqual([{ connectionId: "a", provider: "codex", model: "test-model", requests: 1, overloaded: 1, recovered: 0 }]);
+    await vi.advanceTimersByTimeAsync(30000);
+    const response = await pending;
+    await response.text();
+    expect(getModelRequestStats()).toEqual([{ connectionId: "a", provider: "codex", model: "test-model", requests: 1, overloaded: 1, recovered: 1 }]);
+  });
   it("restarts the whole account cooldown and releases only one recovery request", async () => {
     vi.useFakeTimers();
     pauseAccountQueue("a", Date.now() + 30000);

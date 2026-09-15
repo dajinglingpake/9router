@@ -99,7 +99,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, diagnosticContext = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, diagnosticContext = null, onUpstreamOverload = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -154,6 +154,7 @@ export class BaseExecutor {
           signal: mergedSignal
         }, proxyOptions);
         clearTimeout(connectTimer);
+        if (response.status === HTTP_STATUS.SERVICE_UNAVAILABLE) onUpstreamOverload?.();
         if (diagnosticContext) log?.info?.("UPSTREAM_HTTP", this.provider, {
           ...diagnosticContext, model, attempt: retryAttemptsByUrl[urlIndex] + 1,
           host: new URL(url).hostname, headersMs: Date.now() - fetchStartedAt,

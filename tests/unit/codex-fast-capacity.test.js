@@ -21,9 +21,12 @@ describe("Codex fast tier and capacity handling", () => {
     ), { headers: { "x-request-id": "upstream-123", "content-type": "text/event-stream" } }) });
     try {
       const log = { warn: vi.fn() };
+      const onUpstreamOverload = vi.fn();
       const result = await executor.execute({ model: "gpt-5.6-terra", body: { input: [] }, credentials: {}, log,
+        onUpstreamOverload,
         diagnosticContext: { requestId: "local-123", connectionId: "account-a", retryCount: 2 } });
       expect(result.response.status).toBe(503);
+      expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith("UPSTREAM_SSE_ERROR", "codex", expect.objectContaining({
         requestId: "local-123", connectionId: "account-a", retryCount: 2, sseAttempt: 1,
         upstreamStatus: 200, headers: { "x-request-id": "upstream-123" },

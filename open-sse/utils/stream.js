@@ -97,7 +97,20 @@ export function createSSEStream(options = {}) {
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let finalized = false;
+  let streamFailed = false;
+  let responsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
+  let responsesCompleted = false;
   const outputStreamId = beginOutputStream();
+
+  // A 200 response or EOF is not proof that a Responses request completed.
+  const observeOutcome = (parsed, eventName = null) => {
+    const type = getOpenAIResponsesEventName(eventName, parsed);
+    if (type?.startsWith("response.")) responsesStream = true;
+    if (parsed?.error || parsed?.response?.error || type === "error"
+      || type === "response.failed" || type === "response.incomplete"
+      || ["failed", "incomplete"].includes(parsed?.response?.status)) streamFailed = true;
+    if (type === "response.completed" || type === "response.done" || parsed?.response?.status === "completed") responsesCompleted = true;
+  };
 
   // Shared by transform() and flush() — each receives its own controller.
   const makeEnqueue = (controller) => (value) => {
@@ -130,7 +143,8 @@ export function createSSEStream(options = {}) {
     if (onStreamComplete) {
       onStreamComplete({
         content: accumulatedContent,
-        thinking: accumulatedThinking
+        thinking: accumulatedThinking,
+        successful: !streamFailed && (!responsesStream || responsesCompleted),
       }, finalUsage, ttftAt);
     }
   };
@@ -170,6 +184,7 @@ export function createSSEStream(options = {}) {
           if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
             try {
               const parsed = JSON.parse(trimmed.slice(5).trim());
+              observeOutcome(parsed, currentOpenAIResponsesEvent);
 
               const idFixed = fixInvalidId(parsed);
 
@@ -275,6 +290,7 @@ export function createSSEStream(options = {}) {
 
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
+        observeOutcome(parsed, currentOpenAIResponsesEvent);
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
         const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
@@ -415,6 +431,8 @@ export function createSSEStream(options = {}) {
 
         if (mode === STREAM_MODE.PASSTHROUGH) {
           if (buffer) {
+            const parsed = parseSSELine(buffer.trim(), targetFormat);
+            if (parsed) observeOutcome(parsed, currentOpenAIResponsesEvent);
             let output = buffer;
             if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
               output = "data: " + buffer.slice(5);
@@ -444,6 +462,7 @@ export function createSSEStream(options = {}) {
           // accepts "data: " lines, so an NDJSON provider (Ollama) lost whatever
           // arrived without its closing newline.
           const parsed = parseSSELine(buffer.trim(), targetFormat);
+          if (parsed) observeOutcome(parsed, currentOpenAIResponsesEvent);
           // parseSSELine turns the SSE sentinel "data: [DONE]" into { done: true },
           // which must not be translated. An Ollama chunk also carries done:true,
           // but it is the real final chunk — it holds finish_reason and the token
@@ -512,6 +531,7 @@ export function createSSEStream(options = {}) {
 
         finalizeStream();
       } catch (error) {
+        streamFailed = true;
         console.log("Error in flush:", error);
         finalizeStream();
       }

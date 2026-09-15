@@ -143,7 +143,7 @@ export default function SystemMetrics({ initialMetrics = null }) {
     ? Math.round((processMemory / metrics.memory.systemTotal) * 1000) / 10
     : 0;
   const concurrencyLimits = metrics?.concurrencyLimits || [];
-  const activeRequests = groupActiveRequests(metrics?.activeRequests || [], concurrencyLimits);
+  const activeRequests = groupActiveRequests(metrics?.activeRequests || [], concurrencyLimits, metrics?.modelRequestStats || []);
   const queuedLimits = concurrencyLimits.filter((item) => item.scope !== "account" && item.queued > 0);
   const runningLimits = concurrencyLimits.filter((item) => item.active > 0);
   const representedLimitKeys = new Set(activeRequests.flatMap((request) => {
@@ -255,6 +255,12 @@ export default function SystemMetrics({ initialMetrics = null }) {
                   {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
                   <p className="mt-1 text-xs text-text-muted">
                     {request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}
+                  </p>
+                  <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted" title="本次服务启动后累计；同一请求的多次过载只计一次，响应成功完成后计入重试后成功。">
+                    <span>请求数 <span className="font-semibold tabular-nums text-text-main">{request.stats?.requests ?? 0}</span></span>
+                    <span>曾遇到过载 <span className="font-semibold tabular-nums text-amber-600">{request.stats?.overloaded ?? 0}</span></span>
+                    <span>重试后成功 <span className="font-semibold tabular-nums text-emerald-600">{request.stats?.recovered ?? 0}</span></span>
+                    <span>本次运行累计</span>
                   </p>
                   <details className="mt-2 text-xs text-text-muted">
                     <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count + request.queue.length} 个请求</summary>

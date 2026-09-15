@@ -10,6 +10,7 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { appendRequestLog } from "@/lib/usageDb.js";
+import { trackModelRequest } from "@/lib/runtimeModelStats.js";
 import { getSessionRoutingKey, NEW_SESSION_HINT } from "../services/sessionRouting.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -327,6 +328,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let apiKeyPermit = null;
   let accountPermit = null;
   let responseOwnsPermits = false;
+  const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model });
   try {
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -451,6 +453,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       retryCount,
       requestId,
       diagnosticContext,
+      onUpstreamOverload: modelStats.onOverload,
+      onRequestComplete: modelStats.onComplete,
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -510,6 +514,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return response;
     }
     if (result.status === 499) return result.response;
+    if (result.status === HTTP_STATUS.SERVICE_UNAVAILABLE) modelStats.onOverload();
 
     // Apply cooldown state before releasing the slot so queued work
     // observes the latest account availability.
