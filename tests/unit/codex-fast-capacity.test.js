@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CodexExecutor } from "../../open-sse/executors/codex.js";
+import { BaseExecutor } from "../../open-sse/executors/base.js";
 
 function streamFromText(text) {
   const encoder = new TextEncoder();
@@ -12,6 +13,24 @@ function streamFromText(text) {
 }
 
 describe("Codex fast tier and capacity handling", () => {
+  it("logs the original 200-SSE error and upstream id before converting it to 503", async () => {
+    const executor = new CodexExecutor();
+    executor.config = { ...executor.config, retry: { 503: { attempts: 0, delayMs: 0 } } };
+    const call = vi.spyOn(BaseExecutor.prototype, "execute").mockResolvedValue({ response: new Response(streamFromText(
+      'event: error\ndata: {"error":{"code":"server_is_overloaded","message":"busy"}}\n\n'
+    ), { headers: { "x-request-id": "upstream-123", "content-type": "text/event-stream" } }) });
+    try {
+      const log = { warn: vi.fn() };
+      const result = await executor.execute({ model: "gpt-5.6-terra", body: { input: [] }, credentials: {}, log,
+        diagnosticContext: { requestId: "local-123", connectionId: "account-a", retryCount: 2 } });
+      expect(result.response.status).toBe(503);
+      expect(log.warn).toHaveBeenCalledWith("UPSTREAM_SSE_ERROR", "codex", expect.objectContaining({
+        requestId: "local-123", connectionId: "account-a", retryCount: 2, sseAttempt: 1,
+        upstreamStatus: 200, headers: { "x-request-id": "upstream-123" },
+        error: { code: "server_is_overloaded", message: "busy" }, willRetry: false,
+      }));
+    } finally { call.mockRestore(); }
+  });
   it("maps Codex fast tier to priority and max reasoning to xhigh", () => {
     const executor = new CodexExecutor();
     const body = executor.transformRequest("gpt-5.5", {

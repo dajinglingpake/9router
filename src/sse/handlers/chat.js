@@ -433,11 +433,24 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     const attemptTimeout = new AbortController();
     const attemptTimer = sessionKey ? setTimeout(() => attemptTimeout.abort(), Math.max(0, deadline - Date.now())) : null;
+    const accountState = getConcurrencySnapshot().find(item => item.scope === "account" && item.id === credentials.connectionId);
+    const diagnosticContext = {
+      requestId, connectionId: credentials.connectionId, retryCount,
+      session: sessionKey?.slice(0, 12) || null,
+      active: accountState?.active || 1, queued: accountState?.queued || 0,
+      limit: credentials.maxConcurrency || 0, accountState: accountState?.state || "running",
+      waitMs: accountPermit.waitMs, remainingMs: Math.max(0, deadline - Date.now()),
+      requestBytes: concurrencyMetadata.requestBytes, thinking: concurrencyMetadata.thinkingLevel,
+      proxyConfigured: !!(refreshedCredentials.providerSpecificData?.connectionProxyEnabled || refreshedCredentials.providerSpecificData?.vercelRelayUrl),
+      proxyPoolId: refreshedCredentials.providerSpecificData?.connectionProxyPoolId || null,
+    };
+    log.info("ACCOUNT_ATTEMPT", `${provider}/${model}`, diagnosticContext);
     let result;
     try {
       result = await handleChatCore({
       retryCount,
       requestId,
+      diagnosticContext,
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,

@@ -3,6 +3,7 @@ import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js"
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { parseRetryAfterMs } from "../utils/retryAfter.js";
+import { upstreamResponseDiagnostics, safeDiagnosticMessage } from "../utils/upstreamDiagnostics.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 
@@ -98,7 +99,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, diagnosticContext = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -140,6 +141,7 @@ export class BaseExecutor {
       const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+      const fetchStartedAt = Date.now();
 
       try {
         const bodyStr = JSON.stringify(transformedBody);
@@ -152,6 +154,11 @@ export class BaseExecutor {
           signal: mergedSignal
         }, proxyOptions);
         clearTimeout(connectTimer);
+        if (diagnosticContext) log?.info?.("UPSTREAM_HTTP", this.provider, {
+          ...diagnosticContext, model, attempt: retryAttemptsByUrl[urlIndex] + 1,
+          host: new URL(url).hostname, headersMs: Date.now() - fetchStartedAt,
+          ...upstreamResponseDiagnostics(response),
+        });
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";
         dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
@@ -167,6 +174,13 @@ export class BaseExecutor {
         return { response, url, headers, transformedBody };
       } catch (error) {
         clearTimeout(connectTimer);
+        if (diagnosticContext) log?.warn?.("UPSTREAM_NETWORK_ERROR", this.provider, {
+          ...diagnosticContext, model, attempt: retryAttemptsByUrl[urlIndex] + 1,
+          elapsedMs: Date.now() - fetchStartedAt,
+          error: safeDiagnosticMessage(error.message), cause: safeDiagnosticMessage(error.cause?.message),
+          code: error.cause?.code || error.code || null,
+          callerAborted: !!signal?.aborted, connectTimedOut: connectCtrl.signal.aborted,
+        });
         lastError = error;
         const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);

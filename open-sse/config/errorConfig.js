@@ -38,6 +38,13 @@ export const BACKOFF_CONFIG = {
 // Default cooldown for transient/unknown errors
 export const TRANSIENT_COOLDOWN_MS = 30 * 1000;
 
+export const DIAGNOSTIC_MAX_TEXT_LENGTH = 2000;
+export const DIAGNOSTIC_RESPONSE_HEADERS = [
+  "x-request-id", "request-id", "x-openai-request-id", "cf-ray", "retry-after", "openai-processing-ms",
+  "x-ratelimit-limit-requests", "x-ratelimit-remaining-requests", "x-ratelimit-reset-requests",
+  "x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens",
+];
+
 // Hard cap for provider-reported rate limit cooldown (e.g. codex resets_at can be 5-6h)
 export const MAX_RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
 

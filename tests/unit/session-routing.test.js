@@ -99,6 +99,10 @@ describe("strict session account routing", () => {
     expect(await response.text()).toMatch(/timed out|超时/);
     expect(state.handleChatCore).toHaveBeenCalledTimes(10);
     expect(state.handleChatCore.mock.calls.map(([args]) => args.retryCount)).toEqual(Array.from({ length: 10 }, (_, i) => i));
+    expect(state.handleChatCore.mock.calls[1][0].diagnosticContext).toMatchObject({
+      connectionId: "a", retryCount: 1, active: 1, queued: 0, limit: 1, accountState: "recovering",
+    });
+    expect(state.handleChatCore.mock.calls[1][0].diagnosticContext.requestId).toBe(state.handleChatCore.mock.calls[0][0].diagnosticContext.requestId);
     expect(state.handleChatCore.mock.calls.every(([args]) => args.connectionId === "a")).toBe(true);
     expect(getConcurrencySnapshot().every(p => p.queued === 0)).toBe(true);
   });

@@ -11,6 +11,7 @@ import { getModelUpstreamId } from "../config/providerModels.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
+import { upstreamResponseDiagnostics, sseErrorDiagnostics, safeDiagnosticMessage } from "../utils/upstreamDiagnostics.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import {
   CODEX_SPARK_COMPACT_THRESHOLD,
@@ -295,7 +296,7 @@ export class CodexExecutor extends BaseExecutor {
     const { attempts, delayMs } = resolveRetryEntry(retryConfig[503]);
     let attempt = 0;
     while (true) {
-      const result = await super.execute(args);
+      const result = await super.execute({ ...args, diagnosticContext: { ...args.diagnosticContext, sseAttempt: attempt + 1 } });
       const peek = await this._peekSseTransientError(result.response);
       if (!peek.matched) {
         // Replace body with re-assembled stream (prefix bytes already read + rest)
@@ -308,6 +309,12 @@ export class CodexExecutor extends BaseExecutor {
         }
         return result;
       }
+      args.log?.warn?.("UPSTREAM_SSE_ERROR", "codex", {
+        ...args.diagnosticContext, model: args.model, sseAttempt: attempt + 1,
+        ...upstreamResponseDiagnostics(result.response),
+        error: peek.errorDetails || { code: peek.matched, message: safeDiagnosticMessage(peek.message) },
+        willRetry: !peek.accountFallback && attempt < attempts,
+      });
       if (peek.accountFallback) {
         args.log?.warn?.("RETRY", `CODEX | SSE account fallback "${peek.message}"`);
         result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || CODEX_MODEL_CAPACITY_MESSAGE);
@@ -356,7 +363,7 @@ export class CodexExecutor extends BaseExecutor {
     if (matched) {
       try { await reader.cancel(); } catch { /* noop */ }
       try { reader.releaseLock(); } catch { /* noop */ }
-      return { matched, message: extractSseErrorMessage(text, matched), accountFallback, replacementBody: null };
+      return { matched, message: extractSseErrorMessage(text, matched), errorDetails: sseErrorDiagnostics(text), accountFallback, replacementBody: null };
     }
 
     reader.releaseLock();
