@@ -309,7 +309,12 @@ export class CodexExecutor extends BaseExecutor {
         }
         return result;
       }
-      args.onUpstreamOverload?.();
+      args.onUpstreamOverload?.({
+        ...upstreamResponseDiagnostics(result.response),
+        retryCount: args.diagnosticContext?.retryCount,
+        sseAttempt: attempt + 1,
+        message: JSON.stringify(peek.errorDetails || { code: peek.matched, message: safeDiagnosticMessage(peek.message) }),
+      });
       args.log?.warn?.("UPSTREAM_SSE_ERROR", "codex", {
         ...args.diagnosticContext, model: args.model, sseAttempt: attempt + 1,
         ...upstreamResponseDiagnostics(result.response),

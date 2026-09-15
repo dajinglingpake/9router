@@ -7,7 +7,8 @@ import { getTrafficSnapshot } from "@/lib/runtimeTraffic.js";
 import { getConcurrencySnapshot } from "@/sse/services/concurrencyLimiter.js";
 import { getProviderConnections, getApiKeys } from "@/lib/localDb";
 import { getRequestErrorInfo } from "@/lib/requestErrorInfo.js";
-import { getModelRequestStats } from "@/lib/runtimeModelStats.js";
+import { getModelRequestStats, getModelRequestErrors } from "@/lib/runtimeModelStats.js";
+import { getRecentRequestErrorCount } from "@/lib/db/repos/requestErrorsRepo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -108,7 +109,13 @@ export async function getSystemMetrics() {
     ...connections.map((item) => [`account:${item.id}`, `账号: ${item.name || item.email || item.id.slice(0, 8)}`]),
     ...apiKeys.map((item) => [`apiKey:${item.id}`, `API Key: ${item.name}`]),
   ]);
-  const requestErrors = errors.map((item) => ({
+  const retryErrors = getModelRequestErrors().map(item => ({ ...item, ...getRequestErrorInfo(item) }));
+  // The outer 503 summarizes an exhausted attempt already recorded in detail.
+  const otherErrors = errors.filter(item => !(item.statusCode === 503 && item.requestId && retryErrors.some(retry =>
+    retry.requestId === item.requestId && retry.connectionId === item.connectionId
+      && retry.provider === item.provider && retry.model === item.model && retry.retryCount === (item.retryCount || 0)
+  )));
+  const requestErrors = [...otherErrors, ...retryErrors].map((item) => ({
     ...item,
     account: labels.get(`account:${item.connectionId}`) || item.connectionId || "—",
   })).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -147,7 +154,7 @@ export async function getSystemMetrics() {
     traffic: getTrafficSnapshot(),
     concurrencyLimits,
     runtime: { threads: await getThreadCount() },
-    requestStats: { ...requestStats, outputTokensPerSecond: undefined },
+    requestStats: { ...requestStats, errorCount: await getRecentRequestErrorCount(), outputTokensPerSecond: undefined },
     requestErrors,
     modelRequestStats: getModelRequestStats(),
     activeRequests,

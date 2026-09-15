@@ -154,7 +154,15 @@ export class BaseExecutor {
           signal: mergedSignal
         }, proxyOptions);
         clearTimeout(connectTimer);
-        if (response.status === HTTP_STATUS.SERVICE_UNAVAILABLE) onUpstreamOverload?.();
+        if (response.status === HTTP_STATUS.SERVICE_UNAVAILABLE && onUpstreamOverload) {
+          onUpstreamOverload({
+            ...upstreamResponseDiagnostics(response),
+            retryCount: diagnosticContext?.retryCount,
+            sseAttempt: diagnosticContext?.sseAttempt,
+            attempt: retryAttemptsByUrl[urlIndex] + 1,
+            message: safeDiagnosticMessage(response.statusText || "HTTP 503"),
+          });
+        }
         if (diagnosticContext) log?.info?.("UPSTREAM_HTTP", this.provider, {
           ...diagnosticContext, model, attempt: retryAttemptsByUrl[urlIndex] + 1,
           host: new URL(url).hostname, headersMs: Date.now() - fetchStartedAt,

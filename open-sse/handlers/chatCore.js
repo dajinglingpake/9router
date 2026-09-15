@@ -403,7 +403,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}`, message: error.message || String(error) }).catch(() => { });
+    appendRequestLog({ model, provider, connectionId, requestId, retryCount, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}`, message: error.message || String(error) }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -479,7 +479,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${statusCode}`, message }).catch(() => { });
+    appendRequestLog({ model, provider, connectionId, requestId, retryCount, status: `FAILED ${statusCode}`, message }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
       latency: { ttft: 0, total: Date.now() - requestStartTime },

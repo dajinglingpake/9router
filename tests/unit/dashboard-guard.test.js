@@ -54,6 +54,13 @@ function localRequest(pathname, headers = {}) {
 }
 
 describe("dashboard guard public LLM API access", () => {
+  it("requires dashboard authentication to clear error logs even with login disabled", async () => {
+    mocks.getSettings.mockResolvedValue({ requireLogin: false });
+    const req = { ...request("/api/system/errors"), method: "DELETE" };
+    expect((await proxy(req)).status).toBe(401);
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    expect(await proxy(req)).toBe(mocks.nextResponse);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.NINEROUTER_PEER_TOKEN = PEER_TOKEN;
@@ -141,7 +148,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote codex rewrite with valid API key", async () => {
@@ -153,7 +160,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote public LLM API with valid bearer API key", async () => {
@@ -165,7 +172,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote public LLM API with valid x-api-key", async () => {
@@ -177,7 +184,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote rewritten beta public LLM API with valid API key", async () => {
@@ -189,7 +196,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote beta public LLM API with valid Google API key header", async () => {
@@ -201,7 +208,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 
   it("allows remote beta public LLM API with valid Google key query parameter", async () => {
@@ -212,7 +219,7 @@ describe("dashboard guard public LLM API access", () => {
     }));
 
     expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid", "unknown");
   });
 });
 

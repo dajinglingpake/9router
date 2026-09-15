@@ -27,6 +27,11 @@ describe("Codex fast tier and capacity handling", () => {
         diagnosticContext: { requestId: "local-123", connectionId: "account-a", retryCount: 2 } });
       expect(result.response.status).toBe(503);
       expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
+      expect(onUpstreamOverload).toHaveBeenCalledWith(expect.objectContaining({
+        upstreamStatus: 200, retryCount: 2, sseAttempt: 1,
+        message: JSON.stringify({ code: "server_is_overloaded", message: "busy" }),
+        headers: { "x-request-id": "upstream-123" },
+      }));
       expect(log.warn).toHaveBeenCalledWith("UPSTREAM_SSE_ERROR", "codex", expect.objectContaining({
         requestId: "local-123", connectionId: "account-a", retryCount: 2, sseAttempt: 1,
         upstreamStatus: 200, headers: { "x-request-id": "upstream-123" },

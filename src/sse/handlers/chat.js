@@ -328,7 +328,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let apiKeyPermit = null;
   let accountPermit = null;
   let responseOwnsPermits = false;
-  const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model });
+  const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model, requestId, endpoint: clientRawRequest?.endpoint });
   try {
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);

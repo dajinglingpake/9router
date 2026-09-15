@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/lib/db/driver.js", () => ({ getAdapter: vi.fn() }));
+vi.mock("../../src/lib/db/repos/requestErrorsRepo.js", () => ({ saveRequestError: vi.fn(async () => 1) }));
 
 import { appendRequestLog, getRuntimeRequestErrors } from "../../src/lib/db/repos/usageRepo.js";
 
@@ -12,10 +13,11 @@ describe("runtime request error details", () => {
   afterEach(() => vi.useRealTimers());
 
   it("retains upstream error context without retaining unrelated credentials", async () => {
-    await appendRequestLog({ status: "FAILED 503", model: "test-model", provider: "test", connectionId: "account-1", message: "overloaded Bearer private-token sk-secret", apiKey: "private-key" });
+    await appendRequestLog({ status: "FAILED 503", model: "test-model", provider: "test", connectionId: "account-1", requestId: "local-1", retryCount: 2, message: "overloaded Bearer private-token sk-secret", apiKey: "private-key" });
     expect(getRuntimeRequestErrors()).toEqual([{
       timestamp: Date.now(), status: "FAILED 503", model: "test-model", provider: "test", connectionId: "account-1",
       source: "upstream", endpoint: null,
+      requestId: "local-1", retryCount: 2,
       message: "overloaded Bearer [REDACTED] [REDACTED]",
     }]);
   });

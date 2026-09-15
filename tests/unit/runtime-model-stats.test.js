@@ -1,12 +1,32 @@
-import { beforeEach, expect, it, vi } from "vitest";
-import { trackModelRequest, getModelRequestStats } from "../../src/lib/runtimeModelStats.js";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { trackModelRequest, getModelRequestStats, getModelRequestErrors } from "../../src/lib/runtimeModelStats.js";
+vi.mock("../../src/lib/db/repos/requestErrorsRepo.js", () => ({
+  saveRequestError: vi.fn(async () => 1), markRequestErrorsRecovered: vi.fn(async () => {}),
+}));
 
 beforeEach(() => {
   globalThis._runtimeModelStats.groups.clear();
   globalThis._runtimeModelStats.requests = new WeakMap();
+  globalThis._runtimeModelStats.errors = [];
 });
+afterEach(() => vi.useRealTimers());
 
 const group = { connectionId: "a", provider: "codex", model: "sol" };
+
+it("retains each overload cause after recovery and expires error details after five minutes", () => {
+  vi.useFakeTimers();
+  const tracker = trackModelRequest({}, { ...group, requestId: "r1", endpoint: "/v1/responses" });
+  tracker.onOverload({ message: "server_is_overloaded Bearer secret", upstreamStatus: 200, sseAttempt: 1, headers: { "x-request-id": "upstream-1" } });
+  tracker.onOverload({ message: "still busy", upstreamStatus: 200, sseAttempt: 2 });
+  expect(getModelRequestErrors()).toHaveLength(2);
+  expect(getModelRequestErrors()[0]).toMatchObject({ ...group, requestId: "r1", endpoint: "/v1/responses", recovered: false, message: "server_is_overloaded Bearer [REDACTED]", upstreamStatus: 200 });
+  tracker.onComplete();
+  expect(getModelRequestErrors().every(entry => entry.recovered)).toBe(true);
+  expect(getModelRequestStats()[0]).toMatchObject({ requests: 1, overloaded: 1, recovered: 1 });
+  vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+  expect(getModelRequestErrors()).toEqual([]);
+  expect(getModelRequestStats()[0].overloaded).toBe(1);
+});
 
 it("deduplicates nested retries and counts recovery only after completion", () => {
   const request = new Request("http://localhost", { headers: { "x-request-id": "client-id" } });

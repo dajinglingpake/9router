@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { saveRequestError } from "./requestErrorsRepo.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -946,8 +947,10 @@ function formatLogDate(date = new Date()) {
 export async function appendRequestLog(entry = {}) {
   const status = String(entry.status || "");
   if (!/^(FAILED\s+)?(?:4\d\d|5\d\d)/i.test(status)) return;
-  runtimeRequestErrors.push({
+  const error = {
     timestamp: Date.now(), status,
+    requestId: entry.requestId || null,
+    retryCount: entry.retryCount || 0,
     model: entry.model || null,
     provider: entry.provider || null,
     connectionId: entry.connectionId || null,
@@ -957,9 +960,11 @@ export async function appendRequestLog(entry = {}) {
       .replace(/\bBearer\s+[\w.+/=-]+/gi, "Bearer [REDACTED]")
       .replace(/\bsk-[\w-]+/g, "[REDACTED]")
       .slice(0, 8000),
-  });
+  };
+  runtimeRequestErrors.push(error);
   const cutoff = Date.now() - 5 * 60 * 1000;
   while (runtimeRequestErrors.length && runtimeRequestErrors[0].timestamp < cutoff) runtimeRequestErrors.shift();
+  await saveRequestError(error);
 }
 
 export function getRuntimeRequestErrors() {

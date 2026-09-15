@@ -90,13 +90,60 @@ export default function SystemMetrics({ initialMetrics = null }) {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [errorDetails, setErrorDetails] = useState(null);
 
-  const showErrors = () => {
+  const showErrors = (request = null) => {
     setErrorDetails({
-      category: "",
-      items: metrics?.requestErrors || [],
+      filter: request ? { connectionId: request.connectionId, provider: request.provider, model: request.model } : {},
+      items: [], total: 0, loading: true,
     });
   };
-  const filteredErrors = (errorDetails?.items || []).filter((item) => !errorDetails.category || item.category === errorDetails.category);
+  const filteredErrors = errorDetails?.items || [];
+  const errorFilter = errorDetails?.filter;
+
+  useEffect(() => {
+    if (!errorFilter) return;
+    const controller = new AbortController();
+    setErrorDetails(current => current?.filter === errorFilter ? { ...current, loading: true, error: "" } : current);
+    fetch(`/api/system/errors?${new URLSearchParams(errorFilter)}`, { cache: "no-store", signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("读取错误日志失败");
+        const result = await response.json();
+        if (!controller.signal.aborted) setErrorDetails(current => current?.filter === errorFilter ? { ...current, ...result, loading: false } : current);
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setErrorDetails(current => current?.filter === errorFilter ? { ...current, loading: false, error: error.message } : current);
+      });
+    return () => controller.abort();
+  }, [errorFilter]);
+
+  const loadMoreErrors = async () => {
+    const current = errorDetails;
+    setErrorDetails(value => ({ ...value, loading: true, error: "" }));
+    try {
+      const response = await fetch(`/api/system/errors?${new URLSearchParams({ ...current.filter, beforeId: current.nextBeforeId })}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("读取错误日志失败");
+      const result = await response.json();
+      setErrorDetails(value => value?.filter === current.filter ? { ...value, items: [...value.items, ...result.items], nextBeforeId: result.nextBeforeId, loading: false } : value);
+    } catch (error) {
+      setErrorDetails(value => value?.filter === current.filter ? { ...value, loading: false, error: error.message } : value);
+    }
+  };
+
+  const clearErrors = async () => {
+    const current = errorDetails;
+    if (!window.confirm(`清空当前筛选范围内的 ${current.total} 条错误日志？此操作不可撤销。`)) return;
+    setErrorDetails(value => ({ ...value, clearing: true, error: "" }));
+    try {
+      const response = await fetch("/api/system/errors", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...current.filter, beforeId: current.beforeId, confirmed: true }),
+      });
+      if (!response.ok) throw new Error(response.status === 401 ? "请先登录后清空日志" : "清空错误日志失败");
+      setErrorDetails(value => value?.filter === current.filter ? { ...value, filter: { ...value.filter }, clearing: false } : value);
+      setRefreshTick(value => value + 1);
+    } catch (error) {
+      setErrorDetails(value => value?.filter === current.filter ? { ...value, clearing: false, error: error.message } : value);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -203,40 +250,48 @@ export default function SystemMetrics({ initialMetrics = null }) {
           <MetricCard icon="download" label="下行总流量" value={metrics ? formatBytes(metrics.traffic.downloadBytes) : "—"} detail="上游响应返回客户端的累计流量" tone="text-emerald-600" />
           <MetricCard icon="speed" label="下行实时速率" value={metrics ? `${formatBytes(metrics.traffic.downloadRateBytesPerSecond)}/s` : "—"} detail="最近 10 秒平均" tone="text-teal-600" />
           <MetricCard icon="trending_up" label="请求吞吐率" value={metrics ? `${metrics.requestStats.throughputPerMinute} req/min` : "—"} detail="5 min average" tone="text-blue-600" />
-          <MetricCard icon="check_circle" label="请求成功率" value={metrics ? <button type="button" onClick={() => showErrors()} className="cursor-pointer underline decoration-dotted underline-offset-4" aria-label="查看请求错误详情">{metrics.requestStats.successRatePercent}%</button> : "—"} detail={metrics ? `错误 ${metrics.requestStats.clientErrors + metrics.requestStats.serverErrors}` : "正在读取"} tone="text-emerald-600" />
+          <MetricCard icon="check_circle" label="请求成功率" value={metrics ? <button type="button" onClick={() => showErrors()} className="cursor-pointer underline decoration-dotted underline-offset-4" aria-label="查看请求错误详情">{metrics.requestStats.successRatePercent}%</button> : "—"} detail={metrics ? `错误 ${metrics.requestStats.errorCount ?? metrics.requestStats.clientErrors + metrics.requestStats.serverErrors}` : "正在读取"} tone="text-emerald-600" />
           <MetricCard icon="speed" label="实时输出速度" value={`${metrics?.traffic?.outputTokensPerSecond || 0} tokens/s`} detail="最近 10 秒流式输出估算" tone="text-amber-600" />
           <MetricCard icon="wifi" label="网络连接数" value={metrics?.networkConnections ?? "—"} detail="当前活动 Socket 连接" tone="text-cyan-600" />
         </div>
       </section>
 
       <Modal isOpen={errorDetails !== null} onClose={() => setErrorDetails(null)} title="请求异常详情" size="full">
-        <p className="mb-4 text-sm text-text-muted">打开时最近 5 分钟的记录，共 {errorDetails?.items.length || 0} 条。请求取消不计入错误和成功率。上游调用失败后仍可能通过重试成功。临时记录在服务重启后清空。</p>
+        <p className="mb-4 text-sm text-text-muted">日志已持久保存，重启后保留。包含重试过程中的错误，清空只影响当前筛选范围内的日志。</p>
         <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
           <label htmlFor="request-error-category" className="text-text-muted">筛选类型</label>
-          <select id="request-error-category" value={errorDetails?.category || ""} onChange={(event) => setErrorDetails((current) => ({ ...current, category: event.target.value }))} className="rounded-lg border border-border-subtle bg-surface px-3 py-2 text-text-main">
+          <select id="request-error-category" value={errorDetails?.filter?.category || ""} disabled={errorDetails?.clearing || errorDetails?.loading} onChange={(event) => setErrorDetails((current) => ({ ...current, filter: { ...current.filter, category: event.target.value }, items: [] }))} className="rounded-lg border border-border-subtle bg-surface px-3 py-2 text-text-main">
             <option value="">全部</option>
             <option value="client">客户端错误</option>
             <option value="server">服务端错误</option>
             <option value="cancelled">请求取消</option>
           </select>
-          <span className="text-text-muted">{filteredErrors.length} 条</span>
+          <span className="text-text-muted">已显示 {filteredErrors.length} / {errorDetails?.total || 0} 条</span>
+          <button type="button" onClick={clearErrors} disabled={errorDetails?.loading || errorDetails?.clearing || !errorDetails?.total} className="ml-auto rounded-lg border border-border-subtle px-3 py-2 text-red-600 disabled:opacity-50">{errorDetails?.clearing ? "正在清空…" : "清空日志"}</button>
         </div>
+        {errorDetails?.error && <p role="alert" className="mb-3 text-sm text-red-600">{errorDetails.error}</p>}
         {filteredErrors.length ? (
           <div className="space-y-3">
             {filteredErrors.map((item, index) => (
-              <details key={index} className="rounded-lg border border-border-subtle p-3">
+              <details key={item.id || index} className="rounded-lg border border-border-subtle p-3">
                 <summary className="cursor-pointer break-words text-sm text-text-main">
                   <span className={`mr-2 font-semibold ${item.category === "cancelled" ? "text-text-muted" : "text-red-600"}`}>{item.summary}</span>
                   {item.provider || "—"} / {item.model || "—"}
                   <span className="ml-2 text-text-muted">{new Date(item.timestamp).toLocaleString()}</span>
+                  {item.transient && <span className={`ml-2 font-medium ${item.recovered ? "text-emerald-600" : "text-amber-600"}`}>{item.recovered ? "已重试成功" : "尚未重试成功"}</span>}
                 </summary>
                 <p className="mt-3 text-xs text-text-muted">{item.account} · 状态码：{item.statusCode || item.status}</p>
                 {item.endpoint && <p className="mt-1 break-all text-xs text-text-muted">请求接口：{item.endpoint}</p>}
+                {item.transient && <p className="mt-1 text-xs text-text-muted">上游 HTTP：{item.upstreamStatus || "—"} · 排队重试 {item.retryCount} 次 · 流式尝试第 {item.sseAttempt} 次 · HTTP 尝试第 {item.attempt} 次</p>}
+                {item.requestId && <p className="mt-1 break-all text-xs text-text-muted">请求 ID：{item.requestId}</p>}
                 <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-bg p-3 text-xs text-text-main">{item.message || "该记录未保存错误原因，详情请查看对应时间的服务端容器日志。"}</pre>
+                {item.headers && Object.keys(item.headers).length > 0 && <pre className="mt-2 overflow-auto whitespace-pre-wrap break-words rounded-md bg-bg p-3 text-xs text-text-muted">{JSON.stringify(item.headers, null, 2)}</pre>}
               </details>
             ))}
           </div>
-        ) : <p className="py-6 text-center text-sm text-text-muted">最近 5 分钟没有此类错误记录。</p>}
+        ) : !errorDetails?.loading && !errorDetails?.error && <p className="py-6 text-center text-sm text-text-muted">当前筛选范围内没有错误日志。</p>}
+        {errorDetails?.loading && <p className="py-3 text-center text-sm text-text-muted">正在读取日志…</p>}
+        {errorDetails?.nextBeforeId != null && <button type="button" onClick={loadMoreErrors} disabled={errorDetails.loading || errorDetails.clearing} className="mt-4 w-full rounded-lg border border-border-subtle py-2 text-sm text-primary disabled:opacity-50">加载更多</button>}
       </Modal>
 
       <Card title="活跃请求" subtitle="按模型与提供商聚合的当前请求">
@@ -257,10 +312,9 @@ export default function SystemMetrics({ initialMetrics = null }) {
                     {request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}
                   </p>
                   <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted" title="本次服务启动后累计；同一请求的多次过载只计一次，响应成功完成后计入重试后成功。">
-                    <span>请求数 <span className="font-semibold tabular-nums text-text-main">{request.stats?.requests ?? 0}</span></span>
-                    <span>曾遇到过载 <span className="font-semibold tabular-nums text-amber-600">{request.stats?.overloaded ?? 0}</span></span>
+                    <span>累计请求 <span className="font-semibold tabular-nums text-text-main">{request.stats?.requests ?? 0}</span></span>
+                    <button type="button" onClick={() => showErrors(request)} className="cursor-pointer underline decoration-dotted underline-offset-4" aria-label={`查看 ${request.account} ${request.model} 的错误日志`}>曾遇到过载 <span className="font-semibold tabular-nums text-amber-600">{request.stats?.overloaded ?? 0}</span></button>
                     <span>重试后成功 <span className="font-semibold tabular-nums text-emerald-600">{request.stats?.recovered ?? 0}</span></span>
-                    <span>本次运行累计</span>
                   </p>
                   <details className="mt-2 text-xs text-text-muted">
                     <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count + request.queue.length} 个请求</summary>
