@@ -114,6 +114,33 @@ it("detects low and depleted quotas without alerting unlimited, unknown or alrea
   expect(balance[0].content).toContain("余额 0.5");
 });
 
+it("alerts on CodeBuddy only when all valid packs are low or depleted", () => {
+  const connection = { ...mocks.connection, provider: "codebuddy-cn" };
+  const usage = { quotas: { gift: { used: 10000, total: 10000 }, paid: { used: 10, total: 100 } } };
+  expect(getAccountAlerts(connection, usage, ALERT_DEFAULTS, now)).toEqual([]);
+  usage.quotas.paid.used = 95;
+  const low = getAccountAlerts(connection, usage, ALERT_DEFAULTS, now);
+  expect(low).toHaveLength(1);
+  expect(low[0].content).toContain("额度即将用尽");
+  expect(low[0].content).toContain("全部有效额度包");
+  usage.quotas.paid.used = 100;
+  expect(getAccountAlerts(connection, usage, ALERT_DEFAULTS, now)[0].content).toContain("额度已用尽");
+  usage.quotas.paid.used = 10;
+  const alerts = getAccountAlerts({ ...connection, accountExpiresAt: "2026-09-16" }, usage, ALERT_DEFAULTS, now);
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0].content).toContain("账号即将到期");
+});
+
+it("ignores expired CodeBuddy bonuses and never assumes stale or unknown packs are exhausted", () => {
+  const connection = { ...mocks.connection, provider: "codebuddy-cn" };
+  const depleted = { used: 100, total: 100 };
+  const oldBonus = { used: 0, total: 10000, recurring: false, resetAt: "2026-09-14" };
+  expect(getAccountAlerts(connection, { quotas: { depleted, oldBonus } }, ALERT_DEFAULTS, now)[0].content).toContain("额度已用尽");
+  for (const unknown of [{}, { used: 0, total: 0 }, { used: 100, total: 100, unlimited: true }, { ...depleted, recurring: true, resetAt: "2026-09-14" }]) {
+    expect(getAccountAlerts(connection, { quotas: { depleted, unknown } }, ALERT_DEFAULTS, now)).toEqual([]);
+  }
+});
+
 it("polls quota without a browser and stops when alerts are disabled", async () => {
   await checkAccountAlerts();
   await globalThis._wecomAlerts.pending;

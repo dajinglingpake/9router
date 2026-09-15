@@ -8,11 +8,26 @@ const state = globalThis._wecomAlertMonitor ||= { timer: null, running: false };
 const dateText = value => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
 const quotaNames = { session: "5 小时额度", weekly: "每周额度", review_session: "审查额度（5 小时）", review_weekly: "审查额度（每周）", spark_session: "Spark 额度（5 小时）", spark_weekly: "Spark 额度（每周）" };
 
+function codeBuddyAccountQuota(quotas, threshold, now) {
+  const packs = Object.values(quotas).filter(quota => !(quota?.recurring === false && quota.resetAt && new Date(quota.resetAt).getTime() <= now));
+  // Packages are alternate credit sources. Warn only when every usable pack is low.
+  // An expired recurring snapshot or unknown balance cannot establish exhaustion.
+  if (!packs.length || packs.some(quota => !quota || quota.unlimited ||
+    !Number.isFinite(quota.used) || quota.used < 0 || !Number.isFinite(quota.total) || quota.total <= 0 ||
+    (quota.resetAt && new Date(quota.resetAt).getTime() <= now) ||
+    (quota.total - quota.used) / quota.total * 100 > threshold)) return {};
+  const total = packs.reduce((sum, quota) => sum + quota.total, 0);
+  const remaining = packs.reduce((sum, quota) => sum + Math.max(0, quota.total - quota.used), 0);
+  return { "全部有效额度包": { used: total - remaining, total } };
+}
+
 export function getAccountAlerts(connection, usage, config, now = Date.now()) {
   const alerts = [];
   const account = `账号：${connection.name || connection.email || connection.id}\n提供商：${connection.provider}`;
   const low = [], empty = [];
-  for (const [name, quota] of Object.entries(usage?.quotas || {})) {
+  const quotas = connection.provider === "codebuddy-cn"
+    ? codeBuddyAccountQuota(usage?.quotas || {}, config.quotaPercent, now) : usage?.quotas || {};
+  for (const [name, quota] of Object.entries(quotas)) {
     if (!quota || (quota.resetAt && new Date(quota.resetAt).getTime() <= now)) continue;
     // DeepSeek reports current cash balance, not a percentage of purchased credit.
     if (connection.provider === "deepseek") {
