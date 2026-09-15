@@ -1,4 +1,4 @@
-const DEFAULT_QUEUE_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000;
 
 const pools = globalThis.__ninerouterConcurrencyPools || new Map();
 globalThis.__ninerouterConcurrencyPools = pools;
@@ -18,6 +18,7 @@ const QUEUE_METADATA_KEYS = [
   "targetFormat",
   "requestBytes",
   "stream",
+  "retryCount",
 ];
 
 function sanitizeMetadata(metadata) {

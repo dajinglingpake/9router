@@ -77,7 +77,7 @@ describe("strict session account routing", () => {
     pauseAccountQueue("a", Date.now() + 30000);
     await vi.advanceTimersByTimeAsync(10000);
     expect(getConcurrencySnapshot()[0]).toMatchObject({ active: 0, queued: 2, state: "cooldown", cooldownRemainingMs: 20000 });
-    expect(getConcurrencySnapshot()[0].queue[0]).toMatchObject({ state: "cooldown", cooldownRemainingMs: 20000, timeoutRemainingMs: 570000 });
+    expect(getConcurrencySnapshot()[0].queue[0]).toMatchObject({ state: "cooldown", cooldownRemainingMs: 20000, timeoutRemainingMs: 270000 });
     await vi.advanceTimersByTimeAsync(20000);
     const permit = await first;
     expect(secondReady).toBe(false);
@@ -87,17 +87,18 @@ describe("strict session account routing", () => {
     permit.release();
   });
 
-  it("returns 503 only after ten minutes of repeated overload without resetting the deadline", async () => {
+  it("returns 503 only after five minutes of repeated overload without resetting the deadline", async () => {
     vi.useFakeTimers();
-    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "600000");
+    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "300000");
     state.handleChatCore.mockImplementation(async () => ({ success: false, status: 503, error: "overloaded", response: new Response("overloaded", { status: 503 }) }));
     const pending = handleChat(request("keeps-waiting"));
     await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
-    await vi.advanceTimersByTimeAsync(600000);
+    await vi.advanceTimersByTimeAsync(300000);
     const response = await pending;
     expect(response.status).toBe(503);
     expect(await response.text()).toMatch(/timed out|超时/);
-    expect(state.handleChatCore).toHaveBeenCalledTimes(20);
+    expect(state.handleChatCore).toHaveBeenCalledTimes(10);
+    expect(state.handleChatCore.mock.calls.map(([args]) => args.retryCount)).toEqual(Array.from({ length: 10 }, (_, i) => i));
     expect(state.handleChatCore.mock.calls.every(([args]) => args.connectionId === "a")).toBe(true);
     expect(getConcurrencySnapshot().every(p => p.queued === 0)).toBe(true);
   });
@@ -115,13 +116,13 @@ describe("strict session account routing", () => {
 
   it("returns 503 when the shared deadline expires during an upstream attempt", async () => {
     vi.useFakeTimers();
-    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "600000");
+    vi.stubEnv("CONCURRENCY_QUEUE_TIMEOUT_MS", "300000");
     state.handleChatCore.mockImplementation(({ clientAbortSignal }) => new Promise(resolve => {
       clientAbortSignal.addEventListener("abort", () => resolve({ success: false, status: 499, response: new Response("aborted", { status: 499 }) }), { once: true });
     }));
     const pending = handleChat(request("stalled"));
     await vi.waitFor(() => expect(state.handleChatCore).toHaveBeenCalledTimes(1));
-    await vi.advanceTimersByTimeAsync(600000);
+    await vi.advanceTimersByTimeAsync(300000);
     expect((await pending).status).toBe(503);
     expect(getConcurrencySnapshot()).toEqual([]);
   });
@@ -198,6 +199,7 @@ describe("strict session account routing", () => {
     state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "Our servers are currently overloaded", response: new Response("overloaded", { status: 503 }) });
     const pending = handleChat(request("overloaded-old"));
     await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
+    expect(getConcurrencySnapshot().find(p => p.id === "a").queue[0].retryCount).toBe(1);
     const remaining = new Date(state.connections[0].modelLock___all).getTime() - Date.now();
     expect(remaining).toBeGreaterThan(29000);
     expect(remaining).toBeLessThanOrEqual(30000);
