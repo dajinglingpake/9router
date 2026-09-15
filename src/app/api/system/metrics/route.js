@@ -1,7 +1,8 @@
 import os from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { NextResponse } from "next/server";
-import { getActiveRequests, getUsageHistory, getRuntimeRequestErrors } from "@/lib/usageDb.js";
+import { getActiveRequests, getRuntimeRequestErrors } from "@/lib/usageDb.js";
+import { getRecentUsageOutcomes } from "@/lib/db/repos/usageRepo.js";
 import fs from "node:fs/promises";
 import { getTrafficSnapshot } from "@/lib/runtimeTraffic.js";
 import { getConcurrencySnapshot } from "@/sse/services/concurrencyLimiter.js";
@@ -62,7 +63,7 @@ function getCpuMetrics() {
 
 export async function getSystemMetrics() {
   const active = await getActiveRequests();
-  const history = await getUsageHistory({ startDate: new Date(Date.now() - 5 * 60 * 1000).toISOString() });
+  const history = await getRecentUsageOutcomes(new Date(Date.now() - 5 * 60 * 1000).toISOString());
   const activeRequests = active.activeRequests || [];
   const rawConcurrency = getConcurrencySnapshot();
   const accountConcurrency = rawConcurrency

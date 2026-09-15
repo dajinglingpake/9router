@@ -82,8 +82,8 @@ function QueuedRequestDetails({ queue = [], startIndex = 0 }) {
   return queue.map((item, index) => <RequestDetails key={item.requestId || item.position} item={item} index={startIndex + index} waiting />);
 }
 
-export default function SystemMetrics({ initialMetrics = null }) {
-  const [metrics, setMetrics] = useState(initialMetrics);
+export default function SystemMetrics() {
+  const [metrics, setMetrics] = useState(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -147,12 +147,17 @@ export default function SystemMetrics({ initialMetrics = null }) {
 
   useEffect(() => {
     let active = true;
+    let inFlight = false;
+    const controller = new AbortController();
     let retryTimer = null;
     let quickRetryDone = false;
     const load = async () => {
+      if (!active || inFlight) return;
+      inFlight = true;
       if (active) setRefreshing(true);
       try {
-        const response = await fetch("/api/system/metrics", { cache: "no-store" });
+        const response = await fetch("/api/system/metrics", { cache: "no-store", signal: controller.signal });
+        if (!active) return;
         if (response.status === 401) {
           await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
           window.location.assign("/login");
@@ -172,12 +177,13 @@ export default function SystemMetrics({ initialMetrics = null }) {
           }
         }
       } finally {
+        inFlight = false;
         if (active) setRefreshing(false);
       }
     };
     load();
     const timer = autoRefresh ? setInterval(load, 3000) : null;
-    return () => { active = false; if (timer) clearInterval(timer); if (retryTimer) clearTimeout(retryTimer); };
+    return () => { active = false; controller.abort(); if (timer) clearInterval(timer); if (retryTimer) clearTimeout(retryTimer); };
   }, [refreshTick, autoRefresh]);
 
   const memoryPercent = useMemo(() => {

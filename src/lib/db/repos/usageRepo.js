@@ -406,6 +406,16 @@ export async function saveRequestUsage(entry) {
   }
 }
 
+// Runtime metrics need only recent outcomes. Ordering by the time index avoids a
+// full table scan caused by ORDER BY id on a large history with a time filter.
+export async function getRecentUsageOutcomes(startDate) {
+  const db = await getAdapter();
+  return db.all(
+    `SELECT timestamp, provider, model, connectionId, status FROM usageHistory WHERE timestamp >= ? ORDER BY timestamp ASC`,
+    [new Date(startDate).toISOString()],
+  );
+}
+
 export async function getUsageHistory(filter = {}) {
   const db = await getAdapter();
   const conds = [];

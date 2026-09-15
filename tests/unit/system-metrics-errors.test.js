@@ -7,14 +7,16 @@ vi.mock("../../src/lib/db/repos/requestErrorsRepo.js", () => ({
 
 vi.mock("@/lib/usageDb.js", () => ({
   getActiveRequests: async () => ({ activeRequests: [] }),
-  getUsageHistory: async () => [
-    { timestamp: "2026-09-14T08:00:00Z", status: "200 OK" },
-    { timestamp: "2026-09-14T08:00:01Z", status: "FAILED 429" },
-  ],
   getRuntimeRequestErrors: () => [
     { timestamp: Date.parse("2026-09-14T08:00:02Z"), status: "FAILED 503", message: "overloaded", model: "test-model", connectionId: "account-1", provider: "codex", requestId: "outer-503", retryCount: 1 },
     { timestamp: Date.parse("2026-09-14T07:59:58Z"), status: "FAILED 401", source: "client", message: "Invalid API key" },
     { timestamp: Date.parse("2026-09-14T07:59:59Z"), status: "FAILED 499" },
+  ],
+}));
+vi.mock("@/lib/db/repos/usageRepo.js", () => ({
+  getRecentUsageOutcomes: async () => [
+    { timestamp: "2026-09-14T08:00:00Z", status: "200 OK" },
+    { timestamp: "2026-09-14T08:00:01Z", status: "FAILED 429" },
   ],
 }));
 vi.mock("@/lib/runtimeTraffic.js", () => ({ getTrafficSnapshot: () => ({}) }));
