@@ -12,6 +12,7 @@ const QUEUE_METADATA_KEYS = [
   "clientIp",
   "endpoint",
   "requestedModel",
+  "routingModel",
   "upstreamModel",
   "thinkingLevel",
   "sourceFormat",
@@ -35,6 +36,7 @@ function sanitizeMetadata(metadata) {
 
 function displayMetadata(metadata) {
   const safe = metadata ? { ...metadata } : {};
+  if (safe.providerScope) safe.provider = safe.providerScope;
   delete safe.providerScope;
   return safe;
 }

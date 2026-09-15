@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Card from "@/shared/components/Card";
 import Modal from "@/shared/components/Modal";
+import { groupActiveRequests } from "@/lib/activeRequestGroups";
 
 const formatBytes = (bytes = 0) => {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -141,12 +142,12 @@ export default function SystemMetrics({ initialMetrics = null }) {
   const processMemoryPercent = metrics?.memory?.systemTotal
     ? Math.round((processMemory / metrics.memory.systemTotal) * 1000) / 10
     : 0;
-  const activeRequests = metrics?.activeRequests || [];
   const concurrencyLimits = metrics?.concurrencyLimits || [];
-  const queuedLimits = concurrencyLimits.filter((item) => item.queued > 0);
+  const activeRequests = groupActiveRequests(metrics?.activeRequests || [], concurrencyLimits);
+  const queuedLimits = concurrencyLimits.filter((item) => item.scope !== "account" && item.queued > 0);
   const runningLimits = concurrencyLimits.filter((item) => item.active > 0);
   const representedLimitKeys = new Set(activeRequests.flatMap((request) => {
-    const limit = concurrencyLimits.find((item) => item.scope === "account" && item.label === `账号: ${request.account}`);
+    const limit = request.limit;
     return limit ? [`${limit.scope}:${limit.id}`] : [];
   }));
 
@@ -245,27 +246,27 @@ export default function SystemMetrics({ initialMetrics = null }) {
           <div className="divide-y divide-border-subtle">
             {activeRequests.map((request) => (
               (() => {
-                const limit = concurrencyLimits.find((item) => item.scope === "account" && item.label === `账号: ${request.account}`);
+                const limit = request.limit;
                 return (
-              <div key={`${request.model}-${request.provider}-${request.account}`} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+              <div key={`${request.model}-${request.provider}-${request.connectionId || request.account}`} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-text-main">{request.model}</p>
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
                   {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
                   <p className="mt-1 text-xs text-text-muted">
-                    当前延迟：{formatLatency(request.latencyMs)}
+                    {request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}
                   </p>
                   <details className="mt-2 text-xs text-text-muted">
-                    <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count + (limit?.queue?.length || 0)} 个请求</summary>
+                    <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count + request.queue.length} 个请求</summary>
                     <div className="mt-2 space-y-2 rounded-lg bg-bg/70 p-3">
                       {(request.requests || []).map((item, index) => (
                         <RequestDetails key={item.id} item={{ ...item, upstreamModel: item.upstreamModel || request.model }} index={index} />
                       ))}
-                      <QueuedRequestDetails queue={limit?.queue} startIndex={request.count} />
+                      <QueuedRequestDetails queue={request.queue} startIndex={request.count} />
                     </div>
                   </details>
                 </div>
-                <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{request.count} 个请求</span>
+                <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{request.count + request.queue.length} 个请求</span>
               </div>
                 );
               })()

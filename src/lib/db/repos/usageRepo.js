@@ -266,6 +266,7 @@ export async function getActiveRequests() {
         const accountName = connectionMap[connectionId] || `Account ${connectionId.slice(0, 8)}...`;
         const match = modelKey.match(/^(.*) \((.*)\)$/);
         activeRequests.push({
+          connectionId,
           model: match ? match[1] : modelKey,
           provider: match ? match[2] : "unknown",
           account: accountName,

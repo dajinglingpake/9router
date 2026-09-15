@@ -92,6 +92,7 @@ function buildConcurrencyMetadata({ body, clientRawRequest, request, provider, m
     clientIp: clientRawRequest?.clientIp || extractClientIp(request),
     endpoint,
     requestedModel,
+    routingModel: model,
     upstreamModel: model ? getModelUpstreamId(alias, model) : null,
     thinkingLevel,
     sourceFormat,
