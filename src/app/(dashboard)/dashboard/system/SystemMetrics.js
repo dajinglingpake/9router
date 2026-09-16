@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Card from "@/shared/components/Card";
 import Modal from "@/shared/components/Modal";
-import { groupActiveRequests } from "@/lib/activeRequestGroups";
+import { groupActiveRequests, retainGroupSnapshots, GROUP_SNAPSHOT_RETENTION_MS } from "@/lib/activeRequestGroups";
 
 const formatBytes = (bytes = 0) => {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -98,11 +98,28 @@ function QueuedRequestDetails({ queue = [], startIndex = 0 }) {
 
 export default function SystemMetrics() {
   const [metrics, setMetrics] = useState(null);
+  const [displayGroups, setDisplayGroups] = useState([]);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [errorDetails, setErrorDetails] = useState(null);
+
+  useEffect(() => {
+    if (!metrics) return;
+    const groups = groupActiveRequests(metrics.activeRequests || [], metrics.concurrencyLimits || [], metrics.modelRequestStats || [], metrics.traffic?.outputGroups || []);
+    setDisplayGroups(previous => retainGroupSnapshots(previous, groups));
+  }, [metrics]);
+
+  useEffect(() => {
+    const finished = displayGroups.filter(group => group.snapshotRetainedAt != null);
+    if (!finished.length) return;
+    const expiresAt = Math.min(...finished.map(group => group.snapshotRetainedAt + GROUP_SNAPSHOT_RETENTION_MS));
+    const timer = setTimeout(() => {
+      setDisplayGroups(previous => previous.filter(group => group.snapshotRetainedAt == null || Date.now() - group.snapshotRetainedAt < GROUP_SNAPSHOT_RETENTION_MS));
+    }, Math.max(0, expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [displayGroups]);
 
   const showErrors = (request = null) => {
     setErrorDetails({
@@ -210,10 +227,10 @@ export default function SystemMetrics() {
     ? Math.round((processMemory / metrics.memory.systemTotal) * 1000) / 10
     : 0;
   const concurrencyLimits = metrics?.concurrencyLimits || [];
-  const activeRequests = groupActiveRequests(metrics?.activeRequests || [], concurrencyLimits, metrics?.modelRequestStats || [], metrics?.traffic?.outputGroups || []);
+  const activeRequests = displayGroups;
   const queuedLimits = concurrencyLimits.filter((item) => item.scope !== "account" && item.queued > 0);
   const runningLimits = concurrencyLimits.filter((item) => item.active > 0);
-  const representedLimitKeys = new Set(activeRequests.flatMap((request) => {
+  const representedLimitKeys = new Set(activeRequests.filter(group => group.snapshotRetainedAt == null).flatMap((request) => {
     const limit = request.limit;
     return limit ? [`${limit.scope}:${limit.id}`] : [];
   }));
@@ -330,7 +347,7 @@ export default function SystemMetrics() {
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
                   {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
                   <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted">
-                    <span>{request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}</span>
+                    <span>{request.snapshotRetainedAt != null ? `最后延迟：${formatLatency(request.latencyMs)}` : request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}</span>
                     <span className="tabular-nums" title="流式输出估算，与顶部总速率口径一致">输出速度：{request.outputTokensPerSecond} tokens/s</span>
                   </p>
                   <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted" title="本次服务启动后累计；同一请求的多次过载只计一次，响应成功完成后计入重试后成功。">
@@ -338,7 +355,7 @@ export default function SystemMetrics() {
                     <button type="button" onClick={() => showErrors(request)} className="cursor-pointer underline decoration-dotted underline-offset-4" aria-label={`查看 ${request.account} ${request.model} 的错误日志`}>曾遇到过载 <span className="font-semibold tabular-nums text-amber-600">{request.stats?.overloaded ?? 0}</span></button>
                     <span>重试后成功 <span className="font-semibold tabular-nums text-emerald-600">{request.stats?.recovered ?? 0}</span></span>
                   </p>
-                  <details className="mt-2 text-xs text-text-muted">
+                  {request.count + request.queue.length > 0 && <details className="mt-2 text-xs text-text-muted">
                     <summary className="cursor-pointer select-none text-primary hover:underline">展开 {request.count + request.queue.length} 个请求</summary>
                     <div className="mt-2 space-y-2 rounded-lg bg-bg/70 p-3">
                       {(request.requests || []).map((item, index) => (
@@ -346,7 +363,7 @@ export default function SystemMetrics() {
                       ))}
                       <QueuedRequestDetails queue={request.queue} startIndex={request.count} />
                     </div>
-                  </details>
+                  </details>}
                 </div>
                 <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold tabular-nums text-primary">{request.count + request.queue.length} 个请求</span>
               </div>

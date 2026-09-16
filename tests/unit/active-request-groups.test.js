@@ -50,3 +50,14 @@ it("groups each queued-only model once and leaves API key queues separate", () =
   ]);
   expect(groups.map(group => [group.model, group.queue.length])).toEqual([["one", 2], ["two", 1]]);
 });
+
+it("retains group metrics for five seconds with no active requests and without extending expiry", async () => {
+  const { retainGroupSnapshots } = await import("../../src/lib/activeRequestGroups.js");
+  const live = { connectionId: "a", provider: "codex", model: "sol", count: 2,
+    requests: [{ id: "request" }], queue: [{ requestId: "queued" }], limit: { active: 2 }, outputTokensPerSecond: 42 };
+  const finished = retainGroupSnapshots([live], [], 1000);
+  expect(finished[0]).toEqual({ ...live, snapshotRetainedAt: 1000, count: 0, requests: [], queue: [], limit: null });
+  expect(retainGroupSnapshots(finished, [], 5999)).toEqual(finished);
+  expect(retainGroupSnapshots(finished, [], 6000)).toEqual([]);
+  expect(retainGroupSnapshots(finished, [live], 2000)).toEqual([live]);
+});

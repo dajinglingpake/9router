@@ -1,4 +1,18 @@
 // Match by account identity and routed model, never by account alone.
+export const GROUP_SNAPSHOT_RETENTION_MS = 5_000;
+
+export function retainGroupSnapshots(previous, current, now = Date.now()) {
+  const key = group => JSON.stringify([group.connectionId, group.provider, group.model]);
+  const liveKeys = new Set(current.map(key));
+  return [...current, ...previous.filter(group => !liveKeys.has(key(group)))
+    .map(group => ({
+      ...group,
+      snapshotRetainedAt: group.snapshotRetainedAt ?? now,
+      count: 0, requests: [], queue: [], limit: null,
+    }))
+    .filter(group => now - group.snapshotRetainedAt < GROUP_SNAPSHOT_RETENTION_MS)];
+}
+
 export function groupActiveRequests(active = [], limits = [], stats = [], outputGroups = []) {
   const groups = active.map(request => ({
     ...request,
