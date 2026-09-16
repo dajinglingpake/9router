@@ -12,7 +12,7 @@ const OPTIONAL_FIELDS = [
 
 const MODEL_LOCK_PREFIX = "modelLock_";
 
-function resetHealthStateOnActivation(existing, patch) {
+function resetHealthStateOnActivation(existing, patch, resetHealthState = true) {
   if (patch?.testStatus !== "active") return patch;
 
   const normalized = {
@@ -24,6 +24,21 @@ function resetHealthStateOnActivation(existing, patch) {
     rateLimitedUntil: null,
     backoffLevel: 0,
   };
+
+  if (!resetHealthState) {
+    // Scoped unlocks must inspect the current row inside the transaction: a
+    // different request may have locked another model or the whole account.
+    const merged = { ...existing, ...patch };
+    const hasActiveLocks = Object.entries(merged).some(([key, value]) =>
+      key.startsWith(MODEL_LOCK_PREFIX) && new Date(value).getTime() > Date.now()
+    );
+    if (hasActiveLocks) {
+      for (const key of ["testStatus", "lastError", "lastErrorAt", "errorCode", "rateLimitedUntil", "backoffLevel"]) {
+        delete normalized[key];
+      }
+    }
+    return normalized;
+  }
 
   for (const key of Object.keys(existing || {})) {
     if (key.startsWith(MODEL_LOCK_PREFIX)) normalized[key] = null;
@@ -212,14 +227,19 @@ export async function createProviderConnection(data) {
 }
 
 // Critical: OAuth refresh token race — atomic merge inside transaction
-export async function updateProviderConnection(id, data) {
+export async function updateProviderConnection(id, data, { resetHealthState = true, expectedModelLocks = {} } = {}) {
   const db = await getAdapter();
   let result;
   db.transaction(() => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
-    const normalized = resetHealthStateOnActivation(existing, data);
+    const patch = { ...data };
+    // Runtime success must not clear a lock renewed since it read the account.
+    for (const [key, expected] of Object.entries(expectedModelLocks)) {
+      if (key.startsWith(MODEL_LOCK_PREFIX) && existing[key] !== expected) delete patch[key];
+    }
+    const normalized = resetHealthStateOnActivation(existing, patch, resetHealthState);
     const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);

@@ -88,7 +88,7 @@ export async function POST(request) {
                   backoffLevel: 0,
                 }
               : {}),
-          }),
+          }, { resetHealthState: false }),
         ),
     );
 

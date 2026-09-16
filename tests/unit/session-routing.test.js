@@ -274,6 +274,10 @@ describe("strict session account routing", () => {
     vi.useFakeTimers();
     const staleCredentials = { ...state.connections[0] };
     state.connections[0]["modelLock_other-model"] = new Date(Date.now() - 1000).toISOString();
+    state.handleChatCore.mockImplementation(async ({ onRequestSuccess }) => {
+      await onRequestSuccess();
+      return { success: true, response: new Response("ok") };
+    });
     state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "Our servers are currently overloaded", response: new Response("overloaded", { status: 503 }) });
     const pending = handleChat(request("overloaded-old"));
     await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
@@ -294,6 +298,8 @@ describe("strict session account routing", () => {
     expect((await pending).status).toBe(200);
     expect((await blocked).status).toBe(200);
     expect(state.handleChatCore.mock.calls[2][0].connectionId).toBe("a");
+    expect(state.connections[0]).toMatchObject({ modelLock___all: null, testStatus: "active", errorCode: null });
+    expect(state.handleChatCore.mock.calls[3][0]).toMatchObject({ connectionId: "a", modelInfo: { model: "other-model" } });
   });
 
   it("returns a quota error without fallback; old sessions stay blocked and new sessions use B", async () => {

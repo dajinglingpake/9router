@@ -323,8 +323,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 }
 
 /**
- * Mark account+model as unavailable — locks modelLock_${model} in DB.
- * All errors (429, 401, 5xx, etc.) lock per model, not per account.
+ * Mark an account/model as unavailable. Overload and GitHub monthly quota
+ * lock the whole account; other errors lock the affected model.
  * @param {string} connectionId
  * @param {number} status - HTTP status code from upstream
  * @param {string} errorText
@@ -387,7 +387,8 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 /**
  * Clear account error status on successful request.
  * - Clears modelLock_${model} (the model that just succeeded)
- * - Lazy-cleans any other expired modelLock_* keys
+ * - Clears expired locks, including the account-wide overload lock
+ * - Preserves newer account cooldowns started by other in-flight requests
  * - Resets error state only if no active locks remain
  * @param {string} connectionId
  * @param {object} currentConnection - credentials object (has _connection) or raw connection
@@ -432,7 +433,10 @@ export async function clearAccountError(connectionId, currentConnection, model =
     });
   }
 
-  await updateProviderConnection(connectionId, clearObj);
+  await updateProviderConnection(connectionId, clearObj, {
+    resetHealthState: false,
+    expectedModelLocks: Object.fromEntries(keysToClear.map(key => [key, conn[key]])),
+  });
 }
 
 /**
