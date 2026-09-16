@@ -100,7 +100,7 @@ export function createSSEStream(options = {}) {
   let streamFailed = false;
   let responsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
   let responsesCompleted = false;
-  const outputStreamId = beginOutputStream();
+  const outputStreamId = beginOutputStream({ connectionId, provider, model });
 
   // A 200 response or EOF is not proof that a Responses request completed.
   const observeOutcome = (parsed, eventName = null) => {

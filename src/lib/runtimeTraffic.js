@@ -60,9 +60,9 @@ export function recordOutputChunk(value, streamId) {
   }
 }
 
-export function beginOutputStream() {
+export function beginOutputStream({ connectionId = null, provider = null, model = null } = {}) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  state.outputStreams.set(id, { tokens: 0, firstAt: null, lastAt: null });
+  state.outputStreams.set(id, { tokens: 0, firstAt: null, lastAt: null, connectionId, provider, model });
   return id;
 }
 export function endOutputStream(id) {
@@ -77,6 +77,7 @@ export function getTrafficSnapshot() {
   const uploadWindow = state.samples.reduce((sum, sample) => sum + sample.uploadBytes, 0);
   const downloadWindow = state.samples.reduce((sum, sample) => sum + sample.downloadBytes, 0);
   let outputTokensPerSecond = 0;
+  const outputGroups = new Map();
   for (const [id, stream] of state.outputStreams) {
     if (stream.endedAt && now - stream.endedAt > 10_000) {
       state.outputStreams.delete(id);
@@ -84,7 +85,13 @@ export function getTrafficSnapshot() {
     }
     if (stream.firstAt && stream.tokens > 0) {
       const elapsedMs = Math.max(1000, (stream.endedAt || now) - stream.firstAt);
-      outputTokensPerSecond += stream.tokens / (elapsedMs / 1000);
+      const rate = stream.tokens / (elapsedMs / 1000);
+      outputTokensPerSecond += rate;
+      const { connectionId, provider, model } = stream;
+      const key = JSON.stringify([connectionId, provider, model]);
+      const group = outputGroups.get(key) || { connectionId, provider, model, outputTokensPerSecond: 0 };
+      group.outputTokensPerSecond += rate;
+      outputGroups.set(key, group);
     }
   }
   return {
@@ -93,6 +100,9 @@ export function getTrafficSnapshot() {
     uploadRateBytesPerSecond: Math.round(uploadWindow / 10),
     downloadRateBytesPerSecond: Math.round(downloadWindow / 10),
     outputTokensPerSecond: Math.round(outputTokensPerSecond * 10) / 10,
+    outputGroups: [...outputGroups.values()].map(group => ({
+      ...group, outputTokensPerSecond: Math.round(group.outputTokensPerSecond * 10) / 10,
+    })),
   };
 }
 

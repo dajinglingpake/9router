@@ -210,7 +210,7 @@ export default function SystemMetrics() {
     ? Math.round((processMemory / metrics.memory.systemTotal) * 1000) / 10
     : 0;
   const concurrencyLimits = metrics?.concurrencyLimits || [];
-  const activeRequests = groupActiveRequests(metrics?.activeRequests || [], concurrencyLimits, metrics?.modelRequestStats || []);
+  const activeRequests = groupActiveRequests(metrics?.activeRequests || [], concurrencyLimits, metrics?.modelRequestStats || [], metrics?.traffic?.outputGroups || []);
   const queuedLimits = concurrencyLimits.filter((item) => item.scope !== "account" && item.queued > 0);
   const runningLimits = concurrencyLimits.filter((item) => item.active > 0);
   const representedLimitKeys = new Set(activeRequests.flatMap((request) => {
@@ -329,8 +329,9 @@ export default function SystemMetrics() {
                   <p className="truncate text-sm font-medium text-text-main">{request.model}</p>
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
                   {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
-                  <p className="mt-1 text-xs text-text-muted">
-                    {request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}
+                  <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted">
+                    <span>{request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}</span>
+                    <span className="tabular-nums" title="流式输出估算，与顶部总速率口径一致">输出速度：{request.outputTokensPerSecond} tokens/s</span>
                   </p>
                   <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted" title="本次服务启动后累计；同一请求的多次过载只计一次，响应成功完成后计入重试后成功。">
                     <span>累计请求 <span className="font-semibold tabular-nums text-text-main">{request.stats?.requests ?? 0}</span></span>
