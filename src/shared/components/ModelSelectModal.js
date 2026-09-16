@@ -65,6 +65,7 @@ export default function ModelSelectModal({
   addedModelValues = [],
   closeOnSelect = true,
   comboContext = null,
+  providerFilter = null,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -233,6 +234,7 @@ export default function ModelSelectModal({
     });
 
     sortedProviderIds.forEach((providerId) => {
+      if (providerFilter && providerId !== providerFilter) return;
       const alias = getProviderAlias(providerId);
       const providerInfo = allProviders[providerId] || { name: providerId, color: "#666" };
       const isCustomProvider = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
@@ -426,15 +428,15 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, cursorModels]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders, cursorModels, providerFilter]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
-    if (kindFilter || capFilter) return [];
+    if (kindFilter || capFilter || providerFilter) return [];
     if (!searchQuery.trim()) return combos;
     const query = searchQuery.toLowerCase();
     return combos.filter(c => c.name.toLowerCase().includes(query));
-  }, [combos, searchQuery, kindFilter]);
+  }, [combos, searchQuery, kindFilter, capFilter, providerFilter]);
 
   const circularComboNames = getCircularComboNames(combos, comboContext);
 
@@ -660,6 +662,7 @@ ModelSelectModal.propTypes = {
   onSelect: PropTypes.func.isRequired,
   onDeselect: PropTypes.func,
   selectedModel: PropTypes.string,
+  providerFilter: PropTypes.string,
   activeProviders: PropTypes.arrayOf(
     PropTypes.shape({
       provider: PropTypes.string.isRequired,

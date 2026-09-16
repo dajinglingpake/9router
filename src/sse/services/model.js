@@ -95,3 +95,18 @@ export async function getComboModels(modelStr) {
   }
   return null;
 }
+
+// Outer combos override nested defaults; only models executable by the selected
+// provider are eligible. Account selection still owns session affinity.
+export async function getComboAccountModels(comboNames, provider) {
+  const modelByConnection = {};
+  for (const name of [...comboNames].reverse()) {
+    const combo = await getComboByName(name.startsWith("cc/") ? name.slice(3) : name);
+    for (const [connectionId, models] of Object.entries(combo?.accountOverrides || {})) {
+      if (!Array.isArray(models) || typeof models[0] !== "string") continue;
+      const target = await getModelInfo(models[0]);
+      if (target.provider === provider && target.model) modelByConnection[connectionId] = target.model;
+    }
+  }
+  return modelByConnection;
+}

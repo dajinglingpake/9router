@@ -324,6 +324,13 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
                 <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
               )}
             </div>
+            {Object.entries(combo.accountOverrides || {}).map(([id, models]) => {
+              const account = activeProviders.find(p => p.id === id);
+              if (!account) return null;
+              return <p key={id} className="mt-1 break-all text-xs text-text-muted" data-i18n-skip>
+                {account.email || account.name || id}：{models[0]}（账号定制）
+              </p>;
+            })}
             {/* Fusion: judge picker (Auto = first model) */}
             {isFusion && (
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -653,7 +660,20 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
 function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null }) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
-  const [models, setModels] = useState(combo?.models || []);
+  const [commonModels, setCommonModels] = useState(combo?.models || []);
+  const [scope, setScope] = useState("common");
+  const [accountOverrides, setAccountOverrides] = useState(() => Object.fromEntries(
+    Object.entries(combo?.accountOverrides || {}).filter(([id]) => activeProviders.some(p => p.id === id))
+  ));
+  const account = activeProviders.find(p => p.id === scope);
+  const customized = !!account && Object.hasOwn(accountOverrides, scope);
+  const inherited = !!account && !customized;
+  const models = customized ? accountOverrides[scope] : commonModels;
+  const setModels = (update) => {
+    const next = typeof update === "function" ? update(models) : update;
+    if (account) setAccountOverrides(prev => ({ ...prev, [scope]: next }));
+    else setCommonModels(next);
+  };
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -744,7 +764,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models });
+    await onSave({ name: name.trim(), models: commonModels, ...(combo ? { accountOverrides } : {}) });
     setSaving(false);
   };
 
@@ -757,29 +777,63 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         onClose={onClose}
         title={isEdit ? "Edit Combo" : "Create Combo"}
       >
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" data-i18n-skip>
+          {isEdit && (
+            <>
+              <Select
+                label="配置范围"
+                aria-label="配置范围"
+                value={scope}
+                onChange={e => setScope(e.target.value)}
+                options={[
+                  { value: "common", label: "通用配置" },
+                  ...activeProviders.map(p => ({ value: p.id, label: `${p.provider} · ${p.email || p.name || p.id}${accountOverrides[p.id] ? "（已定制）" : ""}` })),
+                ]}
+              />
+              {account && (
+                <Toggle
+                  checked={customized}
+                  label="单独配置模型"
+                  description="仅路由到此账号时生效，关闭后使用通用配置。"
+                  onChange={enabled => setAccountOverrides(prev => {
+                    const next = { ...prev };
+                    if (enabled) next[scope] = [];
+                    else delete next[scope];
+                    return next;
+                  })}
+                />
+              )}
+            </>
+          )}
           {/* Name */}
           <div>
             <Input
-              label="Combo Name"
+              label="组合名称"
+              disabled={!!account}
               value={name}
               onChange={handleNameChange}
               placeholder="my-combo"
               error={nameError}
             />
             <p className="text-[10px] text-text-muted mt-0.5">
-              Only letters, numbers, -, _ and . allowed
+              支持字母、数字、-、_ 和 .
             </p>
           </div>
 
           {/* Models */}
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Models</label>
+          {inherited ? (
+            <div className="text-sm text-text-muted">
+              <p className="mb-1">使用通用配置</p>
+              <p className="break-all font-mono">{commonModels.join(" → ") || "未配置模型"}</p>
+            </div>
+          ) : <div>
+            <label className="text-sm font-medium mb-1.5 block">{account ? "账号模型" : "通用模型"}</label>
+            <p className="mb-2 text-xs text-text-muted">当前请求使用列表中的第一个模型。</p>
 
             {models.length === 0 ? (
               <div className="text-center py-4 border border-dashed border-black/10 dark:border-white/10 rounded-lg bg-black/[0.01] dark:bg-white/[0.01]">
                 <span className="material-symbols-outlined text-text-muted text-xl mb-1">layers</span>
-                <p className="text-xs text-text-muted">No models added yet</p>
+                <p className="text-xs text-text-muted">尚未添加模型</p>
               </div>
             ) : (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
@@ -787,7 +841,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
                 <div className="flex max-h-[55vh] min-w-0 flex-col gap-1 overflow-y-auto sm:max-h-[350px]">
                   {modelItems.map(({ uid, model }, index) => (
                     <ModelItem
-                      key={uid}
+                      key={`${scope}-${uid}-${model}`}
                       id={uid}
                       index={index}
                       model={model}
@@ -814,22 +868,22 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               className="w-full mt-2 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-primary font-medium hover:text-primary hover:border-primary/50 transition-colors flex items-center justify-center gap-1"
             >
               <span className="material-symbols-outlined text-[16px]">add</span>
-              Add Model
+              添加模型
             </button>
-          </div>
+          </div>}
 
           {/* Actions */}
           <div className="flex flex-col gap-2 pt-1 sm:flex-row">
             <Button onClick={onClose} variant="ghost" fullWidth size="sm">
-              Cancel
+              取消
             </Button>
             <Button
               onClick={handleSave}
               fullWidth
               size="sm"
-              disabled={!name.trim() || !!nameError || saving}
+              disabled={!name.trim() || !!nameError || saving || Object.values(accountOverrides).some(list => !list.length)}
             >
-              {saving ? "Saving..." : isEdit ? "Save" : "Create"}
+              {saving ? "保存中..." : isEdit ? "保存" : "创建"}
             </Button>
           </div>
         </div>
@@ -842,7 +896,8 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
           onClose={() => setShowModelSelect(false)}
           onSelect={handleAddModel}
           onDeselect={handleDeselectModel}
-          activeProviders={activeProviders}
+          activeProviders={account ? [account] : activeProviders}
+          providerFilter={account?.provider || null}
           modelAliases={modelAliases}
           title="Add Model to Combo"
           kindFilter={kindFilter}

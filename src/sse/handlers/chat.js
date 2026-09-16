@@ -13,7 +13,7 @@ import { appendRequestLog } from "@/lib/usageDb.js";
 import { getRequestLogContext } from "@/lib/requestCaller.js";
 import { trackModelRequest } from "@/lib/runtimeModelStats.js";
 import { getSessionRoutingKey, NEW_SESSION_HINT } from "../services/sessionRouting.js";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getModelInfo, getComboModels, getComboAccountModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
@@ -304,14 +304,14 @@ async function handleChatInternal(request, clientRawRequest = null) {
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set(), deadline = Date.now() + queueTimeoutMs(), retryCount = 0) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set(), deadline = Date.now() + queueTimeoutMs(), retryCount = 0, comboNames = []) {
   if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
   seenModels.add(modelStr);
   const requestId = getRequestId(request);
   // Resolve combo aliases (including cc/<name>) before provider prefixes.
   const comboModels = await getComboModels(modelStr);
   if (comboModels?.length) {
-    return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts, deadline, retryCount);
+    return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts, deadline, retryCount, [...comboNames, modelStr]);
   }
   const modelInfo = await getModelInfo(modelStr);
 
@@ -321,7 +321,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid model format", clientRawRequest);
   }
 
-  const { provider, model } = modelInfo;
+  const { provider } = modelInfo;
+  let { model } = modelInfo;
+  const modelByConnection = await getComboAccountModels(comboNames, provider);
 
   // Routing shown in the unified "▶" line (client model → provider/model)
 
@@ -330,12 +332,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const sessionHint = sessionKey ? ` ${NEW_SESSION_HINT}` : "";
-  const credentials = await getProviderCredentials(provider, excludedAccounts, model, { sessionKey, fillFirst: true, waitForCooldown: true });
+  const credentials = await getProviderCredentials(provider, excludedAccounts, model, { sessionKey, fillFirst: true, waitForCooldown: true, modelByConnection });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
     if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。");
     return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest);
   }
+
+  model = modelByConnection[credentials.connectionId] || model;
 
   let apiKeyPermit = null;
   let accountPermit = null;
@@ -442,10 +446,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
       if (!sessionKey) {
         excludedAccounts.add(credentials.connectionId);
-        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount);
+        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount, comboNames);
       }
       if (liveConnection?.isActive && Number(liveConnection.errorCode) === 503 && isModelLockActive(liveConnection, model)) {
-        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount);
+        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount, comboNames);
       }
       return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "当前会话绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
     }
@@ -555,11 +559,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
     if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
       await result.response?.body?.cancel().catch(() => {});
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1);
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
     }
     if (!sessionKey && shouldFallback && credentials.connectionId !== "noauth") {
       excludedAccounts.add(credentials.connectionId);
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1);
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
     }
     const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`);
     const retryAfter = result.response?.headers.get("retry-after");

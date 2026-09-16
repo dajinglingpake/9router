@@ -83,6 +83,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
+  const modelFor = (connection) => options.modelByConnection?.[connection?.id] || model;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionState.mutex;
   let resolveMutex;
@@ -144,13 +145,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model) && !(options.waitForCooldown && binding?.connectionId === c.id && Number(c.errorCode) === 503)) return false;
+      if (isModelLockActive(c, modelFor(c)) && !(options.waitForCooldown && binding?.connectionId === c.id && Number(c.errorCode) === 503)) return false;
       // Antigravity: skip if live quota exhausted for this model
       if (isAntigravity && model && antigravityQuotaCache) {
-        const quota = antigravityQuotaCache.get(c.id)?.[model];
+        const quota = antigravityQuotaCache.get(c.id)?.[modelFor(c)];
         if (quota && quota.remainingPercentage <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
           const account = c.id?.slice(0, 8) || "unknown";
-          log.info("AG_QUOTA", `${account} | CACHE_BLOCK ${model} — skip upstream until ${quota.resetAt}`);
+          log.info("AG_QUOTA", `${account} | CACHE_BLOCK ${modelFor(c)} — skip upstream until ${quota.resetAt}`);
           return false;
         }
       }
@@ -160,26 +161,26 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const capacityConnections = preferConnectionsWithCapacity(availableConnections);
     if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
       const bound = connections.find((item) => item.id === binding.connectionId);
-      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: getModelLockUntil(bound, model) };
+      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: getModelLockUntil(bound, modelFor(bound)) };
     }
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
-      const locked = isModelLockActive(c, model);
+      const locked = isModelLockActive(c, modelFor(c));
       if (excluded || locked) {
         const lockUntil = getEarliestModelLockUntil(c);
-        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
+        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${modelFor(c)}) until ${lockUntil}` : ""}`);
       }
     });
 
     if (availableConnections.length === 0) {
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
-      const lockedConns = connections.filter(c => isModelLockActive(c, model));
+      const lockedConns = connections.filter(c => isModelLockActive(c, modelFor(c)));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
-          const resetAt = antigravityQuotaCache.get(c.id)?.[model]?.resetAt;
+          const resetAt = antigravityQuotaCache.get(c.id)?.[modelFor(c)]?.resetAt;
           if (resetAt && new Date(resetAt).getTime() > Date.now()) expiries.push(resetAt);
         });
       }

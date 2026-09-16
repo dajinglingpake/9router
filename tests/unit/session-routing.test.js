@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   handleChatCore: vi.fn(),
   checkAndRefreshToken: vi.fn(),
   comboModels: null,
+  accountModels: {},
 }));
 vi.mock("open-sse/index.js", () => ({}));
 vi.mock("@/lib/db/helpers/metaStore.js", () => ({
@@ -27,6 +28,7 @@ vi.mock("@/lib/network/connectionProxy", () => ({
 vi.mock("@/lib/usageDb.js", () => ({ appendRequestLog: vi.fn().mockResolvedValue() }));
 vi.mock("../../src/sse/services/model.js", () => ({
   getModelInfo: async (model) => model === "combo" ? {} : { provider: model.startsWith("cc/") ? "claude-code" : "codex", model: model.endsWith("other-model") ? "other-model" : "test-model" },
+  getComboAccountModels: async (names) => names.length ? state.accountModels : {},
   getComboModels: async (model) => ["combo", "cc/combo"].includes(model) ? state.comboModels : null,
 }));
 vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
@@ -55,6 +57,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.bindings.clear();
   state.comboModels = null;
+  state.accountModels = {};
   state.connections = [
     { id: "a", provider: "codex", name: "A", priority: 1, isActive: true, maxConcurrency: 1 },
     { id: "b", provider: "codex", name: "B", priority: 2, isActive: true, maxConcurrency: 1 },
@@ -70,6 +73,54 @@ const request = (sessionId, model = "codex/test-model", signal) => new Request("
 const successfulStream = () => ({ success: true, response: new Response("ok") });
 
 describe("strict session account routing", () => {
+  it("uses account-specific models while other accounts inherit the common combo", async () => {
+    state.comboModels = ["codex/test-model"];
+    state.accountModels = { a: "lower-model" };
+    const first = await handleChat(request("custom-a", "cc/combo"));
+    await first.text();
+    const busy = await acquireConcurrencySlot({ scope: "account", id: "a", limit: 1 });
+    const second = await handleChat(request("common-b", "combo"));
+    expect(state.handleChatCore.mock.calls.map(([args]) => [args.connectionId, args.modelInfo.model]))
+      .toEqual([["a", "lower-model"], ["b", "test-model"]]);
+    expect(state.handleChatCore.mock.calls[0][0].body.model).toBe("codex/lower-model");
+    await second.text();
+    busy.release();
+    state.accountModels.a = "another-lower-model";
+    await (await handleChat(request("custom-a", "cc/combo"))).text();
+    expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "a", modelInfo: { model: "another-lower-model" } });
+    state.accountModels = {};
+    await (await handleChat(request("custom-a", "cc/combo"))).text();
+    expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "a", modelInfo: { model: "test-model" } });
+  });
+
+  it("checks model locks against the customized model before selecting the account", async () => {
+    state.comboModels = ["codex/test-model"];
+    state.accountModels = { a: "lower-model" };
+    state.connections[0]["modelLock_test-model"] = new Date(Date.now() + 60000).toISOString();
+    await (await handleChat(request("custom-lock", "combo"))).text();
+    expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "a", modelInfo: { model: "lower-model" } });
+    state.connections[0]["modelLock_lower-model"] = new Date(Date.now() + 60000).toISOString();
+    const response = await handleChat(request("custom-lock", "combo"));
+    expect(response.status).toBe(503);
+    expect(state.handleChatCore).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the customized model and pinned account across account-wide overload cooldown", async () => {
+    vi.useFakeTimers();
+    state.comboModels = ["codex/test-model"];
+    state.accountModels = { a: "lower-model" };
+    state.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "overloaded", response: new Response("overloaded", { status: 503 }) });
+    const pending = handleChat(request("custom-retry", "combo"));
+    await vi.waitFor(() => expect(getConcurrencySnapshot().find(p => p.id === "a")?.queued).toBe(1));
+    const newSession = await handleChat(request("new-while-cooling", "combo"));
+    expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "b", modelInfo: { model: "test-model" } });
+    await newSession.text();
+    await vi.advanceTimersByTimeAsync(30000);
+    await (await pending).text();
+    expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "a", retryCount: 1, modelInfo: { model: "lower-model" } });
+    expect(getModelRequestStats().find(g => g.connectionId === "a").model).toBe("lower-model");
+  });
+
   it("counts a request once across account cooldown and internal retries", async () => {
     vi.useFakeTimers();
     state.handleChatCore

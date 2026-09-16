@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName, getProviderConnectionById } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { getModelInfo } from "@/sse/services/model.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -27,6 +28,28 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
+
+    if (body.accountOverrides !== undefined) {
+      if (!body.accountOverrides || typeof body.accountOverrides !== "object" || Array.isArray(body.accountOverrides)) {
+        return NextResponse.json({ error: "账号定制配置格式不正确。" }, { status: 400 });
+      }
+      for (const [connectionId, models] of Object.entries(body.accountOverrides)) {
+        const connection = await getProviderConnectionById(connectionId);
+        if (!connection) return NextResponse.json({ error: "定制配置中的提供商账号不存在，请刷新后重试。" }, { status: 400 });
+        if (!Array.isArray(models) || models.length === 0) {
+          return NextResponse.json({ error: "账号定制至少需要一个模型；恢复通用配置请移除该账号的定制。" }, { status: 400 });
+        }
+        for (const model of models) {
+          if (typeof model !== "string" || !model.includes("/")) {
+            return NextResponse.json({ error: "账号定制请选择该提供商的具体模型。" }, { status: 400 });
+          }
+          const target = await getModelInfo(model);
+          if (target.provider !== connection.provider || !target.model) {
+            return NextResponse.json({ error: "账号定制只能使用该账号所属提供商的模型。" }, { status: 400 });
+          }
+        }
+      }
+    }
     
     // Validate name format if provided
     if (body.name) {

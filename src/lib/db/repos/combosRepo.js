@@ -9,26 +9,30 @@ function rowToCombo(row) {
     name: row.name,
     kind: row.kind,
     models: parseJson(row.models, []),
+    accountOverrides: parseJson(row.accountOverrides, {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
+const COMBO_SELECT = `SELECT combos.*, kv.value AS accountOverrides FROM combos
+  LEFT JOIN kv ON kv.scope = 'comboAccountOverrides' AND kv.key = combos.id`;
+
 export async function getCombos() {
   const db = await getAdapter();
-  const rows = db.all(`SELECT * FROM combos ORDER BY createdAt ASC`);
+  const rows = db.all(`${COMBO_SELECT} ORDER BY combos.createdAt ASC`);
   return rows.map(rowToCombo);
 }
 
 export async function getComboById(id) {
   const db = await getAdapter();
-  const row = db.get(`SELECT * FROM combos WHERE id = ?`, [id]);
+  const row = db.get(`${COMBO_SELECT} WHERE combos.id = ?`, [id]);
   return rowToCombo(row);
 }
 
 export async function getComboByName(name) {
   const db = await getAdapter();
-  const row = db.get(`SELECT * FROM combos WHERE name = ?`, [name]);
+  const row = db.get(`${COMBO_SELECT} WHERE combos.name = ?`, [name]);
   return rowToCombo(row);
 }
 
@@ -54,13 +58,17 @@ export async function updateCombo(id, data) {
   const db = await getAdapter();
   let result = null;
   db.transaction(() => {
-    const row = db.get(`SELECT * FROM combos WHERE id = ?`, [id]);
+    const row = db.get(`${COMBO_SELECT} WHERE combos.id = ?`, [id]);
     if (!row) return;
     const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
     db.run(
       `UPDATE combos SET name = ?, kind = ?, models = ?, updatedAt = ? WHERE id = ?`,
       [merged.name, merged.kind, stringifyJson(merged.models || []), merged.updatedAt, id]
     );
+    if (data.accountOverrides !== undefined) {
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('comboAccountOverrides', ?, ?)
+        ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`, [id, stringifyJson(data.accountOverrides)]);
+    }
     result = merged;
   });
   return result;
@@ -68,6 +76,11 @@ export async function updateCombo(id, data) {
 
 export async function deleteCombo(id) {
   const db = await getAdapter();
-  const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
-  return (res?.changes ?? 0) > 0;
+  let deleted = false;
+  db.transaction(() => {
+    const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
+    deleted = (res?.changes ?? 0) > 0;
+    db.run(`DELETE FROM kv WHERE scope = 'comboAccountOverrides' AND key = ?`, [id]);
+  });
+  return deleted;
 }

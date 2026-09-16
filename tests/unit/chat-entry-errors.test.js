@@ -24,6 +24,7 @@ vi.mock("../../src/sse/services/auth.js", () => ({
 vi.mock("../../src/sse/services/model.js", () => ({
   getModelInfo: mocks.getModelInfo,
   getComboModels: async () => null,
+  getComboAccountModels: async () => ({}),
 }));
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: vi.fn() }));
 vi.mock("../../src/sse/utils/logger.js", () => ({

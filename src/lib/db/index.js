@@ -91,6 +91,7 @@ export {
 // Export/import full DB
 export async function exportDb() {
   const db = await getAdapter();
+  const { getCombos } = await import("./repos/combosRepo.js");
   const { exportSettings } = await import("./repos/settingsRepo.js");
 
   const out = {
@@ -99,7 +100,7 @@ export async function exportDb() {
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, claimedAt: r.claimedAt || null, allowedIps: r.allowedIps || null, maxConcurrentRequests: Number(db.get(`SELECT value FROM kv WHERE scope = 'apiKeyConcurrency' AND key = ?`, [r.id])?.value || 0) })),
-    combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
+    combos: await getCombos(),
     clientIpAliases: db.all(`SELECT ip, alias, createdAt, updatedAt FROM clientIpAliases`),
     modelAliases: {},
     customModels: [],
@@ -130,7 +131,7 @@ export async function importDb(payload) {
     db.run(`DELETE FROM apiKeys`);
     db.run(`DELETE FROM combos`);
     db.run(`DELETE FROM clientIpAliases`);
-    db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
+    db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing', 'comboAccountOverrides')`);
 
     // Settings
     if (payload.settings) {
@@ -171,6 +172,9 @@ export async function importDb(payload) {
         `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
         [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
       );
+      if (c.accountOverrides && typeof c.accountOverrides === "object") {
+        db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('comboAccountOverrides', ?, ?)`, [c.id, stringifyJson(c.accountOverrides)]);
+      }
     }
     for (const a of payload.clientIpAliases || []) {
       db.run(
