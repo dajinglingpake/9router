@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { zstdCompressSync } from "node:zlib";
 
 const state = vi.hoisted(() => ({
   bindings: new Map(),
@@ -73,23 +74,32 @@ const request = (sessionId, model = "codex/test-model", signal) => new Request("
 const successfulStream = () => ({ success: true, response: new Response("ok") });
 
 describe("strict session account routing", () => {
-  it("uses account-specific models while other accounts inherit the common combo", async () => {
+  it.each([false, true])("uses account-specific models while other accounts inherit the common combo (zstd=%s)", async compressed => {
+    const accountRequest = async (sessionId, model) => {
+      const plain = request(sessionId, model);
+      if (!compressed) return plain;
+      return new Request(plain.url, {
+        method: "POST",
+        headers: { ...Object.fromEntries(plain.headers), "content-encoding": "zstd" },
+        body: zstdCompressSync(await plain.text()),
+      });
+    };
     state.comboModels = ["codex/test-model"];
     state.accountModels = { a: "lower-model" };
-    const first = await handleChat(request("custom-a", "cc/combo"));
+    const first = await handleChat(await accountRequest("custom-a", "cc/combo"));
     await first.text();
     const busy = await acquireConcurrencySlot({ scope: "account", id: "a", limit: 1 });
-    const second = await handleChat(request("common-b", "combo"));
+    const second = await handleChat(await accountRequest("common-b", "combo"));
     expect(state.handleChatCore.mock.calls.map(([args]) => [args.connectionId, args.modelInfo.model]))
       .toEqual([["a", "lower-model"], ["b", "test-model"]]);
     expect(state.handleChatCore.mock.calls[0][0].body.model).toBe("codex/lower-model");
     await second.text();
     busy.release();
     state.accountModels.a = "another-lower-model";
-    await (await handleChat(request("custom-a", "cc/combo"))).text();
+    await (await handleChat(await accountRequest("custom-a", "cc/combo"))).text();
     expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "a", modelInfo: { model: "another-lower-model" } });
     state.accountModels = {};
-    await (await handleChat(request("custom-a", "cc/combo"))).text();
+    await (await handleChat(await accountRequest("custom-a", "cc/combo"))).text();
     expect(state.handleChatCore.mock.lastCall[0]).toMatchObject({ connectionId: "a", modelInfo: { model: "test-model" } });
   });
 

@@ -7,11 +7,19 @@ export const HTTP_STATUS = {
   NOT_FOUND: 404,
   NOT_ACCEPTABLE: 406,
   REQUEST_TIMEOUT: 408,
+  PAYLOAD_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
   RATE_LIMITED: 429,
   SERVER_ERROR: 500,
   BAD_GATEWAY: 502,
   SERVICE_UNAVAILABLE: 503,
   GATEWAY_TIMEOUT: 504
+};
+
+// Bound both compressed input and decoded JSON when accepting native Codex requests.
+export const CHAT_REQUEST_BODY_LIMITS = {
+  compressedBytes: 16 * 1024 * 1024,
+  decodedBytes: 128 * 1024 * 1024,
 };
 
 // Re-export error config (backward compat)

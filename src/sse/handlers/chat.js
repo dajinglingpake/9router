@@ -28,6 +28,7 @@ import { extractThinking } from "open-sse/translator/concerns/thinkingUnified.js
 import { getModelTargetFormat, getModelSupportedFormats, getModelUpstreamId, PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 import * as log from "../utils/logger.js";
 import { extractClientIp } from "../utils/clientIp.js";
+import { readChatRequestBody } from "../utils/requestBody.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
@@ -241,9 +242,12 @@ export async function handleChat(request, clientRawRequest = null) {
 async function handleChatInternal(request, clientRawRequest = null) {
   let body;
   try {
-    body = await request.json();
+    body = await readChatRequestBody(request);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid JSON body");
-  } catch {
+  } catch (error) {
+    if (error.status === HTTP_STATUS.PAYLOAD_TOO_LARGE || error.status === HTTP_STATUS.UNSUPPORTED_MEDIA_TYPE) {
+      return rejectChatRequest(error.status, error.message, clientRawRequest);
+    }
     log.warn("CHAT", "Invalid JSON body");
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body", clientRawRequest);
   }

@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { zstdCompressSync } from "node:zlib";
 
 const mocks = vi.hoisted(() => ({
   appendRequestLog: vi.fn().mockResolvedValue(),
@@ -65,6 +66,23 @@ it("records a missing model", async () => {
   const response = await handleChat(new Request("http://localhost/v1/chat/completions", { method: "POST", body: "{}" }));
   expect(response.status).toBe(400);
   expect(mocks.appendRequestLog).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: "client", message: "Missing model" }));
+});
+
+it("decodes native Codex requests before normal model and account routing", async () => {
+  const response = await handleChat(new Request("http://localhost/v1/responses", {
+    method: "POST", headers: { "content-encoding": "zstd" },
+    body: zstdCompressSync(JSON.stringify({ model: "test-model", input: "hello" })),
+  }));
+  expect(mocks.getModelInfo).toHaveBeenCalledWith("test-model");
+  expect(response.status).toBe(503); // Normal missing-credentials path, not a JSON error.
+});
+
+it("reports malformed zstd as invalid JSON before selecting an account", async () => {
+  const response = await handleChat(new Request("http://localhost/v1/responses", {
+    method: "POST", headers: { "content-encoding": "zstd" }, body: "broken frame",
+  }));
+  expect(response.status).toBe(400);
+  expect(mocks.getModelInfo).not.toHaveBeenCalled();
 });
 
 it("records an invalid model as a caller error", async () => {

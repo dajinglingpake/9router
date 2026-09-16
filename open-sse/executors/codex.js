@@ -18,6 +18,7 @@ import {
   isCodexSparkModel,
 } from "../config/codexConstants.js";
 import { stripCodexUnsupportedPatterns } from "../utils/codexToolSchema.js";
+import { ROLE } from "../translator/schema/roles.js";
 
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
@@ -48,7 +49,7 @@ const CODEX_PASSTHROUGH_TOOL_TYPES = new Set(["custom"]);
 const RESPONSES_API_ALLOWLIST = new Set([
   "model", "input", "instructions", "tools", "tool_choice", "stream", "store",
   "reasoning", "service_tier", "include", "prompt_cache_key", "client_metadata",
-  "text", "context_management"
+  "text", "context_management", "parallel_tool_calls"
 ]);
 
 // Convert role=system → role=developer in body.input (keeps content in cacheable prefix)
@@ -459,8 +460,13 @@ export class CodexExecutor extends BaseExecutor {
     // Ensure streaming is enabled (Codex API requires it)
     body.stream = true;
 
-    // If no instructions provided, inject default Codex instructions
-    if (!body.instructions || body.instructions.trim() === "") {
+    // Native Codex carries instructions in developer messages, including Responses Lite.
+    const hasInputInstructions = Array.isArray(body.input) && body.input.some(item => item?.role === ROLE.DEVELOPER && (
+      typeof item.content === "string"
+        ? item.content.trim().length > 0
+        : Array.isArray(item.content) && item.content.some(part => typeof part?.text === "string" && part.text.trim())
+    ));
+    if ((!body.instructions || body.instructions.trim() === "") && !hasInputInstructions) {
       body.instructions = CODEX_DEFAULT_INSTRUCTIONS;
     }
 
