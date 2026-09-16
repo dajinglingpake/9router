@@ -230,7 +230,9 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   scheduleStatsEvent("pending");
   // Keep long-running requests visible until their actual lifecycle ends.
   // Capture this entry so out-of-order completion cannot remove another request.
-  return (failed = false) => finishPendingRequest(modelKey, provider, connectionId, entry, failed);
+  const finish = (failed = false) => finishPendingRequest(modelKey, provider, connectionId, entry, failed);
+  finish.update = updates => Object.assign(entry, updates);
+  return finish;
 }
 
 export function updatePendingRequest(model, provider, connectionId, updates = {}) {

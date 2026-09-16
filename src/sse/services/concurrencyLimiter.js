@@ -18,6 +18,8 @@ const QUEUE_METADATA_KEYS = [
   "routingModel",
   "upstreamModel",
   "thinkingLevel",
+  "requestedServiceTier",
+  "upstreamServiceTier",
   "sourceFormat",
   "targetFormat",
   "requestBytes",

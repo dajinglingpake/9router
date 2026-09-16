@@ -43,6 +43,8 @@ export function getRequestLogContext(context = {}, now = Date.now()) {
   return {
     ...getRequestCaller(context),
     upstreamModel: text(context.upstreamModel),
+    requestedServiceTier: text(context.requestedServiceTier),
+    upstreamServiceTier: text(context.upstreamServiceTier),
     thinkingLevel: text(context.thinkingLevel),
     sourceFormat: text(context.sourceFormat),
     targetFormat: text(context.targetFormat),

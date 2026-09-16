@@ -75,7 +75,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const sessionTag = log?.tagForSession ? log.tagForSession(sessionSeed) : (log?.nextTag ? log.nextTag() : "");
   const reqTag = requestId ? `${sessionTag} #${requestId}/r${retryCount}` : sessionTag;
   const requestLogContext = {
-    ...clientRawRequest, userAgent: getRequestCaller(clientRawRequest).userAgent || userAgent, startedAt: requestStartTime, requestTag: reqTag,
+    ...clientRawRequest, requestedServiceTier: clientRawRequest?.requestedServiceTier || (typeof body.service_tier === "string" ? body.service_tier : "unspecified"), upstreamServiceTier: null, userAgent: getRequestCaller(clientRawRequest).userAgent || userAgent, startedAt: requestStartTime, requestTag: reqTag,
     ...(clientRawRequest?.inputTokenEstimateVersion ? getRequestTokenEstimates(clientRawRequest) : estimateInputTokenBreakdown(body)),
   };
   const reportOverload = onUpstreamOverload
@@ -351,6 +351,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     requestTag: reqTag || null,
   });
   const trackDone = (failed = false) => finishPending?.(failed);
+  const recordUpstreamTier = ({ serviceTier }) => {
+    requestLogContext.upstreamServiceTier = serviceTier;
+    if (clientRawRequest) clientRawRequest.upstreamServiceTier = serviceTier;
+    finishPending?.update?.({ upstreamServiceTier: serviceTier });
+  };
   appendLog({ status: "PENDING" });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;
@@ -409,6 +414,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     const result = await executor.execute({
       diagnosticContext,
       onUpstreamOverload: reportOverload,
+      onUpstreamRequest: recordUpstreamTier,
       model,
       body: translatedBody,
       stream,
@@ -475,6 +481,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           const retryResult = await executor.execute({
             diagnosticContext,
             onUpstreamOverload: reportOverload,
+      onUpstreamRequest: recordUpstreamTier,
             model,
             body: translatedBody,
             stream,

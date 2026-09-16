@@ -60,6 +60,18 @@ it("removes the exact request once when same-account requests finish out of orde
   expect(await active()).toEqual([]);
 });
 
+it("updates the tier of the exact concurrent request", async () => {
+  const first = start("first", { requestedServiceTier: "unspecified" });
+  const second = start("second", { requestedServiceTier: "fast" });
+  second.update({ upstreamServiceTier: "priority" });
+  expect((await active())[0].requests).toMatchObject([
+    { requestId: "first", requestedServiceTier: "unspecified" },
+    { requestId: "second", requestedServiceTier: "fast", upstreamServiceTier: "priority" },
+  ]);
+  expect((await active())[0].requests[0].upstreamServiceTier).toBeUndefined();
+  first(); second();
+});
+
 it.each(["handleComplete", "handleDisconnect", "handleError"])("cleans up through %s without removing another request", async (method) => {
   const finish = start("first");
   const other = start("other");

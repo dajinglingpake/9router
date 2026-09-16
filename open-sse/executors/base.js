@@ -99,7 +99,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, diagnosticContext = null, onUpstreamOverload = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, diagnosticContext = null, onUpstreamOverload = null, onUpstreamRequest = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -144,6 +144,7 @@ export class BaseExecutor {
       const fetchStartedAt = Date.now();
 
       try {
+        onUpstreamRequest?.({ serviceTier: typeof transformedBody?.service_tier === "string" ? transformedBody.service_tier : "unspecified" });
         const bodyStr = JSON.stringify(transformedBody);
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);

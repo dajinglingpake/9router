@@ -103,6 +103,8 @@ function buildConcurrencyMetadata({ body, clientRawRequest, request, provider, m
     routingModel: model,
     upstreamModel: model ? getModelUpstreamId(alias, model) : null,
     thinkingLevel: thinkingLevel || "auto",
+    requestedServiceTier: clientRawRequest?.requestedServiceTier || (typeof rawBody.service_tier === "string" ? rawBody.service_tier : "unspecified"),
+    upstreamServiceTier: clientRawRequest?.upstreamServiceTier || null,
     sourceFormat,
     targetFormat,
     requestBytes,
@@ -175,6 +177,7 @@ export async function handleChat(request, clientRawRequest = null) {
       try { return new URL(request.url).pathname; } catch { return null; }
     })(),
     body: requestBody,
+    requestedServiceTier: typeof requestBody?.service_tier === "string" ? requestBody.service_tier : "unspecified",
     requestId,
     startedAt: Date.now(),
     requestBytes: requestBody ? Buffer.byteLength(JSON.stringify(requestBody), "utf8") : null,

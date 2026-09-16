@@ -44,6 +44,17 @@ describe("Retry-After parsing", () => {
 });
 
 describe("BaseExecutor.execute — retry by status (config-driven)", () => {
+  it("reports the final tier before sending upstream traffic", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api" });
+    ex.transformRequest = () => ({ service_tier: "priority" });
+    const onUpstreamRequest = vi.fn();
+    fetchMock.mockImplementation(async () => {
+      expect(onUpstreamRequest).toHaveBeenCalledWith({ serviceTier: "priority" });
+      return res(200);
+    });
+    await ex.execute({ model: "m", body: { service_tier: "fast" }, credentials: creds, onUpstreamRequest });
+    expect(onUpstreamRequest).toHaveBeenCalledTimes(1);
+  });
   it("returns managed 503 overloads immediately without retrying or falling back", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 3, delayMs: 0 } } });
     ex.getFallbackCount = () => 2;
