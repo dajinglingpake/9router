@@ -62,8 +62,8 @@ function getCpuMetrics() {
 }
 
 export async function getSystemMetrics() {
-  const active = await getActiveRequests();
   const history = await getRecentUsageOutcomes(new Date(Date.now() - 5 * 60 * 1000).toISOString());
+  const active = await getActiveRequests();
   const activeRequests = active.activeRequests || [];
   const rawConcurrency = getConcurrencySnapshot();
   const accountConcurrency = rawConcurrency

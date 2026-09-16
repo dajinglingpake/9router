@@ -106,12 +106,6 @@ export default function SystemMetrics() {
   const [errorDetails, setErrorDetails] = useState(null);
 
   useEffect(() => {
-    if (!metrics) return;
-    const groups = groupActiveRequests(metrics.activeRequests || [], metrics.concurrencyLimits || [], metrics.modelRequestStats || [], metrics.traffic?.outputGroups || []);
-    setDisplayGroups(previous => retainGroupSnapshots(previous, groups));
-  }, [metrics]);
-
-  useEffect(() => {
     const finished = displayGroups.filter(group => group.snapshotRetainedAt != null);
     if (!finished.length) return;
     const expiresAt = Math.min(...finished.map(group => group.snapshotRetainedAt + GROUP_SNAPSHOT_RETENTION_MS));
@@ -196,7 +190,12 @@ export default function SystemMetrics() {
         }
         if (!response.ok) throw new Error("Metrics unavailable");
         const next = await response.json();
-        if (active) { setMetrics(next); setError(""); }
+        if (active) {
+          const groups = groupActiveRequests(next.activeRequests || [], next.concurrencyLimits || [], next.modelRequestStats || [], next.traffic?.outputGroups || []);
+          setDisplayGroups(previous => retainGroupSnapshots(previous, groups));
+          setMetrics(next);
+          setError("");
+        }
       } catch (err) {
         if (active) {
           setError(err.message || "Metrics unavailable");
@@ -347,7 +346,9 @@ export default function SystemMetrics() {
                   <p className="text-xs text-text-muted">{request.provider} · {request.account}</p>
                   {limit && <p className="mt-1 text-xs text-text-muted">并发 {limit.active}/{limit.limit}</p>}
                   <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted">
-                    <span>{request.snapshotRetainedAt != null ? `最后延迟：${formatLatency(request.latencyMs)}` : request.count ? `当前延迟：${formatLatency(request.latencyMs)}` : "排队中"}</span>
+                    {request.retryCount > 0 && request.count > 0 && <span>第 {request.retryCount} 次重试</span>}
+                    {request.queue.length > 0 && <span>排队 {request.queue.length} 个 · {queueStatus(request.queue[0])}</span>}
+                    {(request.count > 0 || request.snapshotRetainedAt != null) && <span>{request.snapshotRetainedAt != null ? "最后延迟" : "当前延迟"}：{formatLatency(request.latencyMs)}</span>}
                     <span className="tabular-nums" title="流式输出估算，与顶部总速率口径一致">输出速度：{request.outputTokensPerSecond} tokens/s</span>
                   </p>
                   <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-text-muted" title="本次服务启动后累计；同一请求的多次过载只计一次，响应成功完成后计入重试后成功。">

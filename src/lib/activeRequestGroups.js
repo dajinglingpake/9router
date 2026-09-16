@@ -39,6 +39,7 @@ export function groupActiveRequests(active = [], limits = [], stats = [], output
   }
   return groups.map(group => ({
     ...group,
+    retryCount: Math.max(0, ...(group.requests || []).map(request => request.retryCount || 0)),
     stats: stats.find(item => item.connectionId === group.connectionId && item.provider === group.provider && item.model === group.model),
     outputTokensPerSecond: outputGroups.find(item => item.connectionId === group.connectionId && item.provider === group.provider && item.model === group.model)?.outputTokensPerSecond ?? 0,
   }));

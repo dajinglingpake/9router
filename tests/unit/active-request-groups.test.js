@@ -61,3 +61,12 @@ it("retains group metrics for five seconds with no active requests and without e
   expect(retainGroupSnapshots(finished, [], 6000)).toEqual([]);
   expect(retainGroupSnapshots(finished, [live], 2000)).toEqual([live]);
 });
+
+it("keeps retrying and cooling requests visible as the same group with fresh concurrency", () => {
+  const active = [{ connectionId: "a", model: "sol", provider: "codex", count: 1, requests: [{ retryCount: 2 }] }];
+  const running = groupActiveRequests(active, [{ scope: "account", id: "a", active: 1, limit: 3, queue: [] }]);
+  expect(running[0]).toMatchObject({ retryCount: 2, count: 1, limit: { active: 1 } });
+  const cooling = groupActiveRequests([], [{ scope: "account", id: "a", active: 0, limit: 3,
+    queue: [{ provider: "codex", routingModel: "sol", retryCount: 3, state: "cooldown", cooldownRemainingMs: 30000 }] }]);
+  expect(cooling[0]).toMatchObject({ count: 0, limit: { active: 0 }, queue: [{ retryCount: 3, state: "cooldown" }] });
+});
