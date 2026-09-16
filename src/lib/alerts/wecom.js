@@ -66,15 +66,18 @@ export function queueAlert({ key, content, cooldownMs, test = false }) {
 }
 
 export async function notifyRequestError(entry) {
-  if (!entry.connectionId || entry.source !== "upstream" || ![401, 402, 429, 503].includes(entry.statusCode)) return;
+  if (!entry.connectionId || entry.transient || entry.recovered) return;
+  const overloadTimeout = entry.source === "router" && entry.statusCode === 503
+    && entry.retryCount > 0 && entry.timeoutRemainingMs === 0;
+  if (!overloadTimeout && !(entry.source === "upstream" && [401, 402].includes(entry.statusCode))) return;
   const config = (await getSettings()).wecomAlerts;
   if (!config?.enabled) return;
   const connection = await getProviderConnectionById(entry.connectionId);
   if (!connection || connection.isActive === false) return;
-  const kind = [429, 503].includes(entry.statusCode) ? "overload" : entry.statusCode === 402 ? "quota" : "auth";
+  const kind = overloadTimeout ? "overload" : entry.statusCode === 402 ? "quota" : "auth";
   const label = { overload: "限流或过载", quota: "额度不足", auth: "账号凭证失效" }[kind];
   return queueAlert({
     key: `${connection.id}:${kind}`,
-    content: `9router 告警｜${label}\n账号：${connection.name || connection.email || connection.id}\n提供商：${connection.provider}\n模型：${entry.model || "—"}\n状态：${entry.statusCode}${entry.upstreamStatus === 200 ? "（流内错误）" : ""}\n${entry.transient ? "系统正在重试，请在运行状态中查看进展。" : "请在运行状态的错误日志中查看详情。"}\n时间：${new Date(entry.timestamp).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`,
+    content: `9router 告警｜${label}\n账号：${connection.name || connection.email || connection.id}\n提供商：${connection.provider}\n模型：${entry.model || "—"}\n状态：${entry.statusCode}\n${overloadTimeout ? "等待重试已超时，已向客户端返回 503。" : "请在运行状态的错误日志中查看详情。"}\n时间：${new Date(entry.timestamp).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`,
   });
 }

@@ -25,6 +25,15 @@ afterEach(async () => {
 });
 const error = { provider: "codex", model: "sol", connectionId: "a", status: "FAILED 503", transient: true, requestId: "r1", message: "server_is_overloaded" };
 
+it("preserves a final router timeout even when its upstream attempt was already logged", async () => {
+  await saveRequestError(error);
+  await saveRequestError({ ...error, source: "router", transient: false, timeoutRemainingMs: 0,
+    message: "等待重试已超时" });
+  const result = await getRequestErrors();
+  expect(result.total).toBe(2);
+  expect(result.items[0]).toMatchObject({ source: "router", transient: false, timeoutRemainingMs: 0 });
+});
+
 it("retains sanitized errors and recovery across DB reopen, including records older than five minutes", async () => {
   const caller = { apiKeyId: "caller-1", apiKeyName: "已删除的调用方", apiKeyMasked: "test...1234", clientIp: "192.0.2.10", userAgent: "test-cli/1.0", requestedModel: "client-alias", upstreamModel: "sol", thinkingLevel: "high", stream: false, requestBytes: 2048, sourceFormat: "openai-responses", targetFormat: "openai-responses", startedAt: Date.now() - 601500, latencyMs: 1500, queuedAt: Date.now() - 602000, waitMs: 500, position: 1, timeoutRemainingMs: 0, cooldownRemainingMs: 30000, state: "cooldown" };
   const attachments = { estimatedAttachmentTokens: 100, attachmentCount: 2, unestimatedAttachmentCount: 1, encryptedContextCount: 1, inputTokenEstimateVersion: 2 };

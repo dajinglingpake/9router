@@ -48,10 +48,11 @@ it("validates and masks the Webhook without replacing it on an empty edit", () =
   expect(() => normalizeAlertConfig({ quotaPercent: -1 })).toThrow();
 });
 
-it("coalesces concurrent overloads across models and persists the cooldown", async () => {
-  const error = { connectionId: "a", source: "upstream", statusCode: 503, transient: true, timestamp: now };
+it("coalesces final overload timeouts across models and persists the cooldown", async () => {
+  const error = { connectionId: "a", source: "router", statusCode: 503, retryCount: 9, timeoutRemainingMs: 0, timestamp: now };
   await Promise.all([notifyRequestError({ ...error, model: "sol" }), notifyRequestError({ ...error, model: "astra" })]);
   expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(mocks.fetch.mock.calls[0][1].body).text.content).toContain("已向客户端返回 503");
   const stored = mocks.db.get("SELECT value FROM _meta WHERE key = ?", ["wecomAlert:a:overload"]);
   expect(JSON.parse(stored.value).sentAt).toBe(now);
   // A fresh module uses the persisted delivery timestamp too.
@@ -62,6 +63,20 @@ it("coalesces concurrent overloads across models and persists the cooldown", asy
   vi.setSystemTime(now + 601000);
   expect(await fresh.queueAlert({ key: "a:overload", content: "again" })).toBe(true);
   expect(mocks.fetch).toHaveBeenCalledTimes(2);
+});
+
+it("does not alert on intermediate overloads, recovery, cancellation or ordinary queue timeouts", async () => {
+  const base = { connectionId: "a", timestamp: now, statusCode: 503 };
+  for (const details of [
+    { source: "upstream", transient: true },
+    { source: "upstream", transient: true, recovered: true },
+    { source: "upstream" },
+    { source: "upstream", statusCode: 429 },
+    { source: "router", retryCount: 1, timeoutRemainingMs: 1000 },
+    { source: "router", retryCount: 0, timeoutRemainingMs: 0 },
+    { source: "router", statusCode: 499, retryCount: 9, timeoutRemainingMs: 0 },
+  ]) await notifyRequestError({ ...base, ...details });
+  expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
 it("spaces different account messages and ignores caller errors", async () => {

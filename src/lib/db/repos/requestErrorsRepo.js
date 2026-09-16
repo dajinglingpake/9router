@@ -32,7 +32,7 @@ export function saveRequestError(entry) {
   };
   return write(db => {
     // Skip the outer 503 summary when the actual failed attempt is already stored.
-    if (!record.transient && record.statusCode === 503 && record.requestId && db.get(
+    if (record.source === "upstream" && !record.transient && record.statusCode === 503 && record.requestId && db.get(
       `SELECT id FROM requestErrors WHERE requestId = ? AND connectionId IS ? AND provider IS ? AND model IS ? AND retryCount = ? AND transient = 1 LIMIT 1`,
       [record.requestId, record.connectionId, record.provider, record.model, record.retryCount]
     )) return null;
