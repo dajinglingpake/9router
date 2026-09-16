@@ -265,12 +265,13 @@ export async function getActiveRequests() {
             ? Math.max(0, Date.now() - pendingRequestStarts[`${connectionId}|${modelKey}`][0])
             : null,
           requests: (pendingRequestDetails[`${connectionId}|${modelKey}`] || []).map((detail, index) => {
-            const { apiKey, ...safeDetail } = detail;
+            const { apiKey, deadline, ...safeDetail } = detail;
             return {
             ...safeDetail,
-            apiKeyName: apiKeyMap[apiKey]?.name || (apiKey ? "未命名 API Key" : "未使用 API Key"),
-            apiKeyMasked: maskApiKey(apiKey),
-            apiKeyId: apiKeyMap[apiKey]?.id || null,
+            apiKeyName: safeDetail.apiKeyName || apiKeyMap[apiKey]?.name || (apiKey ? "未命名 API Key" : "未使用 API Key"),
+            apiKeyMasked: safeDetail.apiKeyMasked || maskApiKey(apiKey),
+            apiKeyId: safeDetail.apiKeyId || apiKeyMap[apiKey]?.id || null,
+            timeoutRemainingMs: Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : safeDetail.timeoutRemainingMs,
             // Session tags are intentionally shared; append request identity for stable UI keys.
             id: `${detail.requestTag || "request"}-${detail.startedAt}-${index}`,
             latencyMs: Math.max(0, Date.now() - detail.startedAt),

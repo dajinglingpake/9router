@@ -1,4 +1,4 @@
-import { getRequestLogContext } from "./requestCaller.js";
+import { getRequestLogContext, getRequestTokenUsage } from "./requestCaller.js";
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 import { saveRequestError, markRequestErrorsRecovered } from "./db/repos/requestErrorsRepo.js";
 
@@ -57,12 +57,13 @@ export function trackModelRequest(request, { connectionId, provider, model, requ
         pruneErrors();
       }
     },
-    onComplete() {
+    onComplete(usage) {
       if (completed) return;
       completed = true;
       if (overloaded) group.recovered++;
-      for (const entry of errors) entry.recovered = true;
-      markRequestErrorsRecovered(errorWrites).catch(() => console.error("[RequestErrors] Failed to persist recovery"));
+      const recoveredUsage = getRequestTokenUsage(usage);
+      for (const entry of errors) Object.assign(entry, { recovered: true, recoveredUsage });
+      markRequestErrorsRecovered(errorWrites, usage).catch(() => console.error("[RequestErrors] Failed to persist recovery"));
     },
   };
   requests.set(key, tracker);

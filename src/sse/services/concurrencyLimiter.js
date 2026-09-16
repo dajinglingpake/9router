@@ -10,6 +10,7 @@ const QUEUE_METADATA_KEYS = [
   "apiKeyName",
   "apiKeyMasked",
   "clientIp",
+  "userAgent",
   "endpoint",
   "requestedModel",
   "routingModel",
@@ -18,6 +19,7 @@ const QUEUE_METADATA_KEYS = [
   "sourceFormat",
   "targetFormat",
   "requestBytes",
+  "estimatedInputTokens",
   "stream",
   "retryCount",
 ];

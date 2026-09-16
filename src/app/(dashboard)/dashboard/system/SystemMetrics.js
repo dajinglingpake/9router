@@ -68,16 +68,19 @@ function RequestDetails({ item, index, waiting = false, failed = false }) {
         <div><dt className="inline">客户端模型：</dt><dd className="inline break-all font-mono text-text-main">{item.requestedModel || "—"}</dd></div>
         <div><dt className="inline">上游模型：</dt><dd className="inline break-all font-mono text-text-main">{item.upstreamModel || "—"}</dd></div>
         <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{item.requestBytes != null ? formatBytes(item.requestBytes) : "—"}</dd></div>
+        <div title="按客户端请求长度粗略估算，包含历史消息和工具定义，不是上游计费用量"><dt className="inline">输入 Token（预估）：</dt><dd className="inline text-text-main">{item.estimatedInputTokens?.toLocaleString() ?? "未记录"}</dd></div>
+        <div><dt className="inline">上游 Token：</dt><dd className="inline text-text-main">输入 {item.inputTokens?.toLocaleString() ?? "未返回"} · 输出 {item.outputTokens?.toLocaleString() ?? "未返回"}</dd></div>
+        {failed && item.recovered && <div className="sm:col-span-2"><dt className="inline">重试成功用量：</dt><dd className="inline text-text-main">输入 {item.recoveredUsage?.inputTokens?.toLocaleString() ?? "未返回"} · 输出 {item.recoveredUsage?.outputTokens?.toLocaleString() ?? "未返回"} Token</dd></div>}
         <div><dt className="inline">请求端点：</dt><dd className="inline break-all font-mono text-text-main">{item.endpoint || "—"}</dd></div>
         <div><dt className="inline">模型级别：</dt><dd className="inline font-semibold text-text-main">{item.thinkingLevel || (failed ? "未记录" : "auto")}</dd></div>
         <div><dt className="inline">格式：</dt><dd className="inline text-text-main">{item.sourceFormat || "—"} → {item.targetFormat || "—"}</dd></div>
         <div><dt className="inline">响应模式：</dt><dd className="inline text-text-main">{item.stream == null ? "—" : item.stream ? "流式" : "JSON"}</dd></div>
         <div><dt className="inline">请求 ID：</dt><dd className="inline font-mono text-text-main">{item.requestId ? `#${item.requestId.slice(0, 8)}` : "—"}</dd></div>
-        {failed && <div><dt className="inline">重试次数：</dt><dd className="inline text-text-main">{item.retryCount || 0}</dd></div>}
+        <div><dt className="inline">重试次数：</dt><dd className="inline text-text-main">{item.retryCount || 0}</dd></div>
         {failed && <div><dt className="inline">错误时状态：</dt><dd className="inline text-text-main">{({ running: "执行中", queued: "排队中", cooldown: "冷却等待", recovering: "等待重试" })[item.state] || "未记录"}</dd></div>}
-        {failed && !waiting && item.waitMs != null && <div><dt className="inline">排队耗时：</dt><dd className="inline text-text-main">{formatLatency(item.waitMs)}</dd></div>}
-        {failed && item.cooldownRemainingMs != null && <div><dt className="inline">冷却剩余：</dt><dd className="inline text-text-main">{formatLatency(item.cooldownRemainingMs)}</dd></div>}
-        {failed && <div className="break-all sm:col-span-2"><dt className="inline">客户端：</dt><dd className="inline text-text-main">{item.userAgent || "未记录"}</dd></div>}
+        {!waiting && item.waitMs != null && <div><dt className="inline">排队耗时：</dt><dd className="inline text-text-main">{formatLatency(item.waitMs)}</dd></div>}
+        {item.cooldownRemainingMs != null && <div><dt className="inline">冷却剩余：</dt><dd className="inline text-text-main">{formatLatency(item.cooldownRemainingMs)}</dd></div>}
+        <div className="break-all sm:col-span-2"><dt className="inline">客户端：</dt><dd className="inline text-text-main">{item.userAgent || "未记录"}</dd></div>
       </dl>
     </div>
   );

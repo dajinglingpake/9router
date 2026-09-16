@@ -1,4 +1,4 @@
-import { getRequestLogContext } from "../../requestCaller.js";
+import { getRequestLogContext, getRequestTokenUsage } from "../../requestCaller.js";
 import { getAdapter } from "../driver.js";
 import { getRequestErrorInfo } from "../../requestErrorInfo.js";
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
@@ -46,12 +46,19 @@ export function saveRequestError(entry) {
   });
 }
 
-export async function markRequestErrorsRecovered(writes) {
+export async function markRequestErrorsRecovered(writes, usage) {
   const ids = (await Promise.all(writes)).filter(id => id != null);
   if (!ids.length) return;
   return write(db => db.transaction(() => {
     // UPDATE only: an already-cleared error must never be inserted again.
-    for (const id of ids) db.run(`UPDATE requestErrors SET recovered = 1 WHERE id = ?`, [id]);
+    const recoveredUsage = getRequestTokenUsage(usage);
+    for (const id of ids) {
+      const row = db.get(`SELECT data FROM requestErrors WHERE id = ?`, [id]);
+      if (!row) continue;
+      db.run(`UPDATE requestErrors SET recovered = 1, data = ? WHERE id = ?`, [
+        JSON.stringify({ ...JSON.parse(row.data), recoveredUsage }), id,
+      ]);
+    }
   }));
 }
 

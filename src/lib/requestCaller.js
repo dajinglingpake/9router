@@ -1,4 +1,5 @@
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
+import { canonicalizeUsage } from "open-sse/utils/usageTracking.js";
 
 const text = (value, max = 256) => typeof value === "string" ? value.trim().slice(0, max) || null : null;
 
@@ -19,10 +20,21 @@ export function getRequestCaller(context = {}) {
 
 const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
+// Keep provider-reported usage separate from local estimates and missing usage.
+export function getRequestTokenUsage(usage) {
+  if (!usage || usage.estimated) return { inputTokens: null, outputTokens: null };
+  const input = number(usage.prompt_tokens ?? usage.input_tokens);
+  return {
+    inputTokens: input === null ? null : number(canonicalizeUsage(usage)?.prompt_tokens),
+    outputTokens: number(usage.completion_tokens ?? usage.output_tokens),
+  };
+}
+
 // Capture the same fields shown for active/queued requests at the time of failure.
 export function getRequestLogContext(context = {}, now = Date.now()) {
   context ||= {};
   const startedAt = number(context.startedAt);
+  const usage = getRequestTokenUsage(context.tokens);
   return {
     ...getRequestCaller(context),
     upstreamModel: text(context.upstreamModel),
@@ -33,6 +45,9 @@ export function getRequestLogContext(context = {}, now = Date.now()) {
     state: text(context.state),
     stream: typeof context.stream === "boolean" ? context.stream : null,
     requestBytes: number(context.requestBytes),
+    estimatedInputTokens: number(context.estimatedInputTokens),
+    inputTokens: number(context.inputTokens) ?? usage.inputTokens,
+    outputTokens: number(context.outputTokens) ?? usage.outputTokens,
     startedAt,
     latencyMs: number(context.latencyMs) ?? (startedAt === null ? null : Math.max(0, now - startedAt)),
     queuedAt: number(context.queuedAt),

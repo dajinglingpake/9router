@@ -222,7 +222,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
       // Client is Responses API → return as-is
       if (sourceFormat === FORMATS.OPENAI_RESPONSES) {
-        return { success: true, response: new Response(JSON.stringify(jsonResponse), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+        return { success: true, usage, response: new Response(JSON.stringify(jsonResponse), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
       }
 
       // Build client-format response.
@@ -278,7 +278,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         };
       }
 
-      return { success: true, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+      return { success: true, usage, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
     } catch (err) {
       console.error("[ChatCore] Responses API SSE→JSON failed:", err);
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");
@@ -348,7 +348,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       ? chatCompletionToResponses(parsed, customToolNames)
       : parsed;
 
-    return { success: true, response: new Response(JSON.stringify(finalBody), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+    return { success: true, usage, response: new Response(JSON.stringify(finalBody), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
   } catch (err) {
     console.error("[ChatCore] Chat Completions SSE→JSON failed:", err);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");

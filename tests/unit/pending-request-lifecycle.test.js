@@ -15,12 +15,13 @@ vi.mock("@/lib/usageDb.js", async () => {
 });
 import { trackPendingRequest, getActiveRequests } from "../../src/lib/db/repos/usageRepo.js";
 import { handleChatCore } from "../../open-sse/handlers/chatCore.js";
+import { getRequestTokenUsage } from "../../src/lib/requestCaller.js";
 import { createStreamController } from "../../open-sse/utils/streamHandler.js";
 
 const log = { debug() {}, info() {}, warn() {}, line() {}, errorLine() {} };
 const account = "lifecycle-account";
 const model = "gpt-5.6-sol";
-const start = (requestId) => trackPendingRequest(model, "codex", account, true, false, { requestId, requestedModel: model, endpoint: "/v1/responses" });
+const start = (requestId, details = {}) => trackPendingRequest(model, "codex", account, true, false, { requestId, requestedModel: model, endpoint: "/v1/responses", ...details });
 const active = async () => (await getActiveRequests()).activeRequests.filter(item => item.connectionId === account);
 const options = (stream = true) => ({
   body: { model, input: "hello", stream }, modelInfo: { provider: "codex", model },
@@ -42,9 +43,10 @@ afterEach(() => {
 
 it("keeps request metadata and latency after more than 60 seconds until completion", async () => {
   vi.useFakeTimers();
-  const finish = start("long");
+  const finish = start("long", { deadline: Date.now() + 300000, apiKeyName: "原始调用方", apiKeyMasked: "test...1234" });
   await vi.advanceTimersByTimeAsync(125000);
   expect(await active()).toMatchObject([{ count: 1, latencyMs: 125000, requests: [{ requestId: "long", endpoint: "/v1/responses", latencyMs: 125000 }] }]);
+  expect((await active())[0].requests[0]).toMatchObject({ timeoutRemainingMs: 175000, apiKeyName: "原始调用方", apiKeyMasked: "test...1234" });
   finish();
   expect(await active()).toEqual([]);
 });
@@ -71,12 +73,15 @@ it.each(["handleComplete", "handleDisconnect", "handleError"])("cleans up throug
 it("tracks a real streaming chat until EOF and leaves a simultaneous request intact", async () => {
   let source;
   upstream(new Response(new ReadableStream({ start(controller) { source = controller; } }), { headers: { "content-type": "text/event-stream" } }));
-  const result = await handleChatCore(options());
+  const onRequestComplete = vi.fn();
+  const result = await handleChatCore({ ...options(), onRequestComplete });
+  expect(await active()).toMatchObject([{ requests: [{ userAgent: "codex-cli/0.144.1", estimatedInputTokens: expect.any(Number), inputTokens: null, outputTokens: null }] }]);
   const finishOther = start("other");
   const body = result.response.text();
-  source.enqueue(new TextEncoder().encode('event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'));
+  source.enqueue(new TextEncoder().encode('event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":180,"output_tokens":7}}}\n\n'));
   source.close();
   await body;
+  expect(getRequestTokenUsage(onRequestComplete.mock.calls[0][0])).toEqual({ inputTokens: 180, outputTokens: 7 });
   expect(await active()).toMatchObject([{ count: 1, requests: [{ requestId: "other" }] }]);
   finishOther();
 });
@@ -107,12 +112,14 @@ it("cleans up when the client cancels a real streaming response", async () => {
 it("keeps forced-stream JSON requests visible until the upstream stream ends", async () => {
   let source;
   upstream(new Response(new ReadableStream({ start(controller) { source = controller; } }), { headers: { "content-type": "text/event-stream" } }));
-  const result = handleChatCore(options(false));
+  const onRequestComplete = vi.fn();
+  const result = handleChatCore({ ...options(false), onRequestComplete });
   await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
   expect(await active()).toMatchObject([{ count: 1 }]);
-  source.enqueue(new TextEncoder().encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"r","status":"completed","output":[]}}\n\n'));
+  source.enqueue(new TextEncoder().encode('event: response.completed\ndata: {"type":"response.completed","response":{"id":"r","status":"completed","output":[],"usage":{"input_tokens":180,"output_tokens":7}}}\n\n'));
   source.close();
   await result;
+  expect(getRequestTokenUsage(onRequestComplete.mock.calls[0][0])).toEqual({ inputTokens: 180, outputTokens: 7 });
   expect(await active()).toEqual([]);
 });
 

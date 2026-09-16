@@ -24,7 +24,8 @@ it("retains each overload cause after recovery and expires error details after f
   expect(getModelRequestErrors()[0]).toMatchObject(caller);
   expect(getModelRequestErrors()[0]).toMatchObject({ upstreamModel: "sol", thinkingLevel: "high", latencyMs: 1500, requestBytes: 2048, sourceFormat: "openai-responses", targetFormat: "openai-responses", stream: true, state: "running" });
   expect(getModelRequestErrors()[0]).toMatchObject({ ...group, requestId: "r1", endpoint: "/v1/responses", recovered: false, message: "server_is_overloaded Bearer [REDACTED]", upstreamStatus: 200 });
-  tracker.onComplete();
+  tracker.onComplete({ input_tokens: 180, output_tokens: 7 });
+  expect(getModelRequestErrors()[0].recoveredUsage).toEqual({ inputTokens: 180, outputTokens: 7 });
   expect(getModelRequestErrors().every(entry => entry.recovered)).toBe(true);
   expect(getModelRequestStats()[0]).toMatchObject({ requests: 1, overloaded: 1, recovered: 1 });
   vi.advanceTimersByTime(5 * 60 * 1000 + 1);

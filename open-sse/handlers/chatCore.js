@@ -12,7 +12,8 @@ import { createErrorResult, parseUpstreamError, formatProviderError } from "../u
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
-import { getRequestLogContext } from "@/lib/requestCaller.js";
+import { getRequestCaller, getRequestLogContext } from "@/lib/requestCaller.js";
+import { estimateInputTokens } from "../utils/usageTracking.js";
 import { recordTraffic } from "@/lib/runtimeTraffic.js";
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
@@ -73,7 +74,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   })();
   const sessionTag = log?.tagForSession ? log.tagForSession(sessionSeed) : (log?.nextTag ? log.nextTag() : "");
   const reqTag = requestId ? `${sessionTag} #${requestId}/r${retryCount}` : sessionTag;
-  const requestLogContext = { ...clientRawRequest, startedAt: requestStartTime, requestTag: reqTag };
+  const requestLogContext = {
+    ...clientRawRequest, userAgent: getRequestCaller(clientRawRequest).userAgent || userAgent, startedAt: requestStartTime, requestTag: reqTag,
+    estimatedInputTokens: clientRawRequest?.estimatedInputTokens ?? estimateInputTokens(body),
+  };
   const reportOverload = onUpstreamOverload
     ? (details) => onUpstreamOverload({ ...details, requestContext: getRequestLogContext(requestLogContext) })
     : undefined;
@@ -330,6 +334,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   });
   recordTraffic({ direction: "upload", bytes: requestBytes });
   const finishPending = trackPendingRequest(model, provider, connectionId, true, false, {
+    ...getRequestLogContext(requestLogContext),
+    deadline: clientRawRequest?.deadline,
     retryCount,
     requestId,
     requestedModel: clientRawRequest?.body?.model || body.model,
@@ -525,7 +531,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (!clientRequestedStreaming && providerRequiresStreaming) {
       const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, customToolNames, appendLog });
       if (result) {
-        if (result.success) onRequestComplete?.();
+        if (result.success) onRequestComplete?.(result.usage);
         streamController.handleComplete();
         return result;
       }
@@ -534,7 +540,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     // True non-streaming response
     if (!stream) {
       const result = await handleNonStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, reqLogger, toolNameMap, customToolNames, appendLog });
-      if (result.success) onRequestComplete?.();
+      if (result.success) onRequestComplete?.(result.usage);
       streamController.handleComplete();
       return result;
     }

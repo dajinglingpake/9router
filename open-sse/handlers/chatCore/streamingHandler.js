@@ -114,7 +114,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
-    if (contentObj?.successful) onRequestComplete?.();
+    if (contentObj?.successful) onRequestComplete?.(usage);
     const latency = {
       ttft: ttftAt ? ttftAt - requestStartTime : Date.now() - requestStartTime,
       total: Date.now() - requestStartTime
