@@ -1,3 +1,4 @@
+import { getRequestLogContext } from "../../requestCaller.js";
 import { getAdapter } from "../driver.js";
 import { getRequestErrorInfo } from "../../requestErrorInfo.js";
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
@@ -16,6 +17,7 @@ export function saveRequestError(entry) {
   const info = getRequestErrorInfo(entry);
   if (!info) return Promise.resolve(null);
   const record = {
+    ...getRequestLogContext(entry),
     timestamp: entry.timestamp || Date.now(),
     connectionId: entry.connectionId || null, provider: entry.provider || null, model: entry.model || null,
     requestId: entry.requestId || null, retryCount: entry.retryCount || 0,

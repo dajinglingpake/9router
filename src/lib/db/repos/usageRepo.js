@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { getRequestLogContext } from "../../requestCaller.js";
 import { saveRequestError } from "./requestErrorsRepo.js";
 
 function maskApiKey(key) {
@@ -946,6 +947,7 @@ export async function appendRequestLog(entry = {}) {
   const status = String(entry.status || "");
   if (!/^(FAILED\s+)?(?:4\d\d|5\d\d)/i.test(status)) return;
   const error = {
+    ...getRequestLogContext(entry),
     timestamp: Date.now(), status,
     requestId: entry.requestId || null,
     retryCount: entry.retryCount || 0,

@@ -12,6 +12,7 @@ import { createErrorResult, parseUpstreamError, formatProviderError } from "../u
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { getRequestLogContext } from "@/lib/requestCaller.js";
 import { recordTraffic } from "@/lib/runtimeTraffic.js";
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
@@ -72,6 +73,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   })();
   const sessionTag = log?.tagForSession ? log.tagForSession(sessionSeed) : (log?.nextTag ? log.nextTag() : "");
   const reqTag = requestId ? `${sessionTag} #${requestId}/r${retryCount}` : sessionTag;
+  const requestLogContext = { ...clientRawRequest, startedAt: requestStartTime, requestTag: reqTag };
+  const reportOverload = onUpstreamOverload
+    ? (details) => onUpstreamOverload({ ...details, requestContext: getRequestLogContext(requestLogContext) })
+    : undefined;
+  const appendLog = (extra) => appendRequestLog({
+    ...getRequestLogContext(requestLogContext), model, provider, connectionId, requestId, retryCount,
+    endpoint: clientRawRequest?.endpoint || null, ...extra,
+  }).catch(() => {});
 
   const sourceFormat = sourceFormatOverride || detectFormat(body);
 
@@ -192,7 +201,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   } else {
     translatedBody = translateRequest(sourceFormat, targetFormat, upstreamModel, body, stream, credentials, provider, reqLogger, stripList, connectionId, clientTool);
     if (!translatedBody) {
-      appendRequestLog({ model, provider, connectionId, source: "router", status: `FAILED ${HTTP_STATUS.BAD_REQUEST}`, message: `Failed to translate request for ${sourceFormat} → ${targetFormat}` }).catch(() => { });
+      appendLog({ source: "router", status: `FAILED ${HTTP_STATUS.BAD_REQUEST}`, message: `Failed to translate request for ${sourceFormat} → ${targetFormat}` });
       return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Failed to translate request for ${sourceFormat} → ${targetFormat}`);
     }
     toolNameMap = translatedBody._toolNameMap;
@@ -311,6 +320,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     : thinkingConfig?.mode === "budget"
       ? `budget:${thinkingConfig.budget}`
       : thinkingConfig?.mode || null;
+  Object.assign(requestLogContext, {
+    requestBytes, stream, sourceFormat, targetFormat, upstreamModel,
+    thinkingLevel: thinkingLevel || "auto", startedAt: Date.now(), state: "running", position: null,
+  });
   recordTraffic({ direction: "upload", bytes: requestBytes });
   const finishPending = trackPendingRequest(model, provider, connectionId, true, false, {
     retryCount,
@@ -328,7 +341,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     requestTag: reqTag || null,
   });
   const trackDone = (failed = false) => finishPending?.(failed);
-  appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
+  appendLog({ status: "PENDING" });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;
   log?.debug?.("REQUEST", `${provider.toUpperCase()} | ${model} | ${msgCount} msgs`);
@@ -385,7 +398,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   try {
     const result = await executor.execute({
       diagnosticContext,
-      onUpstreamOverload,
+      onUpstreamOverload: reportOverload,
       model,
       body: translatedBody,
       stream,
@@ -404,7 +417,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackDone(true);
-    appendRequestLog({ model, provider, connectionId, requestId, retryCount, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}`, message: error.message || String(error) }).catch(() => { });
+    appendLog({ status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}`, message: error.message || String(error) });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -451,7 +464,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         try {
           const retryResult = await executor.execute({
             diagnosticContext,
-            onUpstreamOverload,
+            onUpstreamOverload: reportOverload,
             model,
             body: translatedBody,
             stream,
@@ -480,7 +493,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!providerResponse.ok) {
     trackDone(true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
-    appendRequestLog({ model, provider, connectionId, requestId, retryCount, status: `FAILED ${statusCode}`, message }).catch(() => { });
+    appendLog({ status: `FAILED ${statusCode}`, message });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -502,7 +515,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, onRequestComplete, pxpipe: pxpipeSummary, reqTag, log };
-  const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
 
   try {
     // Provider forced streaming but client wants JSON

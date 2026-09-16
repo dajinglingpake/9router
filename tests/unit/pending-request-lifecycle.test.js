@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, appendRequestLog } = vi.hoisted(() => ({ execute: vi.fn(), appendRequestLog: vi.fn(async () => {}) }));
 vi.mock("../../src/lib/db/driver.js", () => ({ getAdapter: async () => ({ all: () => [] }) }));
 vi.mock("../../open-sse/executors/index.js", () => ({ getExecutor: () => ({ noAuth: true, execute }) }));
 vi.mock("../../open-sse/utils/requestLogger.js", () => ({
@@ -11,7 +11,7 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
 }));
 vi.mock("@/lib/usageDb.js", async () => {
   const { trackPendingRequest } = await import("../../src/lib/db/repos/usageRepo.js");
-  return { trackPendingRequest, appendRequestLog: async () => {}, saveRequestDetail: async () => {}, saveRequestUsage: async () => {} };
+  return { trackPendingRequest, appendRequestLog, saveRequestDetail: async () => {}, saveRequestUsage: async () => {} };
 });
 import { trackPendingRequest, getActiveRequests } from "../../src/lib/db/repos/usageRepo.js";
 import { handleChatCore } from "../../open-sse/handlers/chatCore.js";
@@ -32,7 +32,7 @@ const options = (stream = true) => ({
 });
 const upstream = (response) => execute.mockResolvedValue({ response, url: "https://example.test/responses", headers: {}, transformedBody: null });
 
-beforeEach(() => { execute.mockReset(); });
+beforeEach(() => { execute.mockReset(); appendRequestLog.mockClear(); });
 afterEach(() => {
   for (const state of [global._pendingRequests.byModel, global._pendingRequests.byAccount, global._pendingRequestDetails, global._pendingRequestStarts]) {
     for (const key of Object.keys(state)) delete state[key];
@@ -119,7 +119,27 @@ it("keeps forced-stream JSON requests visible until the upstream stream ends", a
 it("cleans up an upstream fetch failure without touching another request", async () => {
   const finishOther = start("other");
   execute.mockRejectedValue(new Error("fetch failed"));
-  await handleChatCore(options());
+  const context = options();
+  Object.assign(context.clientRawRequest, { apiKeyRecordId: "caller-1", apiKeyName: "客户端甲", apiKeyMasked: "test...1234", clientIp: "192.0.2.10", headers: { "user-agent": "test-cli/1.0" } });
+  await handleChatCore(context);
+  expect(appendRequestLog).toHaveBeenCalledWith(expect.objectContaining({ status: "FAILED 502", apiKeyId: "caller-1", apiKeyName: "客户端甲", clientIp: "192.0.2.10", userAgent: "test-cli/1.0", requestedModel: model, endpoint: "/v1/responses" }));
   expect(await active()).toMatchObject([{ count: 1, requests: [{ requestId: "other" }] }]);
   finishOther();
+});
+
+it("passes the full active request snapshot to overload logging", async () => {
+  const overload = vi.fn();
+  execute.mockImplementation(async ({ onUpstreamOverload }) => {
+    onUpstreamOverload({ message: "busy", upstreamStatus: 503 });
+    return { response: new Response('{"error":{"message":"busy"}}', { status: 503, headers: { "content-type": "application/json" } }), headers: {}, url: "https://example.test/responses" };
+  });
+  const context = options();
+  context.body.reasoning = { effort: "high" };
+  Object.assign(context.clientRawRequest, { apiKeyName: "客户端甲", clientIp: "192.0.2.10", waitMs: 1200 });
+  await handleChatCore({ ...context, onUpstreamOverload: overload });
+  expect(overload).toHaveBeenCalledWith(expect.objectContaining({ requestContext: expect.objectContaining({
+    apiKeyName: "客户端甲", clientIp: "192.0.2.10", requestedModel: model, upstreamModel: model,
+    thinkingLevel: "high", stream: true, sourceFormat: "openai-responses", targetFormat: "openai-responses",
+    startedAt: expect.any(Number), latencyMs: expect.any(Number), requestBytes: expect.any(Number), waitMs: 1200, state: "running",
+  }) }));
 });

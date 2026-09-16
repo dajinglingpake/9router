@@ -15,10 +15,14 @@ const group = { connectionId: "a", provider: "codex", model: "sol" };
 
 it("retains each overload cause after recovery and expires error details after five minutes", () => {
   vi.useFakeTimers();
-  const tracker = trackModelRequest({}, { ...group, requestId: "r1", endpoint: "/v1/responses" });
-  tracker.onOverload({ message: "server_is_overloaded Bearer secret", upstreamStatus: 200, sseAttempt: 1, headers: { "x-request-id": "upstream-1" } });
+  const caller = { apiKeyId: "caller-1", apiKeyName: "客户端甲", apiKeyMasked: "test...1234", clientIp: "192.0.2.10", userAgent: "test-cli/1.0", requestedModel: "client-alias" };
+  const tracker = trackModelRequest({}, { ...group, requestId: "r1", endpoint: "/v1/responses", caller });
+  tracker.onOverload({ message: "server_is_overloaded Bearer secret", upstreamStatus: 200, sseAttempt: 1, requestContext: { upstreamModel: "sol", thinkingLevel: "high", latencyMs: 1500, requestBytes: 2048, sourceFormat: "openai-responses", targetFormat: "openai-responses", stream: true, state: "running" }, headers: { "x-request-id": "upstream-1" } });
   tracker.onOverload({ message: "still busy", upstreamStatus: 200, sseAttempt: 2 });
   expect(getModelRequestErrors()).toHaveLength(2);
+  expect(getModelRequestErrors().every(entry => entry.apiKeyName === caller.apiKeyName && entry.clientIp === caller.clientIp)).toBe(true);
+  expect(getModelRequestErrors()[0]).toMatchObject(caller);
+  expect(getModelRequestErrors()[0]).toMatchObject({ upstreamModel: "sol", thinkingLevel: "high", latencyMs: 1500, requestBytes: 2048, sourceFormat: "openai-responses", targetFormat: "openai-responses", stream: true, state: "running" });
   expect(getModelRequestErrors()[0]).toMatchObject({ ...group, requestId: "r1", endpoint: "/v1/responses", recovered: false, message: "server_is_overloaded Bearer [REDACTED]", upstreamStatus: 200 });
   tracker.onComplete();
   expect(getModelRequestErrors().every(entry => entry.recovered)).toBe(true);

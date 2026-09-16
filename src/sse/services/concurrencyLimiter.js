@@ -52,11 +52,12 @@ export function queueTimeoutMs() {
 }
 
 export class ConcurrencyQueueError extends Error {
-  constructor(message, code, status) {
+  constructor(message, code, status, requestContext = null) {
     super(message);
     this.name = "ConcurrencyQueueError";
     this.code = code;
     this.status = status;
+    this.requestContext = requestContext;
   }
 }
 
@@ -77,6 +78,22 @@ function getPool(key, limit, hidden = false, metadata = null) {
 function removeWaiter(pool, waiter) {
   const index = pool.queue.indexOf(waiter);
   if (index >= 0) pool.queue.splice(index, 1);
+}
+
+// Reuse the dashboard snapshot when a queued request fails so its position and
+// waiting time are captured before it is removed from the queue.
+function queueRequestSnapshot(pool, waiter, index = pool.queue.indexOf(waiter)) {
+  const cooldownRemainingMs = Math.max(0, (pool.blockedUntil || 0) - Date.now());
+  return {
+    requestId: waiter.requestId,
+    position: index + 1,
+    queuedAt: waiter.queuedAt,
+    waitMs: Math.max(0, Date.now() - waiter.queuedAt),
+    state: cooldownRemainingMs ? "cooldown" : pool.recovering ? "recovering" : "queued",
+    cooldownRemainingMs,
+    timeoutRemainingMs: Math.max(0, waiter.deadline - Date.now()),
+    ...displayMetadata(waiter.metadata),
+  };
 }
 
 function makePermit(key, pool, queuedAt) {
@@ -109,11 +126,11 @@ function dispatch(key, pool) {
       if (waiter.deadline <= Date.now()) {
         clearTimeout(waiter.timer);
         waiter.signal?.removeEventListener("abort", waiter.onAbort);
-        waiter.reject(new ConcurrencyQueueError("账号繁忙，排队等待超时，请稍后重试。", "queue_timeout", 503));
+        waiter.reject(new ConcurrencyQueueError("账号繁忙，排队等待超时，请稍后重试。", "queue_timeout", 503, queueRequestSnapshot(pool, waiter, 0)));
         continue;
       }
       if (waiter.signal?.aborted) {
-        waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
+        waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499, queueRequestSnapshot(pool, waiter, 0)));
         continue;
       }
       clearTimeout(waiter.timer);
@@ -131,11 +148,11 @@ function dispatch(key, pool) {
     if (waiter.deadline <= Date.now()) {
       clearTimeout(waiter.timer);
       waiter.signal?.removeEventListener("abort", waiter.onAbort);
-      waiter.reject(new ConcurrencyQueueError("账号繁忙，排队等待超时，请稍后重试。", "queue_timeout", 503));
+      waiter.reject(new ConcurrencyQueueError("账号繁忙，排队等待超时，请稍后重试。", "queue_timeout", 503, queueRequestSnapshot(pool, waiter, 0)));
       continue;
     }
     if (waiter.signal?.aborted) {
-      waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
+      waiter.reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499, queueRequestSnapshot(pool, waiter, 0)));
       continue;
     }
 
@@ -212,15 +229,17 @@ export function acquireConcurrencySlot({ scope, id, limit, signal, onQueued, req
     };
 
     waiter.onAbort = () => {
+      const requestContext = queueRequestSnapshot(pool, waiter);
       removeWaiter(pool, waiter);
       clearTimeout(waiter.timer);
-      reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499));
+      reject(new ConcurrencyQueueError("Request aborted while waiting for concurrency slot", "queue_aborted", 499, requestContext));
       dispatch(key, pool);
     };
     waiter.timer = setTimeout(() => {
+      const requestContext = queueRequestSnapshot(pool, waiter);
       removeWaiter(pool, waiter);
       signal?.removeEventListener("abort", waiter.onAbort);
-      reject(new ConcurrencyQueueError("账号繁忙，排队等待超时，请稍后重试。", "queue_timeout", 503));
+      reject(new ConcurrencyQueueError("账号繁忙，排队等待超时，请稍后重试。", "queue_timeout", 503, requestContext));
       dispatch(key, pool);
     }, deadline === null ? queueTimeoutMs() : Math.max(0, deadline - Date.now()));
 
@@ -325,16 +344,7 @@ export function getConcurrencySnapshot() {
       limit: pool.limit,
       state,
       cooldownRemainingMs,
-      queue: pool.queue.map((waiter, index) => ({
-        requestId: waiter.requestId,
-        position: index + 1,
-        queuedAt: waiter.queuedAt,
-        waitMs: Math.max(0, Date.now() - waiter.queuedAt),
-        state: state === "running" ? "queued" : state,
-        cooldownRemainingMs,
-        timeoutRemainingMs: Math.max(0, waiter.deadline - Date.now()),
-        ...displayMetadata(waiter.metadata),
-      })),
+      queue: pool.queue.map((waiter, index) => queueRequestSnapshot(pool, waiter, index)),
     };
   }).filter(Boolean);
 }

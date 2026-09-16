@@ -5,12 +5,13 @@ const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   isValidApiKey: vi.fn(),
   getModelInfo: vi.fn(),
+  getApiKeyByValue: vi.fn(),
 }));
 vi.mock("open-sse/index.js", () => ({}));
 vi.mock("@/lib/usageDb.js", () => ({ appendRequestLog: mocks.appendRequestLog }));
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
-  getApiKeyByValue: async () => null,
+  getApiKeyByValue: mocks.getApiKeyByValue,
   getProviderConnectionById: vi.fn(),
   getProviderConnections: async () => [],
 }));
@@ -34,8 +35,23 @@ import { handleChat } from "../../src/sse/handlers/chat.js";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getSettings.mockResolvedValue({ requireApiKey: false });
+  mocks.getApiKeyByValue.mockResolvedValue(null);
   mocks.isValidApiKey.mockResolvedValue(false);
   mocks.getModelInfo.mockResolvedValue({ provider: "test", model: "test-model" });
+});
+
+it("records the authenticated caller on router errors without logging credentials", async () => {
+  mocks.getApiKeyByValue.mockResolvedValue({ id: "caller-1", name: "客户端甲", isActive: true });
+  await handleChat(new Request("http://localhost/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer private-key", "x-forwarded-for": "192.0.2.10", "user-agent": "test-cli/1.0", "x-request-id": "caller-request" },
+    body: JSON.stringify({ model: "test-model", apiKeyName: "伪造名称", apiKey: "body-secret" }),
+  }));
+  expect(mocks.appendRequestLog).toHaveBeenCalledWith(expect.objectContaining({
+    status: "FAILED 503", apiKeyId: "caller-1", apiKeyName: "客户端甲", apiKeyMasked: "masked",
+    clientIp: "192.0.2.10", userAgent: "test-cli/1.0", requestId: "caller-request", requestedModel: "test-model",
+  }));
+  expect(JSON.stringify(mocks.appendRequestLog.mock.calls)).not.toMatch(/private-key|body-secret|伪造名称/);
 });
 
 it.each(["not json", "null", "[]"])("records invalid input %s before upstream work", async (body) => {

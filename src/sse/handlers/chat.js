@@ -10,6 +10,7 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { appendRequestLog } from "@/lib/usageDb.js";
+import { getRequestLogContext } from "@/lib/requestCaller.js";
 import { trackModelRequest } from "@/lib/runtimeModelStats.js";
 import { getSessionRoutingKey, NEW_SESSION_HINT } from "../services/sessionRouting.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -46,8 +47,11 @@ const requestIds = new WeakMap();
 
 function rejectChatRequest(status, message, context, source = "client") {
   appendRequestLog({
+    ...getRequestLogContext(context),
+    requestId: context?.requestId || null,
     status: `FAILED ${status}`, message, source,
-    model: typeof context?.body?.model === "string" ? context.body.model : null,
+    model: context?.routingModel || (typeof context?.body?.model === "string" ? context.body.model : null),
+    provider: context?.provider || null, connectionId: context?.connectionId || null, retryCount: context?.retryCount || 0,
     endpoint: context?.endpoint || null,
   }).catch(() => {});
   return errorResponse(status, message);
@@ -95,7 +99,7 @@ function buildConcurrencyMetadata({ body, clientRawRequest, request, provider, m
     requestedModel,
     routingModel: model,
     upstreamModel: model ? getModelUpstreamId(alias, model) : null,
-    thinkingLevel,
+    thinkingLevel: thinkingLevel || "auto",
     sourceFormat,
     targetFormat,
     requestBytes,
@@ -156,6 +160,7 @@ async function getProviderCapacityState(provider) {
  */
 export async function handleChat(request, clientRawRequest = null) {
   const requestId = getRequestId(request);
+  const callerApiKey = extractApiKey(request);
   let requestBody = clientRawRequest?.body || null;
   if (!requestBody) {
     try { requestBody = await request.clone().json(); } catch { requestBody = null; }
@@ -166,6 +171,13 @@ export async function handleChat(request, clientRawRequest = null) {
       try { return new URL(request.url).pathname; } catch { return null; }
     })(),
     body: requestBody,
+    requestId,
+    startedAt: Date.now(),
+    requestBytes: requestBody ? Buffer.byteLength(JSON.stringify(requestBody), "utf8") : null,
+    stream: requestBody ? requestBody.stream !== false : null,
+    apiKeyName: callerApiKey ? "未命名 API Key" : "未使用 API Key",
+    apiKeyRecordId: null,
+    apiKeyMasked: callerApiKey ? log.maskKey(callerApiKey) : null,
     headers: clientRawRequest?.headers || Object.fromEntries(request.headers.entries()),
     clientIp: clientRawRequest?.clientIp || extractClientIp(request),
   };
@@ -190,12 +202,12 @@ export async function handleChat(request, clientRawRequest = null) {
         hideFromSnapshot: true,
       });
     } catch (error) {
-      if (error instanceof ConcurrencyQueueError) return rejectChatRequest(error.status, error.message, requestContext, "router");
+      if (error instanceof ConcurrencyQueueError) return rejectChatRequest(error.status, error.message, { ...requestContext, ...error.requestContext }, "router");
       throw error;
     }
 
     try {
-      const apiKey = extractApiKey(request);
+      const apiKey = callerApiKey;
       if (apiKey) {
         const record = await getApiKeyByValue(apiKey);
         requestContext.apiKeyName = record?.name || "未命名 API Key";
@@ -328,7 +340,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let apiKeyPermit = null;
   let accountPermit = null;
   let responseOwnsPermits = false;
-  const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model, requestId, endpoint: clientRawRequest?.endpoint });
+  Object.assign(clientRawRequest, { provider, routingModel: model, connectionId: credentials.connectionId, retryCount, deadline });
+  const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model, requestId, endpoint: clientRawRequest?.endpoint, caller: clientRawRequest });
   try {
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -358,6 +371,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     });
     const apiKeyRecordId = clientRawRequest?.apiKeyRecordId || null;
     concurrencyMetadata.retryCount = retryCount;
+    Object.assign(clientRawRequest, concurrencyMetadata);
     const apiKeyLimit = Number(clientRawRequest?.apiKeyLimit) || 0;
 
     // API Key limits are a backstop, not a hard admission gate. Let requests
@@ -381,7 +395,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             },
           });
         } catch (error) {
-          if (error instanceof ConcurrencyQueueError) return rejectChatRequest(error.status, error.message, clientRawRequest, "router");
+          if (error instanceof ConcurrencyQueueError) return rejectChatRequest(error.status, error.message, { ...clientRawRequest, ...error.requestContext }, "router");
           throw error;
         }
       }
@@ -407,12 +421,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // Register the active/queued slot before releasing the selection reservation.
       credentials.releaseSelection?.();
       accountPermit = await accountPermitPromise;
+      clientRawRequest.state = "running";
+      clientRawRequest.waitMs = accountPermit.waitMs;
+      clientRawRequest.queuedAt = accountPermit.queued ? Date.now() - accountPermit.waitMs : null;
     } catch (error) {
       if (error instanceof ConcurrencyQueueError) {
         // A queue timeout is a capacity failure for this request, not an
         // upstream account error. Return immediately instead of waiting on
         // every account in sequence.
-        return rejectChatRequest(error.status, error.message, clientRawRequest, "router");
+        return rejectChatRequest(error.status, error.message, { ...clientRawRequest, ...error.requestContext }, "router");
       }
       throw error;
     }

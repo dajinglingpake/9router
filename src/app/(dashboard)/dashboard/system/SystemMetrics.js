@@ -47,12 +47,12 @@ function queueStatus(item) {
   return "排队等待";
 }
 
-function RequestDetails({ item, index, waiting = false }) {
-  const status = waiting ? queueStatus(item) : item.retryCount > 0 ? `第 ${item.retryCount} 次重试` : "请求执行中";
-  const startedAt = item.startedAt || item.queuedAt;
-  const statusColor = waiting ? "text-amber-700" : "text-primary";
+function RequestDetails({ item, index, waiting = false, failed = false }) {
+  const status = failed ? (item.recovered ? "已重试成功" : "请求失败") : waiting ? queueStatus(item) : item.retryCount > 0 ? `第 ${item.retryCount} 次重试` : "请求执行中";
+  const startedAt = waiting ? item.queuedAt || item.startedAt : item.startedAt || item.queuedAt;
+  const statusColor = failed ? (item.recovered ? "text-emerald-600" : "text-red-600") : waiting ? "text-amber-700" : "text-primary";
   return (
-    <div className={`rounded-md border p-3 ${waiting ? "border-amber-200 bg-amber-50/60" : "border-border-subtle bg-surface"}`}>
+    <div data-i18n-skip className={`rounded-md border p-3 ${waiting ? "border-amber-200 bg-amber-50/60" : "border-border-subtle bg-surface"}`}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium text-text-main">请求 #{index + 1}</span>
         <span className={`rounded-full px-2 py-0.5 font-semibold tabular-nums ${statusColor} ${waiting ? "bg-amber-500/15" : "bg-primary/10"}`}>{status}</span>
@@ -60,19 +60,24 @@ function RequestDetails({ item, index, waiting = false }) {
       <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
         <div><dt className="inline">状态：</dt><dd className={`inline font-semibold ${statusColor}`}>{status}</dd></div>
         <div><dt className="inline">队列位置：</dt><dd className="inline text-text-main">{item.position || "—"}</dd></div>
-        <div><dt className="inline">{waiting ? "已等待：" : "请求延迟："}</dt><dd className="inline text-text-main">{formatLatency(waiting ? item.waitMs : item.latencyMs)}</dd></div>
+        <div><dt className="inline">{waiting ? "已等待：" : "请求延迟："}</dt><dd className="inline text-text-main">{failed && (waiting ? item.waitMs : item.latencyMs) == null ? "未记录" : formatLatency(waiting ? item.waitMs : item.latencyMs)}</dd></div>
         <div><dt className="inline">距离超时：</dt><dd className="inline text-text-main">{item.timeoutRemainingMs == null ? "—" : formatLatency(item.timeoutRemainingMs)}</dd></div>
         <div><dt className="inline">客户端 IP：</dt><dd className="inline text-text-main">{item.clientIp || "—"}</dd></div>
-        <div><dt className="inline">API Key：</dt><dd className="inline text-text-main">{item.apiKeyName || "未使用 API Key"}{item.apiKeyMasked ? `（${item.apiKeyMasked}）` : ""}</dd></div>
+        <div><dt className="inline">API Key：</dt><dd className="inline text-text-main">{item.apiKeyName || (failed ? "未记录" : "未使用 API Key")}{item.apiKeyMasked ? `（${item.apiKeyMasked}）` : ""}</dd></div>
         <div><dt className="inline">开始时间：</dt><dd className="inline text-text-main">{startedAt ? new Date(startedAt).toLocaleTimeString() : "—"}</dd></div>
         <div><dt className="inline">客户端模型：</dt><dd className="inline break-all font-mono text-text-main">{item.requestedModel || "—"}</dd></div>
         <div><dt className="inline">上游模型：</dt><dd className="inline break-all font-mono text-text-main">{item.upstreamModel || "—"}</dd></div>
         <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{item.requestBytes != null ? formatBytes(item.requestBytes) : "—"}</dd></div>
         <div><dt className="inline">请求端点：</dt><dd className="inline break-all font-mono text-text-main">{item.endpoint || "—"}</dd></div>
-        <div><dt className="inline">模型级别：</dt><dd className="inline font-semibold text-text-main">{item.thinkingLevel || "auto"}</dd></div>
+        <div><dt className="inline">模型级别：</dt><dd className="inline font-semibold text-text-main">{item.thinkingLevel || (failed ? "未记录" : "auto")}</dd></div>
         <div><dt className="inline">格式：</dt><dd className="inline text-text-main">{item.sourceFormat || "—"} → {item.targetFormat || "—"}</dd></div>
         <div><dt className="inline">响应模式：</dt><dd className="inline text-text-main">{item.stream == null ? "—" : item.stream ? "流式" : "JSON"}</dd></div>
         <div><dt className="inline">请求 ID：</dt><dd className="inline font-mono text-text-main">{item.requestId ? `#${item.requestId.slice(0, 8)}` : "—"}</dd></div>
+        {failed && <div><dt className="inline">重试次数：</dt><dd className="inline text-text-main">{item.retryCount || 0}</dd></div>}
+        {failed && <div><dt className="inline">错误时状态：</dt><dd className="inline text-text-main">{({ running: "执行中", queued: "排队中", cooldown: "冷却等待", recovering: "等待重试" })[item.state] || "未记录"}</dd></div>}
+        {failed && !waiting && item.waitMs != null && <div><dt className="inline">排队耗时：</dt><dd className="inline text-text-main">{formatLatency(item.waitMs)}</dd></div>}
+        {failed && item.cooldownRemainingMs != null && <div><dt className="inline">冷却剩余：</dt><dd className="inline text-text-main">{formatLatency(item.cooldownRemainingMs)}</dd></div>}
+        {failed && <div className="break-all sm:col-span-2"><dt className="inline">客户端：</dt><dd className="inline text-text-main">{item.userAgent || "未记录"}</dd></div>}
       </dl>
     </div>
   );
@@ -285,9 +290,10 @@ export default function SystemMetrics() {
                   {item.provider || "—"} / {item.model || "—"}
                   <span className="ml-2 text-text-muted">{new Date(item.timestamp).toLocaleString()}</span>
                   {item.transient && <span className={`ml-2 font-medium ${item.recovered ? "text-emerald-600" : "text-amber-600"}`}>{item.recovered ? "已重试成功" : "尚未重试成功"}</span>}
+                  <span className="mt-1 block break-words text-xs text-text-muted" data-i18n-skip>调用方：{item.apiKeyName || "未记录"} · IP：{item.clientIp && item.clientIp !== "unknown" ? item.clientIp : "未记录"}</span>
                 </summary>
-                <p className="mt-3 text-xs text-text-muted">{item.account} · 状态码：{item.statusCode || item.status}</p>
-                {item.endpoint && <p className="mt-1 break-all text-xs text-text-muted">请求接口：{item.endpoint}</p>}
+                <p className="mt-3 text-xs text-text-muted">上游账号：{item.account} · 状态码：{item.statusCode || item.status}</p>
+                <div className="mt-2 text-xs text-text-muted"><RequestDetails item={item} index={index} waiting={["queued", "cooldown", "recovering"].includes(item.state)} failed /></div>
                 {item.transient && <p className="mt-1 text-xs text-text-muted">上游 HTTP：{item.upstreamStatus || "—"} · 排队重试 {item.retryCount} 次 · 流式尝试第 {item.sseAttempt} 次 · HTTP 尝试第 {item.attempt} 次</p>}
                 {item.requestId && <p className="mt-1 break-all text-xs text-text-muted">请求 ID：{item.requestId}</p>}
                 <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-bg p-3 text-xs text-text-main">{item.message || "该记录未保存错误原因，详情请查看对应时间的服务端容器日志。"}</pre>

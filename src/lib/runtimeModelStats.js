@@ -1,3 +1,4 @@
+import { getRequestLogContext } from "./requestCaller.js";
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 import { saveRequestError, markRequestErrorsRecovered } from "./db/repos/requestErrorsRepo.js";
 
@@ -10,7 +11,7 @@ function pruneErrors() {
   while (state.errors.length && state.errors[0].timestamp < cutoff) state.errors.shift();
 }
 
-export function trackModelRequest(request, { connectionId, provider, model, requestId = null, endpoint = null }) {
+export function trackModelRequest(request, { connectionId, provider, model, requestId = null, endpoint = null, caller = {} }) {
   const key = JSON.stringify([connectionId, provider, model]);
   let requests = request && state.requests.get(request);
   if (!requests) {
@@ -37,6 +38,7 @@ export function trackModelRequest(request, { connectionId, provider, model, requ
       }
       if (details) {
         const entry = {
+          ...getRequestLogContext({ ...caller, ...details.requestContext }),
           timestamp: Date.now(), connectionId, provider, model, requestId, endpoint,
           status: "FAILED 503", source: "upstream", transient: true, recovered: false,
           message: safeDiagnosticMessage(details.message || "上游服务繁忙或暂不可用"),

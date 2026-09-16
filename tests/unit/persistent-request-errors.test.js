@@ -26,7 +26,8 @@ afterEach(async () => {
 const error = { provider: "codex", model: "sol", connectionId: "a", status: "FAILED 503", transient: true, requestId: "r1", message: "server_is_overloaded" };
 
 it("retains sanitized errors and recovery across DB reopen, including records older than five minutes", async () => {
-  const saved = saveRequestError({ ...error, timestamp: Date.now() - 600000, apiKey: "secret", headers: { authorization: "Bearer secret", "x-request-id": "up-1" } });
+  const caller = { apiKeyId: "caller-1", apiKeyName: "已删除的调用方", apiKeyMasked: "test...1234", clientIp: "192.0.2.10", userAgent: "test-cli/1.0", requestedModel: "client-alias", upstreamModel: "sol", thinkingLevel: "high", stream: false, requestBytes: 2048, sourceFormat: "openai-responses", targetFormat: "openai-responses", startedAt: Date.now() - 601500, latencyMs: 1500, queuedAt: Date.now() - 602000, waitMs: 500, position: 1, timeoutRemainingMs: 0, cooldownRemainingMs: 30000, state: "cooldown" };
+  const saved = saveRequestError({ ...error, ...caller, timestamp: Date.now() - 600000, apiKey: "secret", headers: { authorization: "Bearer secret", "x-request-id": "up-1" } });
   await markRequestErrorsRecovered([saved]);
   state.db.close();
   state.db = await createSqlJsAdapter(file);
@@ -34,6 +35,8 @@ it("retains sanitized errors and recovery across DB reopen, including records ol
   expect(result.total).toBe(1);
   expect(result.items[0]).toMatchObject({ message: "server_is_overloaded", recovered: true, headers: { "x-request-id": "up-1" } });
   expect(result.items[0]).not.toHaveProperty("apiKey");
+  expect(result.items[0]).toMatchObject(caller);
+  expect(state.db.get("SELECT data FROM requestErrors").data).not.toContain("secret");
   expect(await getRecentRequestErrorCount()).toBe(0);
 });
 
@@ -68,10 +71,11 @@ it("deduplicates outer 503 summaries and keeps statistics when logs are cleared"
 });
 
 it("requires an explicit clear boundary and confirmation, and serves account labels", async () => {
-  await saveRequestError(error);
+  await saveRequestError({ ...error, apiKeyName: "客户端甲", clientIp: "192.0.2.10" });
   const get = await GET(new Request("http://localhost/api/system/errors?connectionId=a"));
   const result = await get.json();
   expect(result.items[0].account).toBe("Account A");
+  expect(result.items[0]).toMatchObject({ apiKeyName: "客户端甲", clientIp: "192.0.2.10" });
   const request = body => new Request("http://localhost/api/system/errors", { method: "DELETE", body: JSON.stringify(body) });
   expect((await DELETE(request({ beforeId: result.beforeId }))).status).toBe(400);
   expect((await DELETE(request({ confirmed: true }))).status).toBe(400);
