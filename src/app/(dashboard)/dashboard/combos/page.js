@@ -49,6 +49,8 @@ export default function CombosPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCombo, setEditingCombo] = useState(null);
+  const [editingScope, setEditingScope] = useState("common");
+  const [createScope, setCreateScope] = useState("common");
   const [activeProviders, setActiveProviders] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
   const [capacityAdapter, setCapacityAdapter] = useState(EMPTY_CAPACITY_ADAPTER);
@@ -105,10 +107,11 @@ export default function CombosPage() {
 
   const handleCreate = async (data) => {
     try {
-      const res = await fetch("/api/combos", {
-        method: "POST",
+      const { comboId, ...payload } = data;
+      const res = await fetch(comboId ? `/api/combos/${comboId}` : "/api/combos", {
+        method: comboId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         await fetchData();
@@ -198,20 +201,54 @@ export default function CombosPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="text-sm text-text-muted mt-1">
-            Group models under one name, then pick a strategy per combo:
+          <p className="text-sm text-text-muted mt-1" data-i18n-skip>
+            通用组合供所有账号使用；账号定制可为同名组合设置不同模型。
           </p>
-          <ul className="text-sm text-text-muted mt-2 flex flex-col gap-1">
-            <li><span className="font-medium text-text-main">Fallback</span> — tries models in order (next on failure)</li>
-            <li><span className="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load</li>
-            <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
-          </ul>
         </div>
-        <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto whitespace-nowrap">
+        <Button icon="add" onClick={() => { setCreateScope("common"); setShowCreateModal(true); }} className="w-full sm:w-auto whitespace-nowrap">
           Create Combo
         </Button>
       </div>
 
+      {/* Account overrides are separate groups, including accounts still inheriting defaults. */}
+      {activeProviders.length > 0 && (
+        <section className="flex flex-col gap-3" data-i18n-skip>
+          <h2 className="text-base font-semibold">账号定制</h2>
+          {activeProviders.map(account => {
+            const customCombos = combos.filter(c => c.accountOverrides?.[account.id]);
+            return (
+              <section key={account.id} className="rounded-xl border border-border p-3 flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-medium break-all">{account.provider} · {account.email || account.name || account.id}</h3>
+                  <Button size="sm" variant="ghost" icon="add" onClick={() => { setCreateScope(account.id); setShowCreateModal(true); }}>
+                    添加定制
+                  </Button>
+                </div>
+                {customCombos.length === 0 ? (
+                  <p className="text-xs text-text-muted">使用通用组合，尚未单独配置。</p>
+                ) : customCombos.map(combo => (
+                  <ComboCard
+                    key={combo.id}
+                    combo={{ ...combo, models: combo.accountOverrides[account.id] }}
+                    accountScoped
+                    getCaps={getCaps}
+                    copied={copied}
+                    onCopy={copy}
+                    onEdit={() => { setEditingScope(account.id); setEditingCombo(combo); }}
+                    onDelete={() => {
+                      const overrides = { ...combo.accountOverrides };
+                      delete overrides[account.id];
+                      handleUpdate(combo.id, { accountOverrides: overrides });
+                    }}
+                  />
+                ))}
+              </section>
+            );
+          })}
+        </section>
+      )}
+
+      <h2 className="text-base font-semibold" data-i18n-skip>通用组合</h2>
       {/* Combos List */}
       {combos.length === 0 ? (
         <Card>
@@ -221,7 +258,7 @@ export default function CombosPage() {
             </div>
             <p className="text-text-main font-medium mb-1">No combos yet</p>
             <p className="text-sm text-text-muted mb-4">Create model combos with fallback support</p>
-            <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto">
+            <Button icon="add" onClick={() => { setCreateScope("common"); setShowCreateModal(true); }} className="w-full sm:w-auto">
               Create Combo
             </Button>
           </div>
@@ -236,7 +273,7 @@ export default function CombosPage() {
               activeProviders={activeProviders}
               copied={copied}
               onCopy={copy}
-              onEdit={() => setEditingCombo(combo)}
+              onEdit={() => { setEditingScope("common"); setEditingCombo(combo); }}
               onDelete={() => handleDelete(combo.id)}
               strategy={comboStrategies[combo.name] || {}}
               onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
@@ -256,7 +293,9 @@ export default function CombosPage() {
       {/* Create Modal - Use key to force remount and reset state */}
       {showCreateModal && (
         <ComboFormModal
-          key="create"
+          key={`create-${createScope}`}
+          initialScope={createScope}
+          combos={combos}
           isOpen={showCreateModal}
           onClose={() => setShowCreateModal(false)}
           onSave={handleCreate}
@@ -266,7 +305,8 @@ export default function CombosPage() {
 
       {editingCombo && (
         <ComboFormModal
-          key={editingCombo.id}
+          key={`${editingCombo.id}-${editingScope}`}
+          initialScope={editingScope}
           isOpen={!!editingCombo}
           combo={editingCombo}
           onClose={() => setEditingCombo(null)}
@@ -294,7 +334,7 @@ const STRATEGY_OPTIONS = [
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
 
-function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
+function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, accountScoped = false }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
@@ -324,13 +364,6 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
                 <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
               )}
             </div>
-            {Object.entries(combo.accountOverrides || {}).map(([id, models]) => {
-              const account = activeProviders.find(p => p.id === id);
-              if (!account) return null;
-              return <p key={id} className="mt-1 break-all text-xs text-text-muted" data-i18n-skip>
-                {account.email || account.name || id}：{models[0]}（账号定制）
-              </p>;
-            })}
             {/* Fusion: judge picker (Auto = first model) */}
             {isFusion && (
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -359,15 +392,15 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
 
         {/* Actions */}
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:shrink-0">
-          {/* Strategy selector — always visible */}
-          <div className="w-full sm:w-[200px]">
+          {/* Common strategy is shared by account customizations. */}
+          {!accountScoped && <div className="w-full sm:w-[200px]">
             <Select
               options={STRATEGY_OPTIONS}
               value={current}
               onChange={(e) => onSetStrategy({ fallbackStrategy: e.target.value })}
               selectClassName="py-1.5 text-xs"
             />
-          </div>
+          </div>}
 
           <div className="grid grid-cols-3 gap-1 sm:flex">
             <button
@@ -391,10 +424,10 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
             <button
               onClick={onDelete}
               className="flex flex-col items-center rounded px-2 py-1 text-red-500 transition-colors hover:bg-red-500/10"
-              title="Delete"
+              title={accountScoped ? "恢复通用配置" : "Delete"}
             >
-              <span className="material-symbols-outlined text-[18px]">delete</span>
-              <span className="text-[10px] leading-tight">Delete</span>
+              <span className="material-symbols-outlined text-[18px]">{accountScoped ? "undo" : "delete"}</span>
+              <span className="text-[10px] leading-tight">{accountScoped ? "恢复通用" : "Delete"}</span>
             </button>
           </div>
         </div>
@@ -657,17 +690,19 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null }) {
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null, initialScope = "common", combos = [] }) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
   const [commonModels, setCommonModels] = useState(combo?.models || []);
-  const [scope, setScope] = useState("common");
+  const [scope, setScope] = useState(initialScope);
+  const [baseComboId, setBaseComboId] = useState("");
   const [accountOverrides, setAccountOverrides] = useState(() => Object.fromEntries(
     Object.entries(combo?.accountOverrides || {}).filter(([id]) => activeProviders.some(p => p.id === id))
   ));
   const account = activeProviders.find(p => p.id === scope);
   const customized = !!account && Object.hasOwn(accountOverrides, scope);
   const inherited = !!account && !customized;
+  const creatingOverride = !combo && !!account;
   const models = customized ? accountOverrides[scope] : commonModels;
   const setModels = (update) => {
     const next = typeof update === "function" ? update(models) : update;
@@ -762,9 +797,12 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   };
 
   const handleSave = async () => {
+    if (creatingOverride && !baseComboId) return;
     if (!validateName(name)) return;
     setSaving(true);
-    await onSave({ name: name.trim(), models: commonModels, ...(combo ? { accountOverrides } : {}) });
+    await onSave(creatingOverride
+      ? { comboId: baseComboId, accountOverrides }
+      : { name: name.trim(), models: commonModels, ...(combo ? { accountOverrides } : {}) });
     setSaving(false);
   };
 
@@ -778,19 +816,25 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         title={isEdit ? "Edit Combo" : "Create Combo"}
       >
         <div className="flex flex-col gap-3" data-i18n-skip>
-          {isEdit && (
-            <>
-              <Select
+          <Select
                 label="配置范围"
                 aria-label="配置范围"
                 value={scope}
-                onChange={e => setScope(e.target.value)}
+                onChange={e => {
+                  setScope(e.target.value);
+                  if (!combo) {
+                    setBaseComboId("");
+                    setName("");
+                    setCommonModels([]);
+                    setAccountOverrides({});
+                  }
+                }}
                 options={[
                   { value: "common", label: "通用配置" },
                   ...activeProviders.map(p => ({ value: p.id, label: `${p.provider} · ${p.email || p.name || p.id}${accountOverrides[p.id] ? "（已定制）" : ""}` })),
                 ]}
               />
-              {account && (
+              {account && !creatingOverride && (
                 <Toggle
                   checked={customized}
                   label="单独配置模型"
@@ -803,25 +847,43 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
                   })}
                 />
               )}
-            </>
-          )}
           {/* Name */}
           <div>
-            <Input
+            {creatingOverride ? (
+              <Select
+                label="选择通用组合"
+                aria-label="选择通用组合"
+                placeholder="选择要为此账号定制的组合"
+                value={baseComboId}
+                options={combos.map(c => ({ value: c.id, label: c.name }))}
+                onChange={e => {
+                  const selected = combos.find(c => c.id === e.target.value);
+                  setBaseComboId(selected.id);
+                  setName(selected.name);
+                  setNameError("");
+                  setCommonModels(selected.models);
+                  setAccountOverrides({
+                    ...Object.fromEntries(Object.entries(selected.accountOverrides || {}).filter(([id]) => activeProviders.some(p => p.id === id))),
+                    [scope]: selected.accountOverrides?.[scope] || [],
+                  });
+                }}
+                hint={combos.length ? "保留原组合名称，只修改此账号使用的模型。" : "请先创建一个通用组合。"}
+              />
+            ) : <Input
               label="组合名称"
               disabled={!!account}
               value={name}
               onChange={handleNameChange}
               placeholder="my-combo"
               error={nameError}
-            />
-            <p className="text-[10px] text-text-muted mt-0.5">
+            />}
+            {!creatingOverride && <p className="text-[10px] text-text-muted mt-0.5">
               支持字母、数字、-、_ 和 .
-            </p>
+            </p>}
           </div>
 
           {/* Models */}
-          {inherited ? (
+          {creatingOverride && !baseComboId ? null : inherited ? (
             <div className="text-sm text-text-muted">
               <p className="mb-1">使用通用配置</p>
               <p className="break-all font-mono">{commonModels.join(" → ") || "未配置模型"}</p>
