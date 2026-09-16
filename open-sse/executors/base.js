@@ -172,6 +172,12 @@ export class BaseExecutor {
         const cl = response.headers?.get?.("content-length") || "?";
         dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
 
+        // Managed chat requests must return overloads to the account cooldown queue.
+        // Retrying here would bypass its cooldown and single recovery probe.
+        if (response.status === HTTP_STATUS.SERVICE_UNAVAILABLE && onUpstreamOverload) {
+          return { response, url, headers, transformedBody };
+        }
+
         if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) { urlIndex--; continue; }
 
         if (this.shouldRetry(response.status, urlIndex)) {

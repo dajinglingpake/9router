@@ -44,6 +44,17 @@ describe("Retry-After parsing", () => {
 });
 
 describe("BaseExecutor.execute — retry by status (config-driven)", () => {
+  it("returns managed 503 overloads immediately without retrying or falling back", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 3, delayMs: 0 } } });
+    ex.getFallbackCount = () => 2;
+    const onUpstreamOverload = vi.fn();
+    fetchMock.mockResolvedValue(res(503));
+    const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds, onUpstreamOverload });
+    expect(out.response.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
+  });
+
   it("retries 502 `attempts` times then succeeds", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 3, delayMs: 0 } } });
     fetchMock

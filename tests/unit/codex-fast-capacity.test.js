@@ -15,7 +15,6 @@ function streamFromText(text) {
 describe("Codex fast tier and capacity handling", () => {
   it("logs the original 200-SSE error and upstream id before converting it to 503", async () => {
     const executor = new CodexExecutor();
-    executor.config = { ...executor.config, retry: { 503: { attempts: 0, delayMs: 0 } } };
     const call = vi.spyOn(BaseExecutor.prototype, "execute").mockResolvedValue({ response: new Response(streamFromText(
       'event: error\ndata: {"error":{"code":"server_is_overloaded","message":"busy"}}\n\n'
     ), { headers: { "x-request-id": "upstream-123", "content-type": "text/event-stream" } }) });
@@ -26,6 +25,7 @@ describe("Codex fast tier and capacity handling", () => {
         onUpstreamOverload,
         diagnosticContext: { requestId: "local-123", connectionId: "account-a", retryCount: 2 } });
       expect(result.response.status).toBe(503);
+      expect(call).toHaveBeenCalledTimes(1);
       expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
       expect(onUpstreamOverload).toHaveBeenCalledWith(expect.objectContaining({
         upstreamStatus: 200, retryCount: 2, sseAttempt: 1,
