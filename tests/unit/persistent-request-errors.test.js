@@ -27,7 +27,8 @@ const error = { provider: "codex", model: "sol", connectionId: "a", status: "FAI
 
 it("retains sanitized errors and recovery across DB reopen, including records older than five minutes", async () => {
   const caller = { apiKeyId: "caller-1", apiKeyName: "已删除的调用方", apiKeyMasked: "test...1234", clientIp: "192.0.2.10", userAgent: "test-cli/1.0", requestedModel: "client-alias", upstreamModel: "sol", thinkingLevel: "high", stream: false, requestBytes: 2048, sourceFormat: "openai-responses", targetFormat: "openai-responses", startedAt: Date.now() - 601500, latencyMs: 1500, queuedAt: Date.now() - 602000, waitMs: 500, position: 1, timeoutRemainingMs: 0, cooldownRemainingMs: 30000, state: "cooldown" };
-  const saved = saveRequestError({ ...error, ...caller, estimatedInputTokens: 900, timestamp: Date.now() - 600000, apiKey: "secret", headers: { authorization: "Bearer secret", "x-request-id": "up-1" } });
+  const attachments = { estimatedAttachmentTokens: 100, attachmentCount: 2, unestimatedAttachmentCount: 1, encryptedContextCount: 1, inputTokenEstimateVersion: 2 };
+  const saved = saveRequestError({ ...error, ...caller, ...attachments, estimatedInputTokens: 900, timestamp: Date.now() - 600000, apiKey: "secret", headers: { authorization: "Bearer secret", "x-request-id": "up-1" } });
   await markRequestErrorsRecovered([saved], { input_tokens: 800, output_tokens: 40 });
   state.db.close();
   state.db = await createSqlJsAdapter(file);
@@ -36,6 +37,7 @@ it("retains sanitized errors and recovery across DB reopen, including records ol
   expect(result.items[0]).toMatchObject({ message: "server_is_overloaded", recovered: true, headers: { "x-request-id": "up-1" } });
   expect(result.items[0]).not.toHaveProperty("apiKey");
   expect(result.items[0]).toMatchObject(caller);
+  expect(result.items[0]).toMatchObject(attachments);
   expect(result.items[0]).toMatchObject({ estimatedInputTokens: 900, inputTokens: null, outputTokens: null, recoveredUsage: { inputTokens: 800, outputTokens: 40 } });
   expect(state.db.get("SELECT data FROM requestErrors").data).not.toContain("secret");
   expect(await getRecentRequestErrorCount()).toBe(0);

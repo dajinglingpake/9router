@@ -51,6 +51,10 @@ function RequestDetails({ item, index, waiting = false, failed = false }) {
   const status = failed ? (item.recovered ? "已重试成功" : "请求失败") : waiting ? queueStatus(item) : item.retryCount > 0 ? `第 ${item.retryCount} 次重试` : "请求执行中";
   const startedAt = waiting ? item.queuedAt || item.startedAt : item.startedAt || item.queuedAt;
   const statusColor = failed ? (item.recovered ? "text-emerald-600" : "text-red-600") : waiting ? "text-amber-700" : "text-primary";
+  const attachmentTokens = item.estimatedAttachmentTokens == null ? "未记录"
+    : item.unestimatedAttachmentCount > 0
+      ? `${item.estimatedAttachmentTokens > 0 ? `${item.estimatedAttachmentTokens.toLocaleString()} + ` : ""}无法估算（${item.unestimatedAttachmentCount} 个附件）`
+      : `${item.estimatedAttachmentTokens.toLocaleString()}${item.attachmentCount ? `（${item.attachmentCount} 个附件）` : ""}`;
   return (
     <div data-i18n-skip className={`rounded-md border p-3 ${waiting ? "border-amber-200 bg-amber-50/60" : "border-border-subtle bg-surface"}`}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -68,7 +72,9 @@ function RequestDetails({ item, index, waiting = false, failed = false }) {
         <div><dt className="inline">客户端模型：</dt><dd className="inline break-all font-mono text-text-main">{item.requestedModel || "—"}</dd></div>
         <div><dt className="inline">上游模型：</dt><dd className="inline break-all font-mono text-text-main">{item.upstreamModel || "—"}</dd></div>
         <div><dt className="inline">请求体：</dt><dd className="inline text-text-main">{item.requestBytes != null ? formatBytes(item.requestBytes) : "—"}</dd></div>
-        <div title="按客户端请求长度粗略估算，包含历史消息和工具定义，不是上游计费用量"><dt className="inline">输入 Token（预估）：</dt><dd className="inline text-text-main">{item.estimatedInputTokens?.toLocaleString() ?? "未记录"}</dd></div>
+        <div title="粗略估算消息文本、系统提示词和工具定义。旧日志保留原来的请求体长度预估。"><dt className="inline">{item.inputTokenEstimateVersion ? "文本 Token（预估）：" : "输入 Token（旧预估）："}</dt><dd className="inline text-text-main">{item.estimatedInputTokens?.toLocaleString() ?? "未记录"}</dd></div>
+        <div title="文本文件单独估算；图片、PDF、音频等不能按编码长度换算，无法估算的附件单独列出。"><dt className="inline">附件 Token（预估）：</dt><dd className="inline text-text-main">{attachmentTokens}</dd></div>
+        {item.encryptedContextCount > 0 && <div><dt className="inline">加密上下文：</dt><dd className="inline text-text-main">{item.encryptedContextCount} 段，Token 无法估算</dd></div>}
         <div><dt className="inline">上游 Token：</dt><dd className="inline text-text-main">输入 {item.inputTokens?.toLocaleString() ?? "未返回"} · 输出 {item.outputTokens?.toLocaleString() ?? "未返回"}</dd></div>
         {failed && item.recovered && <div className="sm:col-span-2"><dt className="inline">重试成功用量：</dt><dd className="inline text-text-main">输入 {item.recoveredUsage?.inputTokens?.toLocaleString() ?? "未返回"} · 输出 {item.recoveredUsage?.outputTokens?.toLocaleString() ?? "未返回"} Token</dd></div>}
         <div><dt className="inline">请求端点：</dt><dd className="inline break-all font-mono text-text-main">{item.endpoint || "—"}</dd></div>

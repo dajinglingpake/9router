@@ -10,8 +10,8 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { appendRequestLog } from "@/lib/usageDb.js";
-import { getRequestCaller, getRequestLogContext } from "@/lib/requestCaller.js";
-import { estimateInputTokens } from "open-sse/utils/usageTracking.js";
+import { getRequestCaller, getRequestLogContext, getRequestTokenEstimates } from "@/lib/requestCaller.js";
+import { estimateInputTokenBreakdown } from "open-sse/utils/usageTracking.js";
 import { trackModelRequest } from "@/lib/runtimeModelStats.js";
 import { getSessionRoutingKey, NEW_SESSION_HINT } from "../services/sessionRouting.js";
 import { getModelInfo, getComboModels, getComboAccountModels } from "../services/model.js";
@@ -106,7 +106,7 @@ function buildConcurrencyMetadata({ body, clientRawRequest, request, provider, m
     sourceFormat,
     targetFormat,
     requestBytes,
-    estimatedInputTokens: clientRawRequest?.estimatedInputTokens ?? estimateInputTokens(rawBody),
+    ...(clientRawRequest?.inputTokenEstimateVersion ? getRequestTokenEstimates(clientRawRequest) : estimateInputTokenBreakdown(rawBody)),
     stream: rawBody.stream !== false,
   };
 }
@@ -178,7 +178,7 @@ export async function handleChat(request, clientRawRequest = null) {
     requestId,
     startedAt: Date.now(),
     requestBytes: requestBody ? Buffer.byteLength(JSON.stringify(requestBody), "utf8") : null,
-    estimatedInputTokens: requestBody ? estimateInputTokens(requestBody) : null,
+    ...(requestBody ? estimateInputTokenBreakdown(requestBody) : getRequestTokenEstimates()),
     stream: requestBody ? requestBody.stream !== false : null,
     apiKeyName: callerApiKey ? "未命名 API Key" : "未使用 API Key",
     apiKeyRecordId: null,

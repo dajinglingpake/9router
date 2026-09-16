@@ -1,3 +1,5 @@
+import { TOKEN_ESTIMATE_FIELDS } from "open-sse/config/tokenEstimation.js";
+
 const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000;
 
 const pools = globalThis.__ninerouterConcurrencyPools || new Map();
@@ -19,7 +21,7 @@ const QUEUE_METADATA_KEYS = [
   "sourceFormat",
   "targetFormat",
   "requestBytes",
-  "estimatedInputTokens",
+  ...TOKEN_ESTIMATE_FIELDS,
   "stream",
   "retryCount",
 ];

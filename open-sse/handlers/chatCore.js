@@ -12,8 +12,8 @@ import { createErrorResult, parseUpstreamError, formatProviderError } from "../u
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
-import { getRequestCaller, getRequestLogContext } from "@/lib/requestCaller.js";
-import { estimateInputTokens } from "../utils/usageTracking.js";
+import { getRequestCaller, getRequestLogContext, getRequestTokenEstimates } from "@/lib/requestCaller.js";
+import { estimateInputTokenBreakdown } from "../utils/usageTracking.js";
 import { recordTraffic } from "@/lib/runtimeTraffic.js";
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
@@ -76,7 +76,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const reqTag = requestId ? `${sessionTag} #${requestId}/r${retryCount}` : sessionTag;
   const requestLogContext = {
     ...clientRawRequest, userAgent: getRequestCaller(clientRawRequest).userAgent || userAgent, startedAt: requestStartTime, requestTag: reqTag,
-    estimatedInputTokens: clientRawRequest?.estimatedInputTokens ?? estimateInputTokens(body),
+    ...(clientRawRequest?.inputTokenEstimateVersion ? getRequestTokenEstimates(clientRawRequest) : estimateInputTokenBreakdown(body)),
   };
   const reportOverload = onUpstreamOverload
     ? (details) => onUpstreamOverload({ ...details, requestContext: getRequestLogContext(requestLogContext) })

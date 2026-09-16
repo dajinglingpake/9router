@@ -1,5 +1,6 @@
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 import { canonicalizeUsage } from "open-sse/utils/usageTracking.js";
+import { TOKEN_ESTIMATE_FIELDS } from "open-sse/config/tokenEstimation.js";
 
 const text = (value, max = 256) => typeof value === "string" ? value.trim().slice(0, max) || null : null;
 
@@ -19,6 +20,10 @@ export function getRequestCaller(context = {}) {
 }
 
 const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
+export function getRequestTokenEstimates(context = {}) {
+  return Object.fromEntries(TOKEN_ESTIMATE_FIELDS.map(key => [key, number(context?.[key])]));
+}
 
 // Keep provider-reported usage separate from local estimates and missing usage.
 export function getRequestTokenUsage(usage) {
@@ -45,7 +50,7 @@ export function getRequestLogContext(context = {}, now = Date.now()) {
     state: text(context.state),
     stream: typeof context.stream === "boolean" ? context.stream : null,
     requestBytes: number(context.requestBytes),
-    estimatedInputTokens: number(context.estimatedInputTokens),
+    ...getRequestTokenEstimates(context),
     inputTokens: number(context.inputTokens) ?? usage.inputTokens,
     outputTokens: number(context.outputTokens) ?? usage.outputTokens,
     startedAt,

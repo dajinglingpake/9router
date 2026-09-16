@@ -3,6 +3,8 @@
  */
 
 import { FORMATS } from "../translator/formats.js";
+import { CLAUDE_BLOCK } from "../translator/schema/blocks.js";
+import { INPUT_TEXT_FIELDS, TOOL_DEFINITION_FIELDS, OPAQUE_CONTENT_TYPES, OPAQUE_CONTENT_FIELDS, ATTACHMENT_CONTENT_FIELDS, TEXT_CHARS_PER_TOKEN, INPUT_TOKEN_ESTIMATE_VERSION } from "../config/tokenEstimation.js";
 
 // Legacy per-chunk usage console line; off by default (superseded by "📊 done")
 const DEBUG_USAGE = process.env.LOG_USAGE_VERBOSE === "1";
@@ -334,24 +336,76 @@ export function mergeUsage(prev, next) {
   return merged;
 }
 
-/**
- * Estimate input tokens from request body
- * Calculate total body size for more accurate estimation
- */
-export function estimateInputTokens(body) {
-  if (!body || typeof body !== "object") return 0;
+// Strip transport-only payloads before measuring text. Tool arguments are user
+// data: fields such as "signature" or "file_data" inside them still count.
+function inputTextContent(value, estimate) {
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(item => inputTextContent(item, estimate)).filter(item => item !== undefined);
+  const textDocument = value.type === CLAUDE_BLOCK.DOCUMENT && value.source?.type === CLAUDE_BLOCK.TEXT;
+  if (OPAQUE_CONTENT_TYPES.has(value.type)) {
+    if (value.type === CLAUDE_BLOCK.REDACTED_THINKING) {
+      estimate.encryptedContextCount++;
+    } else {
+      estimate.attachmentCount++;
+      if (textDocument && typeof value.source.data === "string") {
+        estimate.estimatedAttachmentTokens += Math.ceil(value.source.data.length / TEXT_CHARS_PER_TOKEN);
+      } else {
+        estimate.unestimatedAttachmentCount++;
+      }
+    }
+    return undefined;
+  }
+  const result = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (OPAQUE_CONTENT_FIELDS.has(key) || (key === "signature" && value.type === CLAUDE_BLOCK.THINKING)) {
+      if (item) {
+        if (ATTACHMENT_CONTENT_FIELDS.has(key)) {
+          estimate.attachmentCount++;
+          estimate.unestimatedAttachmentCount++;
+        } else if (key !== "cache_control") {
+          estimate.encryptedContextCount++;
+        }
+      }
+      continue;
+    }
+    const toolData = (value.type === CLAUDE_BLOCK.TOOL_USE && key === "input") || key === "arguments" || key === "args";
+    result[key] = toolData ? item : inputTextContent(item, estimate);
+  }
+  return result;
+}
+
+/** Rough visible-text estimate, not a tokenizer or a multimodal billing count. */
+export function estimateInputTokenBreakdown(body) {
+  const estimate = {
+    estimatedInputTokens: 0, estimatedAttachmentTokens: 0,
+    attachmentCount: 0, unestimatedAttachmentCount: 0, encryptedContextCount: 0,
+    inputTokenEstimateVersion: INPUT_TOKEN_ESTIMATE_VERSION,
+  };
+  if (!body || typeof body !== "object") return estimate;
 
   try {
-    // Calculate total body size (includes messages, tools, system, thinking config, etc.)
-    const bodyStr = JSON.stringify(body);
-    const totalChars = bodyStr.length;
-
-    // Estimate: ~4 chars per token (rough average across all tokenizers)
-    return Math.ceil(totalChars / 4);
+    // Gemini CLI wraps the model request; routing metadata is not prompt text.
+    const prompt = body.request && INPUT_TEXT_FIELDS.some(key => body.request[key] !== undefined)
+      ? body.request : body;
+    const content = {};
+    for (const key of INPUT_TEXT_FIELDS) {
+      if (prompt[key] !== undefined) content[key] = inputTextContent(prompt[key], estimate);
+    }
+    // Keep complete schemas, even properties named like binary protocol fields.
+    for (const key of TOOL_DEFINITION_FIELDS) {
+      if (prompt[key] !== undefined) content[key] = prompt[key];
+    }
+    if (Object.keys(content).length) estimate.estimatedInputTokens = Math.ceil(JSON.stringify(content).length / TEXT_CHARS_PER_TOKEN);
   } catch (err) {
     // Fallback if stringify fails
-    return 0;
+    estimate.estimatedInputTokens = 0;
   }
+  return estimate;
+}
+
+export function estimateInputTokens(body) {
+  const estimate = estimateInputTokenBreakdown(body);
+  return estimate.estimatedInputTokens + estimate.estimatedAttachmentTokens;
 }
 
 /**
