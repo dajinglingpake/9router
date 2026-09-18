@@ -4,6 +4,8 @@ const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000;
 
 const pools = globalThis.__ninerouterConcurrencyPools || new Map();
 globalThis.__ninerouterConcurrencyPools = pools;
+const requestGates = globalThis.__ninerouterRequestGates || new Map();
+globalThis.__ninerouterRequestGates = requestGates;
 
 // Queue entries are exposed to the dashboard, so keep only the small,
 // display-safe request summary rather than headers, bodies, or raw API keys.
@@ -52,6 +54,53 @@ function normalizeLimit(value) {
   return Number.isFinite(limit) && limit > 0 ? Math.min(limit, 1000) : 0;
 }
 
+function normalizeRequestInterval(value) {
+  const interval = Number(value);
+  return Number.isFinite(interval) && interval > 0 ? Math.min(interval, 60000) : 0;
+}
+
+function requestIntervalRange(minIntervalMs, maxIntervalMs = minIntervalMs) {
+  const min = normalizeRequestInterval(minIntervalMs);
+  const max = normalizeRequestInterval(maxIntervalMs);
+  if (min === 0 && max === 0) return [0, 0];
+
+  // A missing/zero upper bound keeps the old fixed-interval behavior.
+  const lower = min || max;
+  const upper = Math.max(lower, max || lower);
+  return [lower, upper];
+}
+
+function randomRequestInterval(minIntervalMs, maxIntervalMs = minIntervalMs) {
+  const [lower, upper] = requestIntervalRange(minIntervalMs, maxIntervalMs);
+  if (lower === 0) return 0;
+  return lower + Math.floor(Math.random() * (upper - lower + 1));
+}
+
+function waitForSignal(delayMs, signal) {
+  if (delayMs <= 0) {
+    if (signal?.aborted) return Promise.reject(new DOMException("Request aborted", "AbortError"));
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    let timer;
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Request aborted", "AbortError"));
+    };
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+
+    timer = setTimeout(done, delayMs);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function queueTimeoutMs() {
   const value = Number.parseInt(process.env.CONCURRENCY_QUEUE_TIMEOUT_MS, 10);
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_QUEUE_TIMEOUT_MS;
@@ -64,6 +113,35 @@ export class ConcurrencyQueueError extends Error {
     this.code = code;
     this.status = status;
     this.requestContext = requestContext;
+  }
+}
+
+/**
+ * Wait until this account is allowed to start another upstream attempt.
+ * This is separate from concurrency: a slot can be held while the request
+ * waits, and retries use the same gate as new client requests.
+ */
+export async function waitForAccountRequest({ id, minIntervalMs = 0, maxIntervalMs = minIntervalMs, signal = null }) {
+  if (!id || requestIntervalRange(minIntervalMs, maxIntervalMs)[0] === 0) return;
+
+  const key = `account:${id}`;
+  let gate = requestGates.get(key);
+  if (!gate) {
+    gate = { nextAt: 0, tail: Promise.resolve() };
+    requestGates.set(key, gate);
+  }
+
+  const previous = gate.tail;
+  let release;
+  gate.tail = new Promise(resolve => { release = resolve; });
+  await previous;
+
+  try {
+    const interval = randomRequestInterval(minIntervalMs, maxIntervalMs);
+    await waitForSignal(Math.max(0, gate.nextAt - Date.now()), signal);
+    gate.nextAt = Date.now() + interval;
+  } finally {
+    release();
   }
 }
 
@@ -326,6 +404,7 @@ export const __test__ = {
       }
     }
     pools.clear();
+    requestGates.clear();
   },
   snapshot(scope, id) {
     const pool = pools.get(`${scope}:${id}`);

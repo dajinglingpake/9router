@@ -2,10 +2,14 @@ import { getProviderConnections, getProviderConnectionById, validateApiKey, upda
 import { extractClientIp } from "@/sse/utils/clientIp";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, getModelLockUntil, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
-import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import {
+  MAX_RATE_LIMIT_COOLDOWN_MS,
+  DEFAULT_ACCOUNT_COOLDOWN_MIN_MS,
+  DEFAULT_ACCOUNT_COOLDOWN_MAX_MS,
+} from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
-import { getConcurrencySnapshot, pauseAccountQueue } from "./concurrencyLimiter.js";
+import { getConcurrencySnapshot, pauseAccountQueue, waitForAccountRequest } from "./concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
 import { clearSessionBinding, getSessionBinding, bindSession } from "./sessionRouting.js";
 
@@ -17,6 +21,18 @@ const selectionCursors = selectionState.cursors;
 const selectionReservations = selectionState.reservations;
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
+
+function getAccountCooldownMs(connection) {
+  const configuredMin = Number(connection?.accountCooldownMinMs);
+  const configuredMax = Number(connection?.accountCooldownMaxMs);
+  const min = Number.isFinite(configuredMin) && configuredMin >= 1000
+    ? configuredMin
+    : DEFAULT_ACCOUNT_COOLDOWN_MIN_MS;
+  const max = Number.isFinite(configuredMax) && configuredMax >= 1000
+    ? Math.max(min, configuredMax)
+    : Math.max(min, DEFAULT_ACCOUNT_COOLDOWN_MAX_MS);
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
 
 function preferConnectionsWithCapacity(connections) {
   if (connections.length < 2) return connections;
@@ -322,6 +338,16 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       connectionId: connection.id,
       releaseSelection,
       maxConcurrency: connection.maxConcurrency || 0,
+      minRequestIntervalMs: Number(connection.minRequestIntervalMs) || 0,
+      maxRequestIntervalMs: Number(connection.maxRequestIntervalMs) || Number(connection.minRequestIntervalMs) || 0,
+      accountCooldownMinMs: Number(connection.accountCooldownMinMs) || DEFAULT_ACCOUNT_COOLDOWN_MIN_MS,
+      accountCooldownMaxMs: Number(connection.accountCooldownMaxMs) || DEFAULT_ACCOUNT_COOLDOWN_MAX_MS,
+      beforeUpstreamRequest: ({ signal } = {}) => waitForAccountRequest({
+        id: connection.id,
+        minIntervalMs: Number(connection.minRequestIntervalMs) || 0,
+        maxIntervalMs: Number(connection.maxRequestIntervalMs) || Number(connection.minRequestIntervalMs) || 0,
+        signal,
+      }),
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,
@@ -369,6 +395,12 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
   }
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
+
+  // Keep provider reset times and 429 backoff untouched. Transient upstream
+  // failures use the account's configured random cooldown range.
+  if (!githubResetAtMs && !resetsAtMs && (status === 502 || status === 503 || /overloaded/i.test(String(errorText || "")))) {
+    cooldownMs = getAccountCooldownMs(conn);
+  }
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const overloaded = status === 503 || /overloaded/i.test(reason);

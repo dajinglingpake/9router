@@ -23,7 +23,14 @@ export const CHAT_REQUEST_BODY_LIMITS = {
 };
 
 // Re-export error config (backward compat)
-export { ERROR_TYPES, DEFAULT_ERROR_MESSAGES, BACKOFF_CONFIG, COOLDOWN_MS } from "./errorConfig.js";
+export {
+  ERROR_TYPES,
+  DEFAULT_ERROR_MESSAGES,
+  BACKOFF_CONFIG,
+  COOLDOWN_MS,
+  DEFAULT_ACCOUNT_COOLDOWN_MIN_MS,
+  DEFAULT_ACCOUNT_COOLDOWN_MAX_MS,
+} from "./errorConfig.js";
 
 // Cache TTLs (seconds)
 export const CACHE_TTL = {

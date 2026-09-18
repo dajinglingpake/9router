@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAccountExpiry } from "@/lib/accountExpiry";
+import { DEFAULT_ACCOUNT_COOLDOWN_MIN_MS, DEFAULT_ACCOUNT_COOLDOWN_MAX_MS } from "open-sse/config/errorConfig.js";
 import {
   getProviderConnectionById,
   getProxyPoolById,
@@ -93,6 +94,10 @@ export async function PUT(request, { params }) {
       name,
       priority,
       maxConcurrency,
+      minRequestIntervalMs,
+      maxRequestIntervalMs,
+      accountCooldownMinMs,
+      accountCooldownMaxMs,
       globalPriority,
       defaultModel,
       isActive,
@@ -132,6 +137,40 @@ export async function PUT(request, { params }) {
         return NextResponse.json({ error: "maxConcurrency must be an integer between 0 and 1000" }, { status: 400 });
       }
       updateData.maxConcurrency = maxConcurrency;
+    }
+    if (minRequestIntervalMs !== undefined) {
+      if (!Number.isInteger(minRequestIntervalMs) || minRequestIntervalMs < 0 || minRequestIntervalMs > 60000) {
+        return NextResponse.json({ error: "minRequestIntervalMs must be an integer between 0 and 60000" }, { status: 400 });
+      }
+      updateData.minRequestIntervalMs = minRequestIntervalMs;
+    }
+    if (maxRequestIntervalMs !== undefined) {
+      if (!Number.isInteger(maxRequestIntervalMs) || maxRequestIntervalMs < 0 || maxRequestIntervalMs > 60000) {
+        return NextResponse.json({ error: "maxRequestIntervalMs must be an integer between 0 and 60000" }, { status: 400 });
+      }
+      updateData.maxRequestIntervalMs = maxRequestIntervalMs;
+    }
+    const nextMinRequestIntervalMs = minRequestIntervalMs ?? (Number(existing.minRequestIntervalMs) || 0);
+    const nextMaxRequestIntervalMs = maxRequestIntervalMs ?? (Number(existing.maxRequestIntervalMs) || nextMinRequestIntervalMs);
+    if (nextMinRequestIntervalMs > 0 && nextMaxRequestIntervalMs > 0 && nextMinRequestIntervalMs > nextMaxRequestIntervalMs) {
+      return NextResponse.json({ error: "minRequestIntervalMs cannot be greater than maxRequestIntervalMs" }, { status: 400 });
+    }
+    if (accountCooldownMinMs !== undefined) {
+      if (!Number.isInteger(accountCooldownMinMs) || accountCooldownMinMs < 1000 || accountCooldownMinMs > 3600000) {
+        return NextResponse.json({ error: "accountCooldownMinMs must be an integer between 1000 and 3600000" }, { status: 400 });
+      }
+      updateData.accountCooldownMinMs = accountCooldownMinMs;
+    }
+    if (accountCooldownMaxMs !== undefined) {
+      if (!Number.isInteger(accountCooldownMaxMs) || accountCooldownMaxMs < 1000 || accountCooldownMaxMs > 3600000) {
+        return NextResponse.json({ error: "accountCooldownMaxMs must be an integer between 1000 and 3600000" }, { status: 400 });
+      }
+      updateData.accountCooldownMaxMs = accountCooldownMaxMs;
+    }
+    const nextAccountCooldownMinMs = accountCooldownMinMs ?? (Number(existing.accountCooldownMinMs) || DEFAULT_ACCOUNT_COOLDOWN_MIN_MS);
+    const nextAccountCooldownMaxMs = accountCooldownMaxMs ?? (Number(existing.accountCooldownMaxMs) || DEFAULT_ACCOUNT_COOLDOWN_MAX_MS);
+    if (nextAccountCooldownMinMs > nextAccountCooldownMaxMs) {
+      return NextResponse.json({ error: "accountCooldownMinMs cannot be greater than accountCooldownMaxMs" }, { status: 400 });
     }
     if (globalPriority !== undefined) updateData.globalPriority = globalPriority;
     if (defaultModel !== undefined) updateData.defaultModel = defaultModel;

@@ -21,6 +21,10 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     name: "",
     priority: 1,
     maxConcurrency: 0,
+    requestIntervalMinSeconds: 0,
+    requestIntervalMaxSeconds: 0,
+    accountCooldownMinSeconds: 30,
+    accountCooldownMaxSeconds: 30,
     apiKey: "",
     accountExpiresAt: "",
   });
@@ -44,6 +48,10 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: connection.name || "",
         priority: connection.priority || 1,
         maxConcurrency: connection.maxConcurrency || 0,
+        requestIntervalMinSeconds: (Number(connection.minRequestIntervalMs) || 0) / 1000,
+        requestIntervalMaxSeconds: (Number(connection.maxRequestIntervalMs) || Number(connection.minRequestIntervalMs) || 0) / 1000,
+        accountCooldownMinSeconds: (Number(connection.accountCooldownMinMs) || 30000) / 1000,
+        accountCooldownMaxSeconds: (Number(connection.accountCooldownMaxMs) || 30000) / 1000,
         apiKey: "",
         accountExpiresAt: localDateInput(connection.accountExpiresAt),
       });
@@ -132,6 +140,10 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: formData.name,
         priority: formData.priority,
         maxConcurrency: formData.maxConcurrency,
+        minRequestIntervalMs: Math.round(Math.max(0, Math.min(60, Number(formData.requestIntervalMinSeconds) || 0)) * 1000),
+        maxRequestIntervalMs: Math.round(Math.max(0, Math.min(60, Number(formData.requestIntervalMaxSeconds) || 0)) * 1000),
+        accountCooldownMinMs: Math.round(Math.max(1, Math.min(3600, Number(formData.accountCooldownMinSeconds) || 30)) * 1000),
+        accountCooldownMaxMs: Math.round(Math.max(1, Math.min(3600, Number(formData.accountCooldownMaxSeconds) || 30)) * 1000),
         accountExpiresAt: formData.accountExpiresAt ? new Date(formData.accountExpiresAt).toISOString() : null,
       };
       if (!isOAuth && formData.apiKey) {
@@ -225,6 +237,46 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           value={formData.maxConcurrency}
           onChange={(e) => setFormData({ ...formData, maxConcurrency: Math.max(0, Number.parseInt(e.target.value, 10) || 0) })}
           hint="0 means unlimited."
+        />
+        <Input
+          label="Request interval minimum (seconds)"
+          type="number"
+          min="0"
+          max="60"
+          step="0.1"
+          value={formData.requestIntervalMinSeconds}
+          onChange={(e) => setFormData({ ...formData, requestIntervalMinSeconds: Math.max(0, Math.min(60, Number.parseFloat(e.target.value) || 0)) })}
+          hint="0 means disabled. Retries are included."
+        />
+        <Input
+          label="Request interval maximum (seconds)"
+          type="number"
+          min="0"
+          max="60"
+          step="0.1"
+          value={formData.requestIntervalMaxSeconds}
+          onChange={(e) => setFormData({ ...formData, requestIntervalMaxSeconds: Math.max(0, Math.min(60, Number.parseFloat(e.target.value) || 0)) })}
+          hint="Each upstream attempt waits a random interval in this range."
+        />
+        <Input
+          label="Account cooldown minimum (seconds)"
+          type="number"
+          min="1"
+          max="3600"
+          step="1"
+          value={formData.accountCooldownMinSeconds}
+          onChange={(e) => setFormData({ ...formData, accountCooldownMinSeconds: Math.max(1, Math.min(3600, Number.parseFloat(e.target.value) || 1)) })}
+          hint="Used for transient upstream 502/503 errors."
+        />
+        <Input
+          label="Account cooldown maximum (seconds)"
+          type="number"
+          min="1"
+          max="3600"
+          step="1"
+          value={formData.accountCooldownMaxSeconds}
+          onChange={(e) => setFormData({ ...formData, accountCooldownMaxSeconds: Math.max(1, Math.min(3600, Number.parseFloat(e.target.value) || 1)) })}
+          hint="The actual cooldown is randomized between minimum and maximum."
         />
 
         {!isOAuth && (

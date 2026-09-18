@@ -37,6 +37,10 @@ export const BACKOFF_CONFIG = {
 
 // Default cooldown for transient/unknown errors
 export const TRANSIENT_COOLDOWN_MS = 30 * 1000;
+export const DEFAULT_ACCOUNT_COOLDOWN_MIN_MS = 30 * 1000;
+// Keep existing accounts on the historical fixed 30s cooldown until a range
+// is explicitly configured for them.
+export const DEFAULT_ACCOUNT_COOLDOWN_MAX_MS = 30 * 1000;
 
 export const DIAGNOSTIC_MAX_TEXT_LENGTH = 2000;
 export const DIAGNOSTIC_RESPONSE_HEADERS = [

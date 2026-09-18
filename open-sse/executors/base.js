@@ -136,15 +136,21 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
-      // Abort if upstream doesn't return response headers within connection timeout
-      const connectCtrl = new AbortController();
-      const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
-      const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
-      const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
-      const fetchStartedAt = Date.now();
+      // Wait before starting the connect timeout clock so request pacing does
+      // not consume the time reserved for the actual upstream connection.
+      let connectCtrl = null;
+      let connectTimer = null;
+      let fetchStartedAt = Date.now();
 
       try {
-        onUpstreamRequest?.({ serviceTier: typeof transformedBody?.service_tier === "string" ? transformedBody.service_tier : "unspecified" });
+        await credentials?.beforeUpstreamRequest?.({ signal });
+        await onUpstreamRequest?.({ serviceTier: typeof transformedBody?.service_tier === "string" ? transformedBody.service_tier : "unspecified" });
+        // Abort if upstream doesn't return response headers within connection timeout
+        connectCtrl = new AbortController();
+        const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+        connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
+        const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+        fetchStartedAt = Date.now();
         const bodyStr = JSON.stringify(transformedBody);
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
@@ -195,10 +201,10 @@ export class BaseExecutor {
           elapsedMs: Date.now() - fetchStartedAt,
           error: safeDiagnosticMessage(error.message), cause: safeDiagnosticMessage(error.cause?.message),
           code: error.cause?.code || error.code || null,
-          callerAborted: !!signal?.aborted, connectTimedOut: connectCtrl.signal.aborted,
+          callerAborted: !!signal?.aborted, connectTimedOut: !!connectCtrl?.signal.aborted,
         });
         lastError = error;
-        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+        const isConnectTimeout = connectCtrl?.signal.aborted && error.name === "AbortError";
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
         // Connect timeout is internal — convert to retryable network error, don't propagate AbortError
         if (error.name === "AbortError" && !isConnectTimeout) throw error;
