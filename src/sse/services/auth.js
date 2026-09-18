@@ -7,7 +7,7 @@ import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
 import { getConcurrencySnapshot, pauseAccountQueue } from "./concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
-import { getSessionBinding, bindSession } from "./sessionRouting.js";
+import { clearSessionBinding, getSessionBinding, bindSession } from "./sessionRouting.js";
 
 // Share selection state across route bundles and development reloads.
 const selectionState = globalThis.__ninerouterAccountSelection ||= {
@@ -95,7 +95,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
     const providerId = resolveProviderId(provider);
     const sessionKey = options.sessionKey;
-    const binding = await getSessionBinding(sessionKey);
+    let binding = await getSessionBinding(sessionKey);
     if (binding && binding.provider !== providerId) {
       return { sessionUnavailable: true, lastErrorCode: 409, lastError: "当前会话已绑定其他提供商，不能切换。" };
     }
@@ -131,6 +131,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     const connections = await getProviderConnections({ provider: providerId, isActive: true });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
+
+    // A deleted or replaced connection cannot serve the old sticky session.
+    // Clear only this stale binding so the current request can select and bind
+    // a new account. Existing connections that are merely locked still follow
+    // the cooldown path below and never fail over automatically.
+    const boundConnection = binding ? await getProviderConnectionById(binding.connectionId) : null;
+    if (binding && !boundConnection) {
+      await clearSessionBinding(sessionKey);
+      log.info("AUTH", `${provider} | cleared stale session binding ${binding.connectionId?.slice(0, 8) || "unknown"}`);
+      binding = null;
+    }
 
     if (connections.length === 0) {
       if (binding) return { sessionUnavailable: true, lastErrorCode: 503, lastError: "当前会话绑定的账号已停用或删除。" };

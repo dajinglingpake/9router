@@ -13,6 +13,7 @@ vi.mock("open-sse/index.js", () => ({}));
 vi.mock("@/lib/db/helpers/metaStore.js", () => ({
   getMeta: async (key) => state.bindings.get(key) ?? null,
   setMeta: async (key, value) => { state.bindings.set(key, value); },
+  deleteMeta: async (key) => { state.bindings.delete(key); },
 }));
 vi.mock("@/lib/localDb", () => ({
   getSettings: async () => ({ requireApiKey: false, fallbackStrategy: "round-robin" }),
@@ -261,14 +262,33 @@ describe("strict session account routing", () => {
     again.releaseSelection();
   });
 
-  it("restores an existing binding and fails closed if its account is disabled or provider changes", async () => {
+  it("keeps a disabled binding but rebinds when its connection is removed", async () => {
     state.bindings.set("chat-session:restored", JSON.stringify({ provider: "codex", connectionId: "b" }));
     const restored = await getProviderCredentials("codex", null, "test-model", { sessionKey: "restored" });
     expect(restored.connectionId).toBe("b");
     restored.releaseSelection();
     state.connections[1].isActive = false;
-    expect(await getProviderCredentials("codex", null, "test-model", { sessionKey: "restored" })).toMatchObject({ sessionUnavailable: true });
+    const disabled = await getProviderCredentials("codex", null, "test-model", { sessionKey: "restored" });
+    expect(disabled).toMatchObject({ sessionUnavailable: true });
+    expect(await getSessionBinding("restored")).toEqual({ provider: "codex", connectionId: "b" });
+
+    state.connections = state.connections.filter((connection) => connection.id !== "b");
+    const rebound = await getProviderCredentials("codex", null, "test-model", { sessionKey: "restored" });
+    expect(rebound.connectionId).toBe("a");
+    rebound.releaseSelection();
+    expect(await getSessionBinding("restored")).toEqual({ provider: "codex", connectionId: "a" });
     expect(await getProviderCredentials("other", null, "test-model", { sessionKey: "restored" })).toMatchObject({ sessionUnavailable: true, lastErrorCode: 409 });
+  });
+
+  it("keeps the binding when the account is temporarily model-locked", async () => {
+    state.bindings.set("chat-session:cooldown", JSON.stringify({ provider: "codex", connectionId: "b" }));
+    state.connections[1]["modelLock_test-model"] = new Date(Date.now() + 60000).toISOString();
+    state.connections[1].errorCode = 429;
+
+    const unavailable = await getProviderCredentials("codex", null, "test-model", { sessionKey: "cooldown" });
+
+    expect(unavailable).toMatchObject({ sessionUnavailable: true });
+    expect(await getSessionBinding("cooldown")).toEqual({ provider: "codex", connectionId: "b" });
   });
 
   it("queues an existing session on its bound account even when the other account is free", async () => {

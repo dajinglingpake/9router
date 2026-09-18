@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getMeta, setMeta } from "@/lib/db/helpers/metaStore.js";
+import { deleteMeta, getMeta, setMeta } from "@/lib/db/helpers/metaStore.js";
 import { extractClientSessionId } from "open-sse/utils/sessionManager.js";
 
 export const NEW_SESSION_HINT = "当前会话不会自动切换账号。如需使用其他可用账号，请开启新会话。";
@@ -20,4 +20,9 @@ export async function getSessionBinding(key) {
 export async function bindSession(key, provider, connectionId) {
   // Called under the account-selection mutex. Keep bindings across restarts.
   await setMeta(`chat-session:${key}`, JSON.stringify({ provider, connectionId }));
+}
+
+export async function clearSessionBinding(key) {
+  if (!key) return;
+  await deleteMeta(`chat-session:${key}`);
 }
