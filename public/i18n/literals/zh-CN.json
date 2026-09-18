@@ -1417,5 +1417,13 @@
   "Shows actively running and queued requests": "显示实际运行中和排队中的请求",
   "No concurrency limits are currently active": "当前没有触发并发限制",
   "queued": "排队中",
-  "running": "运行中"
+  "running": "运行中",
+  "Request interval minimum (seconds)": "请求间隔最小值（秒）",
+  "Request interval maximum (seconds)": "请求间隔最大值（秒）",
+  "0 means disabled. Retries are included.": "0 表示禁用，重试请求也会遵守此间隔。",
+  "Each upstream attempt waits a random interval in this range.": "每次上游请求都会在此范围内随机等待。",
+  "Account cooldown minimum (seconds)": "账号冷却最小值（秒）",
+  "Account cooldown maximum (seconds)": "账号冷却最大值（秒）",
+  "Used for transient upstream 502/503 errors.": "用于上游临时 502/503 错误。",
+  "The actual cooldown is randomized between minimum and maximum.": "实际冷却时间将在最小值和最大值之间随机。"
 }

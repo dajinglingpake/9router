@@ -193,5 +193,13 @@
   "Click to add, click again to remove. Changes are saved automatically.": "點擊新增，再次點擊移除。變更將自動儲存。",
   "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ 風險提示：此提供商使用的訂閱/OAuth 工作階段未獲官方授權用於代理/路由器使用。帳戶可能被限制或封禁。使用風險自負。",
   "⚠️ MITM intercepts HTTPS traffic of IDE tools (Antigravity, GitHub Copilot, Kiro) via local CA to redirect requests to your providers. May violate ToS → account ban. Use at your own risk.": "⚠️ MITM 透過本地 CA 攔截 IDE 工具（Antigravity、GitHub Copilot、Kiro）的 HTTPS 流量，將請求重新導向到您的提供商。可能違反 ToS → 帳戶封禁風險。使用風險自負。",
-  "Endpoint is exposed without an API key.": "端點未設定 API 金鑰即對外暴露。"
+  "Endpoint is exposed without an API key.": "端點未設定 API 金鑰即對外暴露。",
+  "Request interval minimum (seconds)": "請求間隔最小值（秒）",
+  "Request interval maximum (seconds)": "請求間隔最大值（秒）",
+  "0 means disabled. Retries are included.": "0 表示停用，重試請求也會遵守此間隔。",
+  "Each upstream attempt waits a random interval in this range.": "每次上游請求都會在此範圍內隨機等待。",
+  "Account cooldown minimum (seconds)": "帳戶冷卻最小值（秒）",
+  "Account cooldown maximum (seconds)": "帳戶冷卻最大值（秒）",
+  "Used for transient upstream 502/503 errors.": "用於上游暫時性 502/503 錯誤。",
+  "The actual cooldown is randomized between minimum and maximum.": "實際冷卻時間將在最小值和最大值之間隨機。"
 }
