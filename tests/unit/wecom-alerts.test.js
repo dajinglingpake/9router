@@ -65,6 +65,31 @@ it("coalesces final overload timeouts across models and persists the cooldown", 
   expect(mocks.fetch).toHaveBeenCalledTimes(2);
 });
 
+it("alerts final upstream network failures with proxy and traffic context", async () => {
+  await notifyRequestError({
+    connectionId: "a", source: "router", statusCode: 502, model: "sol", timestamp: now,
+    message: "fetch failed", networkCode: "ETIMEDOUT", proxyConfigured: false,
+  });
+  const content = JSON.parse(mocks.fetch.mock.calls[0][1].body).text.content;
+  expect(content).toContain("上游网络连接失败");
+  expect(content).toContain("代理：未配置");
+  expect(content).toContain("当前请求：");
+  expect(content).toContain("API Key：");
+  expect(content).toContain("请求吞吐率：");
+  expect(content).toContain("ETIMEDOUT");
+});
+
+it("alerts account-busy retry timeouts even on the first retry", async () => {
+  await notifyRequestError({
+    connectionId: "a", source: "router", statusCode: 503, model: "sol", timestamp: now,
+    retryCount: 0, timeoutRemainingMs: 0, message: "账号繁忙，等待重试已超过时限，请稍后重试。",
+  });
+  const content = JSON.parse(mocks.fetch.mock.calls[0][1].body).text.content;
+  expect(content).toContain("账号繁忙或等待超时");
+  expect(content).toContain("账号繁忙，等待重试已超过时限，请稍后重试。");
+  expect(content).toContain("已向客户端返回 503");
+});
+
 it("does not alert on intermediate overloads, recovery, cancellation or ordinary queue timeouts", async () => {
   const base = { connectionId: "a", timestamp: now, statusCode: 503 };
   for (const details of [
@@ -73,7 +98,6 @@ it("does not alert on intermediate overloads, recovery, cancellation or ordinary
     { source: "upstream" },
     { source: "upstream", statusCode: 429 },
     { source: "router", retryCount: 1, timeoutRemainingMs: 1000 },
-    { source: "router", retryCount: 0, timeoutRemainingMs: 0 },
     { source: "router", statusCode: 499, retryCount: 9, timeoutRemainingMs: 0 },
   ]) await notifyRequestError({ ...base, ...details });
   expect(mocks.fetch).not.toHaveBeenCalled();

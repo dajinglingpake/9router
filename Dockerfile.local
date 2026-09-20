@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY package.json package-lock.json* ./
 RUN --mount=type=cache,target=/root/.npm \
-  if [ -f package-lock.json ]; then npm ci; else npm install; fi
+  if [ -f package-lock.json ]; then npm ci --include=optional; else npm install --include=optional; fi \
+  && npm install --no-save --build-from-source better-sqlite3
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1

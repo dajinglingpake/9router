@@ -80,7 +80,7 @@ if [ -n "$pids" ]; then
 fi
 
 echo "[3/4] Recreating Docker Compose service..."
-docker compose --env-file "$RUN_ENV" -f "$ROOT/compose.yaml" up -d --force-recreate
+docker compose --env-file "$RUN_ENV" -f "$ROOT/compose.yaml" up -d --force-recreate --pull never
 
 echo "[4/4] Waiting for health check..."
 for i in $(seq 1 30); do

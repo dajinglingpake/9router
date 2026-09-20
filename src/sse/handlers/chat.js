@@ -478,6 +478,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       proxyConfigured: !!(refreshedCredentials.providerSpecificData?.connectionProxyEnabled || refreshedCredentials.providerSpecificData?.vercelRelayUrl),
       proxyPoolId: refreshedCredentials.providerSpecificData?.connectionProxyPoolId || null,
     };
+    Object.assign(clientRawRequest, {
+      proxyConfigured: diagnosticContext.proxyConfigured,
+      proxyPoolId: diagnosticContext.proxyPoolId,
+    });
     log.info("ACCOUNT_ATTEMPT", `${provider}/${model}`, diagnosticContext);
     let result;
     try {
@@ -589,7 +593,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.BAD_GATEWAY, error.message, provider, model)
         .catch((lockError) => log.warn("AUTH", `Failed to record account error: ${lockError.message}`));
     }
-    return rejectChatRequest(cancelled ? 499 : HTTP_STATUS.BAD_GATEWAY, cancelled ? "请求已取消。" : `${error.message || "账号请求失败。"}${sessionHint}`, clientRawRequest, "router");
+    const networkCode = error?.cause?.code || error?.code || null;
+    return rejectChatRequest(
+      cancelled ? 499 : HTTP_STATUS.BAD_GATEWAY,
+      cancelled ? "请求已取消。" : `${error.message || "账号请求失败。"}${sessionHint}`,
+      { ...clientRawRequest, networkCode },
+      "router",
+    );
   } finally {
     credentials.releaseSelection?.();
     if (!responseOwnsPermits) {

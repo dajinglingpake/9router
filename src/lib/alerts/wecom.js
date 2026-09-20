@@ -1,7 +1,9 @@
 import { fetch as directFetch } from "undici";
 import { getSettings } from "../db/repos/settingsRepo.js";
 import { getAdapter } from "../db/driver.js";
+import { getApiKeys } from "../db/repos/apiKeysRepo.js";
 import { getProviderConnectionById } from "../db/repos/connectionsRepo.js";
+import { getConcurrencySnapshot } from "../../sse/services/concurrencyLimiter.js";
 import { ALERT_DEFAULTS, ALERT_SEND_TIMEOUT_MS, validateWebhook } from "./config.js";
 
 const state = globalThis._wecomAlerts ||= { pending: Promise.resolve(), queued: new Set() };
@@ -67,17 +69,96 @@ export function queueAlert({ key, content, cooldownMs, test = false }) {
 
 export async function notifyRequestError(entry) {
   if (!entry.connectionId || entry.transient || entry.recovered) return;
-  const overloadTimeout = entry.source === "router" && entry.statusCode === 503
-    && entry.retryCount > 0 && entry.timeoutRemainingMs === 0;
-  if (!overloadTimeout && !(entry.source === "upstream" && [401, 402].includes(entry.statusCode))) return;
+  const statusCode = Number(entry.statusCode);
+  const overloadTimeout = entry.source === "router" && statusCode === 503
+    && entry.timeoutRemainingMs === 0
+    && (entry.retryCount > 0 || /账号繁忙|等待重试已超过时限|排队等待超时/.test(entry.message || ""));
+  const networkFailure = entry.source !== "client" && [502, 504].includes(statusCode);
+  if (!overloadTimeout && !networkFailure && !(entry.source === "upstream" && [401, 402].includes(statusCode))) return;
   const config = (await getSettings()).wecomAlerts;
   if (!config?.enabled) return;
   const connection = await getProviderConnectionById(entry.connectionId);
   if (!connection || connection.isActive === false) return;
-  const kind = overloadTimeout ? "overload" : entry.statusCode === 402 ? "quota" : "auth";
-  const label = { overload: "限流或过载", quota: "额度不足", auth: "账号凭证失效" }[kind];
+  const kind = networkFailure ? "network" : overloadTimeout ? "overload" : statusCode === 402 ? "quota" : "auth";
+  const label = {
+    network: "上游网络连接失败",
+    overload: "账号繁忙或等待超时",
+    quota: "额度不足",
+    auth: "账号凭证失效",
+  }[kind];
+  const metrics = await getRequestAlertMetrics();
+  const reason = networkFailure
+    ? `原因：${String(entry.message || "上游连接失败").slice(0, 160)}${entry.networkCode ? `（${entry.networkCode}）` : ""}`
+    : overloadTimeout
+      ? "原因：账号繁忙，等待重试已超过时限，请稍后重试。"
+      : "请在运行状态的错误日志中查看详情。";
+  const proxy = entry.proxyConfigured === false ? "未配置"
+    : entry.proxyConfigured === true ? "已配置" : "未知";
   return queueAlert({
     key: `${connection.id}:${kind}`,
-    content: `9router 告警｜${label}\n账号：${connection.name || connection.email || connection.id}\n提供商：${connection.provider}\n模型：${entry.model || "—"}\n状态：${entry.statusCode}\n${overloadTimeout ? "等待重试已超时，已向客户端返回 503。" : "请在运行状态的错误日志中查看详情。"}\n时间：${new Date(entry.timestamp).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`,
+    content: [
+      `9router 告警｜${label}`,
+      `账号：${connection.name || connection.email || connection.id}`,
+      `提供商：${connection.provider}`,
+      `模型：${entry.model || "—"}`,
+      `状态：${statusCode || entry.statusCode || "—"}`,
+      `当前请求：${metrics.currentRequests} 个（活跃 ${metrics.activeRequests}，排队 ${metrics.queuedRequests}）`,
+      `API Key：${metrics.activeApiKeys}/${metrics.apiKeys} 个启用`,
+      `请求吞吐率：${metrics.throughputPerMinute} req/min（近 5 分钟）`,
+      reason,
+      ...(networkFailure ? [`代理：${proxy}`] : []),
+      ...(overloadTimeout ? ["结果：已向客户端返回 503。"] : []),
+      `时间：${new Date(entry.timestamp).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`,
+    ].join("\n"),
   });
+}
+
+async function getRequestAlertMetrics() {
+  const fallback = {
+    currentRequests: "未知", activeRequests: "未知", queuedRequests: "未知",
+    apiKeys: "未知", activeApiKeys: "未知", throughputPerMinute: "未知",
+  };
+  try {
+    const db = await getAdapter();
+    const [apiKeys, throughputRow, activeSnapshot] = await Promise.all([
+      safeMetric(() => getApiKeys(), []),
+      safeMetric(() => db.get(
+        "SELECT COUNT(*) AS count FROM usageHistory WHERE timestamp >= ?",
+        [new Date(Date.now() - 5 * 60 * 1000).toISOString()],
+      ), { count: 0 }),
+      (async () => {
+        try {
+          const { getActiveRequests } = await import("../db/repos/usageRepo.js");
+          return await getActiveRequests();
+        } catch {
+          return null;
+        }
+      })(),
+    ]);
+    const pools = getConcurrencySnapshot();
+    const queuedRequests = pools.reduce((sum, item) => sum + (Number(item.queued) || 0), 0);
+    const trackedRequests = activeSnapshot?.activeRequests?.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+    const activeRequests = trackedRequests === undefined
+      ? pools.reduce((sum, item) => sum + (Number(item.active) || 0), 0)
+      : Math.max(0, trackedRequests - queuedRequests);
+    const throughput = Math.round((Number(throughputRow?.count) || 0) / 5 * 10) / 10;
+    return {
+      currentRequests: trackedRequests ?? activeRequests + queuedRequests,
+      activeRequests,
+      queuedRequests,
+      apiKeys: apiKeys.length,
+      activeApiKeys: apiKeys.filter(key => key.isActive).length,
+      throughputPerMinute: throughput,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+async function safeMetric(read, fallback) {
+  try {
+    return await read();
+  } catch {
+    return fallback;
+  }
 }

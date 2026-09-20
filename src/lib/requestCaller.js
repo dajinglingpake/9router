@@ -62,5 +62,8 @@ export function getRequestLogContext(context = {}, now = Date.now()) {
     position: number(context.position),
     cooldownRemainingMs: number(context.cooldownRemainingMs),
     timeoutRemainingMs: number(context.timeoutRemainingMs) ?? (number(context.deadline) === null ? null : Math.max(0, context.deadline - now)),
+    proxyConfigured: typeof context.proxyConfigured === "boolean" ? context.proxyConfigured : null,
+    proxyPoolId: text(context.proxyPoolId, 128),
+    networkCode: text(context.networkCode, 64),
   };
 }
