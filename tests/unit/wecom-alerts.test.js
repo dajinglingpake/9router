@@ -74,7 +74,7 @@ it("alerts final upstream network failures with proxy and traffic context", asyn
   expect(content).toContain("上游网络连接失败");
   expect(content).toContain("代理：未配置");
   expect(content).toContain("当前请求：");
-  expect(content).toContain("API Key：");
+  expect(content).not.toContain("API Key：");
   expect(content).toContain("请求吞吐率：");
   expect(content).toContain("ETIMEDOUT");
 });

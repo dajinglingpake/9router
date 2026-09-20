@@ -1,7 +1,6 @@
 import { fetch as directFetch } from "undici";
 import { getSettings } from "../db/repos/settingsRepo.js";
 import { getAdapter } from "../db/driver.js";
-import { getApiKeys } from "../db/repos/apiKeysRepo.js";
 import { getProviderConnectionById } from "../db/repos/connectionsRepo.js";
 import { getConcurrencySnapshot } from "../../sse/services/concurrencyLimiter.js";
 import { ALERT_DEFAULTS, ALERT_SEND_TIMEOUT_MS, validateWebhook } from "./config.js";
@@ -103,7 +102,6 @@ export async function notifyRequestError(entry) {
       `模型：${entry.model || "—"}`,
       `状态：${statusCode || entry.statusCode || "—"}`,
       `当前请求：${metrics.currentRequests} 个（活跃 ${metrics.activeRequests}，排队 ${metrics.queuedRequests}）`,
-      `API Key：${metrics.activeApiKeys}/${metrics.apiKeys} 个启用`,
       `请求吞吐率：${metrics.throughputPerMinute} req/min（近 5 分钟）`,
       reason,
       ...(networkFailure ? [`代理：${proxy}`] : []),
@@ -116,12 +114,11 @@ export async function notifyRequestError(entry) {
 async function getRequestAlertMetrics() {
   const fallback = {
     currentRequests: "未知", activeRequests: "未知", queuedRequests: "未知",
-    apiKeys: "未知", activeApiKeys: "未知", throughputPerMinute: "未知",
+    throughputPerMinute: "未知",
   };
   try {
     const db = await getAdapter();
-    const [apiKeys, throughputRow, activeSnapshot] = await Promise.all([
-      safeMetric(() => getApiKeys(), []),
+    const [throughputRow, activeSnapshot] = await Promise.all([
       safeMetric(() => db.get(
         "SELECT COUNT(*) AS count FROM usageHistory WHERE timestamp >= ?",
         [new Date(Date.now() - 5 * 60 * 1000).toISOString()],
@@ -146,8 +143,6 @@ async function getRequestAlertMetrics() {
       currentRequests: trackedRequests ?? activeRequests + queuedRequests,
       activeRequests,
       queuedRequests,
-      apiKeys: apiKeys.length,
-      activeApiKeys: apiKeys.filter(key => key.isActive).length,
       throughputPerMinute: throughput,
     };
   } catch {
