@@ -80,6 +80,8 @@ export function createSSEStream(options = {}) {
         customToolNames: new Set(customToolNames || []),
         model,
         sessionId: credentials?._clientSessionId || null,
+        // Direct Responses translation can wait for a trailing usage chunk.
+        targetFormat,
       }
     : null;
 
