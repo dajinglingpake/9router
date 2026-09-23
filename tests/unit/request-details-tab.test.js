@@ -22,7 +22,7 @@ beforeAll(async () => {
   vi.resetModules();
   db = await import("@/lib/db/index.js");
   await db.initDb();
-  await db.updateSettings({ enableObservability2: true, observabilityBatchSize: 1 });
+  await db.updateSettings({ enableObservability: true, observabilityBatchSize: 1 });
 
   const { getAdapter } = await import("@/lib/db/driver.js");
   adapter = await getAdapter();
@@ -186,6 +186,34 @@ describe("getDistinctModels — model filter options", () => {
     expect(list).toContain("gpt-5.6-sol");
     expect(new Set(list).size).toBe(list.length);
     expect(list).toEqual([...list].sort());
+  });
+});
+
+describe("usage-history fallback for request details", () => {
+  it("returns indexed filter options and reads only the requested page", async () => {
+    const model = "usage-pagination-regression";
+    for (let i = 1; i <= 25; i++) {
+      adapter.run(
+        `INSERT INTO usageHistory(timestamp, provider, model, clientIp, status, tokens) VALUES(?, ?, ?, ?, ?, ?)`,
+        [new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(), "codex", model, `192.0.2.${i % 2 + 1}`, i % 2 ? "ok" : "error", JSON.stringify({ prompt_tokens: i })],
+      );
+    }
+
+    expect(await db.getDistinctUsageProviders()).toContain("codex");
+    expect(await db.getDistinctUsageModels()).toContain(model);
+    expect(await db.getDistinctUsageClientIps()).toEqual(["192.0.2.1", "192.0.2.2"]);
+
+    const all = vi.spyOn(adapter, "all");
+    try {
+      const result = await db.getUsageRequestDetails({ model, status: "ok", page: 2, pageSize: 5 });
+      expect(result.pagination).toMatchObject({ page: 2, pageSize: 5, totalItems: 13, totalPages: 3 });
+      expect(result.details.map((detail) => detail.tokens.prompt_tokens)).toEqual([15, 13, 11, 9, 7]);
+      const query = all.mock.calls.find(([sql]) => sql.includes("FROM usageHistory"));
+      expect(query?.[0]).toMatch(/LIMIT \? OFFSET \?/);
+      expect(query?.[1].slice(-2)).toEqual([5, 5]);
+    } finally {
+      all.mockRestore();
+    }
   });
 });
 

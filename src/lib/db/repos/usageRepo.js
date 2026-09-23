@@ -408,8 +408,7 @@ export async function getRecentUsageOutcomes(startDate) {
   );
 }
 
-export async function getUsageHistory(filter = {}) {
-  const db = await getAdapter();
+function buildUsageHistoryWhere(filter) {
   const conds = [];
   const params = [];
 
@@ -426,48 +425,73 @@ export async function getUsageHistory(filter = {}) {
     }
   }
   if (filter.clientIp) { conds.push("clientIp = ?"); params.push(filter.clientIp); }
+  if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
 
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY id ASC`, params);
+  return { where: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
+}
 
-  return rows.map((r) => {
-    const meta = parseJson(r.meta, {});
-    return {
-      timestamp: r.timestamp, provider: r.provider, model: r.model,
-      connectionId: r.connectionId, apiKey: r.apiKey, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint, clientIp: r.clientIp,
-      cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}), latency: meta.latency || {},
-    };
-  });
+function mapUsageHistoryRow(row) {
+  const meta = parseJson(row.meta, {});
+  return {
+    timestamp: row.timestamp, provider: row.provider, model: row.model,
+    connectionId: row.connectionId, apiKey: row.apiKey, apiKeyMasked: maskApiKey(row.apiKey), endpoint: row.endpoint, clientIp: row.clientIp,
+    cost: row.cost, status: row.status, tokens: parseJson(row.tokens, {}), latency: meta.latency || {},
+  };
+}
+
+export async function getUsageHistory(filter = {}) {
+  const db = await getAdapter();
+  const { where, params } = buildUsageHistoryWhere(filter);
+  const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY id ASC`, params);
+  return rows.map(mapUsageHistoryRow);
+}
+
+async function getDistinctUsageValues(column) {
+  const db = await getAdapter();
+  // Each column has an index. Jump to its next value instead of scanning every
+  // history row when the details tab first loads on a large database.
+  const rows = db.all(`
+    WITH RECURSIVE distinctValues(value) AS (
+      SELECT MIN(${column}) FROM usageHistory WHERE ${column} IS NOT NULL
+      UNION ALL
+      SELECT (SELECT MIN(${column}) FROM usageHistory WHERE ${column} > value)
+      FROM distinctValues WHERE value IS NOT NULL
+    )
+    SELECT value FROM distinctValues WHERE value IS NOT NULL
+  `);
+  return rows.map((row) => row.value).filter(Boolean);
 }
 
 export async function getDistinctUsageProviders() {
-  const db = await getAdapter();
-  return db.all(`SELECT DISTINCT provider FROM usageHistory WHERE provider IS NOT NULL AND provider != '' ORDER BY provider ASC`).map((r) => r.provider);
+  return getDistinctUsageValues("provider");
 }
 
 export async function getDistinctUsageModels() {
-  const db = await getAdapter();
-  return db.all(`SELECT DISTINCT model FROM usageHistory WHERE model IS NOT NULL AND model != '' ORDER BY model ASC`).map((r) => r.model);
+  return getDistinctUsageValues("model");
 }
 
 export async function getDistinctUsageClientIps() {
-  const db = await getAdapter();
-  return db.all(`SELECT DISTINCT clientIp FROM usageHistory WHERE clientIp IS NOT NULL AND clientIp != '' ORDER BY clientIp ASC`).map((r) => r.clientIp);
+  return getDistinctUsageValues("clientIp");
 }
 
 // Usage rows are still useful in the details view when request body logging is disabled.
 export async function getUsageRequestDetails(filter = {}) {
-  const rows = (await getUsageHistory(filter)).reverse();
+  const db = await getAdapter();
+  const { where, params } = buildUsageHistoryWhere(filter);
   const page = filter.page || 1;
   const pageSize = filter.pageSize || 20;
-  const totalItems = rows.length;
   const offset = (page - 1) * pageSize;
+  const totalItems = db.get(`SELECT COUNT(*) AS c FROM usageHistory ${where}`, params)?.c || 0;
+  const rows = db.all(
+    `SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?`,
+    [...params, pageSize, offset],
+  );
   return {
-    details: rows.slice(offset, offset + pageSize).map((row, index) => ({
-      id: `usage-${row.timestamp}-${offset + index}`,
-      ...row,
+    details: rows.map((row) => ({
+      id: `usage-${row.id}`,
+      ...mapUsageHistoryRow(row),
       latency: {},
       request: {},
       providerRequest: undefined,
