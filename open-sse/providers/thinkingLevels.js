@@ -33,13 +33,15 @@ const FORMAT_LEVELS = {
 };
 
 const CODEX_GPT_5_6_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const CODEX_GPT_6_LEVELS = ["none", "low", "medium", "high", "xhigh", "max"];
 
 // Model-name pattern overrides (glob, first match wins) — more precise than format default.
 const PATTERN_THINKING = [
+  { provider: "codex", pattern: "*gpt-6-astra*", levels: ["low", "medium", "high", "xhigh", "max"] },
+  { provider: "codex", pattern: "*gpt-6-sol*", levels: CODEX_GPT_6_LEVELS },
+  { provider: "codex", pattern: "*gpt-6-luna*", levels: CODEX_GPT_6_LEVELS },
   { provider: "codex", pattern: "*gpt-6*", levels: CODEX_GPT_5_6_LEVELS },
   { provider: "codex", pattern: "*gpt-5.6-sol*", levels: [...CODEX_GPT_5_6_LEVELS, "ultra"] },
-  // Official GPT-6 Astra reasoning.effort values.
-  { provider: "codex", pattern: "*gpt-6-astra*", levels: ["low", "medium", "high", "xhigh", "max"] },
   { provider: "codex", pattern: "*gpt-5.6-terra*", levels: [...CODEX_GPT_5_6_LEVELS, "ultra"] },
   { provider: "codex", pattern: "*gpt-5.6-luna*", levels: CODEX_GPT_5_6_LEVELS },
   { pattern: "*codex*", levels: ["low", "medium", "high", "xhigh"] }, // codex cannot disable thinking
