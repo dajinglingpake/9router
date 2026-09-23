@@ -1,7 +1,7 @@
 // Shim → re-export from new SQLite-based DB layer (src/lib/db/)
 export {
   statsEmitter, trackPendingRequest, updatePendingRequest, getActiveRequests,
-  saveRequestUsage, getUsageHistory, getUsageStats, getChartData,
+  saveRequestUsage, getUsageHistory, getUsageLatencyByBucket, getUsageStats, getChartData,
   appendRequestLog, getRuntimeRequestErrors, getRecentLogs,
   getClientIpAliases, getClientIpAliasMap,
   setClientIpAlias, deleteClientIpAlias,

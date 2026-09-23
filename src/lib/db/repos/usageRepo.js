@@ -448,6 +448,25 @@ export async function getUsageHistory(filter = {}) {
   return rows.map(mapUsageHistoryRow);
 }
 
+export async function getUsageLatencyByBucket(start, bucketSize, bucketCount) {
+  const db = await getAdapter();
+  return db.all(`
+    WITH samples AS (
+      SELECT model,
+        CAST((ROUND((julianday(timestamp) - 2440587.5) * 86400000) - ?) / ? AS INTEGER) AS bucket,
+        CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.total') END AS total
+      FROM usageHistory
+      WHERE timestamp >= ? AND timestamp < ? AND model IS NOT NULL AND model <> ''
+    )
+    SELECT bucket, model,
+      SUM(CASE WHEN typeof(total) IN ('integer', 'real') AND total >= 0 THEN total END) AS totalLatency,
+      COUNT(CASE WHEN typeof(total) IN ('integer', 'real') AND total >= 0 THEN 1 END) AS requests
+    FROM samples
+    WHERE bucket >= 0 AND bucket < ?
+    GROUP BY bucket, model
+  `, [start, bucketSize, new Date(start).toISOString(), new Date(start + bucketSize * bucketCount).toISOString(), bucketCount]);
+}
+
 async function getDistinctUsageValues(column) {
   const db = await getAdapter();
   // Each column has an index. Jump to its next value instead of scanning every

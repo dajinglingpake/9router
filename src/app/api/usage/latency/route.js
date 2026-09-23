@@ -1,18 +1,9 @@
 import { NextResponse } from "next/server";
-import { getUsageHistory } from "@/lib/usageDb";
+import { getUsageLatencyByBucket } from "@/lib/usageDb";
 
 const PERIOD_MS = { "24h": 24 * 60 * 60 * 1000, "7d": 7 * 24 * 60 * 60 * 1000, "30d": 30 * 24 * 60 * 60 * 1000, "60d": 60 * 24 * 60 * 60 * 1000 };
 
 export const dynamic = "force-dynamic";
-
-function getStartDate(period) {
-  if (period === "today") {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    return start.toISOString();
-  }
-  return new Date(Date.now() - (PERIOD_MS[period] || PERIOD_MS["24h"])).toISOString();
-}
 
 function getBuckets(period) {
   const now = Date.now();
@@ -33,21 +24,13 @@ export async function GET(request) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
 
-    const details = await getUsageHistory({ startDate: getStartDate(period) });
     const buckets = getBuckets(period);
+    const summaries = await getUsageLatencyByBucket(buckets.start, buckets.size, buckets.count);
     const grouped = {};
     const modelSet = new Set();
-    for (const detail of details) {
-      if (detail.model) modelSet.add(detail.model);
-      const total = Number(detail.latency?.total);
-      if (!Number.isFinite(total) || total < 0 || !detail.model) continue;
-      const timestamp = new Date(detail.timestamp).getTime();
-      const index = Math.floor((timestamp - buckets.start) / buckets.size);
-      if (index < 0 || index >= buckets.count) continue;
-      const key = `${index}|${detail.model}`;
-      const item = grouped[key] ||= { index, model: detail.model, requests: 0, totalLatency: 0 };
-      item.requests += 1;
-      item.totalLatency += total;
+    for (const summary of summaries) {
+      modelSet.add(summary.model);
+      grouped[`${summary.bucket}|${summary.model}`] = summary;
     }
 
     const models = [...modelSet].sort();
@@ -56,7 +39,7 @@ export async function GET(request) {
       for (const model of models) {
         const item = grouped[`${index}|${model}`];
         // Keep every bucket numeric so zero-latency periods remain visible on the zero axis.
-        point[model] = item ? Math.round(item.totalLatency / item.requests) : 0;
+        point[model] = item?.requests ? Math.round(item.totalLatency / item.requests) : 0;
       }
       return point;
     });
