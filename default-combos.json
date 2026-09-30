@@ -24,6 +24,10 @@
     "models": ["cx/gpt-6-astra"]
   },
   {
+    "name": "gpt-6.1-sol",
+    "models": ["cx/gpt-6.1-sol"]
+  },
+  {
     "name": "gpt-6-sol",
     "models": ["cx/gpt-6-sol"]
   },
