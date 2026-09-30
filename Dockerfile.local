@@ -45,6 +45,7 @@ COPY --chown=node:node --from=builder /app/custom-server.js ./custom-server.js
 COPY --chown=node:node --from=builder /app/open-sse ./open-sse
 COPY --chown=node:node --from=builder /app/src/mitm ./src/mitm
 COPY --chown=node:node --from=builder /app/node_modules/node-forge ./node_modules/node-forge
+COPY --chown=node:node --from=builder /app/node_modules/undici ./node_modules/undici
 COPY --chown=node:node --from=builder /app/node_modules/next ./node_modules/next
 COPY --chown=node:node --from=builder /app/node_modules/sql.js ./node_modules/sql.js
 COPY --chown=node:node --from=builder /app/node_modules/node-machine-id ./node_modules/node-machine-id
