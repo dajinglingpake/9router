@@ -10,28 +10,28 @@ function transform(extra = {}) {
 }
 
 describe("native Codex request semantics", () => {
-  it.each([false, true])("preserves explicit parallel_tool_calls=%s", parallel_tool_calls => {
-    expect(transform({ parallel_tool_calls }).parallel_tool_calls).toBe(parallel_tool_calls);
+  it.each([false, true])("strips parallel_tool_calls=%s for non-Lite models", parallel_tool_calls => {
+    expect(transform({ parallel_tool_calls })).not.toHaveProperty("parallel_tool_calls");
   });
 
   it("does not add a parallel tool setting when absent", () => {
     expect(transform()).not.toHaveProperty("parallel_tool_calls");
   });
 
-  it.each(["developer", "system"])("does not duplicate %s instructions carried in input", role => {
+  it.each(["developer", "system"])("uses the upstream fallback for %s instructions carried in input", role => {
     const result = transform({ input: [
       { type: "additional_tools", role: "developer", tools: [{ type: "namespace", name: "tools", tools: [] }] },
       { type: "message", role, content: [{ type: "input_text", text: "Client instructions" }] },
       user,
     ] });
-    expect(result).not.toHaveProperty("instructions");
+    expect(result.instructions).toBe(CODEX_DEFAULT_INSTRUCTIONS);
     expect(result.input[1].content[0].text).toBe("Client instructions");
     expect(result.input[0].tools[0].type).toBe("namespace");
   });
 
-  it("preserves string developer messages and explicit top-level instructions", () => {
+  it("preserves explicit top-level instructions", () => {
     const input = [{ role: "developer", content: "Client instructions" }, user];
-    expect(transform({ input })).not.toHaveProperty("instructions");
+    expect(transform({ input }).instructions).toBe(CODEX_DEFAULT_INSTRUCTIONS);
     expect(transform({ input, instructions: "Explicit instructions" }).instructions).toBe("Explicit instructions");
   });
 

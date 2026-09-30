@@ -20,6 +20,7 @@ import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse } from "open-sse/utils/error.js";
+import { upstreamResponseHeaders } from "open-sse/utils/upstreamHeaders.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormat, getTargetFormat, resolveTransport } from "open-sse/services/provider.js";
@@ -47,7 +48,7 @@ import {
 
 const requestIds = new WeakMap();
 
-function rejectChatRequest(status, message, context, source = "client") {
+function rejectChatRequest(status, message, context, source = "client", extraHeaders = null) {
   appendRequestLog({
     ...getRequestLogContext(context),
     requestId: context?.requestId || null,
@@ -56,7 +57,7 @@ function rejectChatRequest(status, message, context, source = "client") {
     provider: context?.provider || null, connectionId: context?.connectionId || null, retryCount: context?.retryCount || 0,
     endpoint: context?.endpoint || null,
   }).catch(() => {});
-  return errorResponse(status, message);
+  return errorResponse(status, message, extraHeaders);
 }
 
 function getRequestId(request) {
@@ -346,8 +347,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, { sessionKey, fillFirst: true, waitForCooldown: true, modelByConnection });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-    if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。");
-    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest);
+    if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。", clientRawRequest?.upstreamErrorHeaders);
+    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
   }
 
   model = modelByConnection[credentials.connectionId] || model;
@@ -568,6 +569,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
     // Do not persist a modelLock_* for this path.
+    clientRawRequest.upstreamErrorHeaders = upstreamResponseHeaders(result.response?.headers);
     let shouldFallback = !!quotaResetMs;
     if (!(provider === "antigravity" && quotaResetMs)) {
       ({ shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
@@ -580,10 +582,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludedAccounts.add(credentials.connectionId);
       return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
     }
-    const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`);
-    const retryAfter = result.response?.headers.get("retry-after");
-    if (retryAfter) response.headers.set("Retry-After", retryAfter);
-    return response;
+    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`, clientRawRequest.upstreamErrorHeaders);
   } catch (error) {
     if (sessionKey && Date.now() >= deadline && !request?.signal?.aborted) {
       return rejectChatRequest(503, "账号繁忙，等待重试已超过时限，请稍后重试。", clientRawRequest, "router");
@@ -609,11 +608,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 }
 
-function rejectAccountCooldown(status, message, retryAfter, sessionHint, clientRawRequest) {
+function rejectAccountCooldown(status, message, retryAfter, sessionHint, clientRawRequest, extraHeaders = null) {
   const seconds = Math.max(0, Math.ceil((new Date(retryAfter).getTime() - Date.now()) / 1000)) || 0;
   const reason = seconds && /overloaded/i.test(message) ? "当前账号暂时过载。" : message;
   const waitHint = seconds ? ` 请在 ${seconds} 秒后重试。` : "";
-  const response = rejectChatRequest(status, `${reason}${waitHint}${sessionHint}`, clientRawRequest, "router");
+  const response = rejectChatRequest(status, `${reason}${waitHint}${sessionHint}`, clientRawRequest, "router", extraHeaders);
   if (seconds) response.headers.set("Retry-After", String(seconds));
   return response;
 }

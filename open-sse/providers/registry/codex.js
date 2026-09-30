@@ -3,6 +3,7 @@ import { withCodexReviewModels } from "../models/helpers.js";
 // Codex CLI version seen by OpenAI's backend — single source for the Version /
 // User-Agent identity headers. Bump when the installed codex CLI is upgraded.
 export const CODEX_CLI_VERSION = "0.156.1";
+const GPT_6_LITE_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
 export default {
   id: "codex",
@@ -42,6 +43,7 @@ export default {
     headers: {
       originator: "codex_cli_rs",
       "User-Agent": `codex_cli_rs/${CODEX_CLI_VERSION}`,
+      version: CODEX_CLI_VERSION,
     },
     usage: {
       url: "https://chatgpt.com/backend-api/wham/usage",
@@ -52,8 +54,8 @@ export default {
   models: [
     { id: "gpt-6-astra", name: "GPT 6.0 Astra" },
     { id: "gpt-6.1-sol", name: "GPT 6.1 Sol" },
-    { id: "gpt-6-sol", name: "GPT 6 Sol" },
-    { id: "gpt-6-luna", name: "GPT 6 Luna" },
+    { id: "gpt-6-sol", name: "GPT 6.0 Sol", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS },
+    { id: "gpt-6-luna", name: "GPT 6.0 Luna", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS },
     { id: "gpt-5.6-sol", name: "GPT 5.6 Sol" },
     { id: "gpt-5.6-sol-review", name: "GPT 5.6 Sol Review", upstreamModelId: "gpt-5.6-sol", quotaFamily: "review" },
     { id: "gpt-5.6-terra", name: "GPT 5.6 Terra" },

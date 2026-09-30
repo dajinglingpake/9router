@@ -1,7 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
-import { UsageStats, RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
+import { RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/components";
+import UsageStats from "@/shared/components/UsageStats";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 
 const PERIODS = [
