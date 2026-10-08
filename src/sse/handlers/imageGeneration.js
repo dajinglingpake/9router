@@ -4,7 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
-} from "../services/auth.js";
+} from "../local/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";

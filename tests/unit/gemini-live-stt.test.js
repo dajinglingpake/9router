@@ -426,7 +426,7 @@ describe("Custom-model transport persistence via POST /api/models/custom", () =>
 describe("App-layer custom transport resolution (stt.js)", () => {
   it("T15: persisted custom gemini-live transport reaches WS dispatch through real handleStt", async () => {
     const LOCALDB = "@/lib/localDb";
-    const AUTH = "../../src/sse/services/auth.js";
+    const AUTH = "../../src/sse/local/auth.js";
     try {
       vi.resetModules();
       vi.doMock(LOCALDB, () => ({

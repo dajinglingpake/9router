@@ -4,7 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
-} from "../services/auth.js";
+} from "../local/auth.js";
 import { getSettings, getCombos } from "@/lib/localDb";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
 import { handleFetchCore } from "open-sse/handlers/fetch/index.js";

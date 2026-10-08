@@ -16,7 +16,7 @@ vi.mock("@/shared/constants/providers.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
-const { markAccountUnavailable } = await import("../../src/sse/services/auth.js");
+const { markAccountUnavailable } = await import("../../src/sse/local/auth.js");
 
 beforeEach(() => {
   vi.clearAllMocks();

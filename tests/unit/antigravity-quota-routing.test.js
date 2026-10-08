@@ -28,7 +28,7 @@ vi.mock("open-sse/services/usage/google.js", () => ({
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
 const { getAntigravityQuotaCache, handleAntigravityQuotaError, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
-const { getProviderCredentials } = await import("@/sse/services/auth.js");
+const { getProviderCredentials } = await import("@/sse/local/auth.js");
 
 const MODEL = "claude-opus-4-6-thinking";
 const FUTURE_RESET = "2026-09-01T00:00:00.000Z";

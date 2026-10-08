@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   checkAndRefreshToken: vi.fn(),
 }));
 
-vi.mock("@/sse/services/auth.js", () => ({
+vi.mock("@/sse/local/auth.js", () => ({
   getProviderCredentials: mocks.getProviderCredentials,
   markAccountUnavailable: mocks.markAccountUnavailable,
   clearAccountError: mocks.clearAccountError,

@@ -25,7 +25,7 @@ const tokenMocks = vi.hoisted(() => ({
   updateProviderCredentials: vi.fn(async () => {}),
 }));
 
-vi.mock("@/sse/services/auth.js", () => authMocks);
+vi.mock("@/sse/local/auth.js", () => authMocks);
 vi.mock("@/sse/services/tokenRefresh.js", () => tokenMocks);
 vi.mock("@/lib/localDb", () => ({
   getSettings: vi.fn(async () => ({ requireApiKey: false })),

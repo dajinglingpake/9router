@@ -9,11 +9,11 @@ const mocks = vi.hoisted(() => ({
   clearAccountError: vi.fn(),
 }));
 
-vi.mock("@/sse/handlers/chat.js", () => ({
+vi.mock("@/sse/local/chat.js", () => ({
   handleChat: mocks.handleChat,
 }));
 
-vi.mock("@/sse/services/auth.js", () => ({
+vi.mock("@/sse/local/auth.js", () => ({
   getProviderCredentials: mocks.getProviderCredentials,
   isValidApiKey: mocks.isValidApiKey,
   markAccountUnavailable: mocks.markAccountUnavailable,

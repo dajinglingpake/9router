@@ -1,10 +1,10 @@
-import { handleChat } from "@/sse/handlers/chat.js";
+import { handleChat } from "@/sse/local/chat.js";
 import {
   clearAccountError,
   getProviderCredentials,
   isValidApiKey,
   markAccountUnavailable,
-} from "@/sse/services/auth.js";
+} from "@/sse/local/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS } from "open-sse/config/runtimeConfig.js";

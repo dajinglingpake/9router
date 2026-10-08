@@ -5,7 +5,7 @@ import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBu
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
-import { recordTraffic, recordOutputChunk, beginOutputStream, endOutputStream } from "@/lib/runtimeTraffic.js";
+import { createLocalStreamMonitor } from "./localStreamMonitor.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 
@@ -33,6 +33,11 @@ const STREAM_MODE = {
   TRANSLATE: "translate",    // Full translation between formats
   PASSTHROUGH: "passthrough" // No translation, normalize output, extract usage
 };
+
+// Upper bound on the deferred response.completed wait: a chat->responses stream
+// that saw finish_reason without usage must not hold the client's terminal event
+// forever when the upstream stalls with no usage trailer and no [DONE].
+const PENDING_COMPLETION_FLUSH_MS = 3000;
 
 /**
  * Create unified SSE transform stream
@@ -99,34 +104,18 @@ export function createSSEStream(options = {}) {
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let finalized = false;
-  let streamFailed = false;
-  let responsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
-  let responsesCompleted = false;
-  const outputStreamId = beginOutputStream({ connectionId, provider, model });
-
-  // A 200 response or EOF is not proof that a Responses request completed.
-  const observeOutcome = (parsed, eventName = null) => {
-    const type = getOpenAIResponsesEventName(eventName, parsed);
-    if (type?.startsWith("response.")) responsesStream = true;
-    if (parsed?.error || parsed?.response?.error || type === "error"
-      || type === "response.failed" || type === "response.incomplete"
-      || ["failed", "incomplete"].includes(parsed?.response?.status)) streamFailed = true;
-    if (type === "response.completed" || type === "response.done" || parsed?.response?.status === "completed") responsesCompleted = true;
-  };
-
-  // Shared by transform() and flush() — each receives its own controller.
-  const makeEnqueue = (controller) => (value) => {
-    recordTraffic({ direction: "download", bytes: value?.byteLength || value?.length || 0 });
-    if (value) recordOutputChunk(value, outputStreamId);
-    controller.enqueue(value);
-  };
+  const monitor = createLocalStreamMonitor({ targetFormat, connectionId, provider, model });
+  const observeOutcome = monitor.observeOutcome;
+  const makeEnqueue = (controller) => (value) => monitor.enqueue(controller, value);
+  let completionFlushTimer = null;
 
   // Usage/logging tail, callable from transform() as well as flush(): a client that
   // closes right after the terminal event cancels the reader, and flush() never runs.
   const finalizeStream = () => {
+    if (completionFlushTimer) { clearTimeout(completionFlushTimer); completionFlushTimer = null; }
     if (finalized) return;
     finalized = true;
-    endOutputStream(outputStreamId);
+    monitor.finish();
 
     const isPassthrough = mode === STREAM_MODE.PASSTHROUGH;
     let finalUsage = isPassthrough ? usage : state?.usage;
@@ -146,9 +135,23 @@ export function createSSEStream(options = {}) {
       onStreamComplete({
         content: accumulatedContent,
         thinking: accumulatedThinking,
-        successful: !streamFailed && (!responsesStream || responsesCompleted),
+        successful: monitor.isSuccessful(),
       }, finalUsage, ttftAt);
     }
+  };
+
+  // Emit the deferred response.completed now — at [DONE], or when the watchdog
+  // below gives up on a usage trailer that never arrives.
+  const flushPendingCompletion = (controller) => {
+    const completed = translateResponse(targetFormat, sourceFormat, null, state);
+    for (const item of completed || []) {
+      if (item === null || item === undefined) continue;
+      const output = formatSSE(item, sourceFormat);
+      reqLogger?.appendConvertedChunk?.(output);
+      monitor.enqueue(controller, sharedEncoder.encode(output));
+      sseEmittedCount++;
+    }
+    finalizeStream();
   };
 
   return new TransformStream({
@@ -308,6 +311,14 @@ export function createSSEStream(options = {}) {
         // For Ollama: done=true is the final chunk with finish_reason/usage, must translate
         // For other formats: done=true is the [DONE] sentinel, skip
         if (parsed && parsed.done && targetFormat !== FORMATS.OLLAMA) {
+          // A direct Chat-to-Responses translation can defer response.completed
+          // while waiting for a usage trailer. [DONE] ends that opportunity even
+          // if the upstream keeps the HTTP connection open, so finish now.
+          if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES &&
+              state.completionPending && !state.completedSent) {
+            flushPendingCompletion(controller);
+          }
+
           // Synthesize response.failed if the Responses stream never sent a terminal event
           if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
             const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
@@ -418,6 +429,18 @@ export function createSSEStream(options = {}) {
             enqueue(sharedEncoder.encode(output));
             sseEmittedCount++;
           }
+        }
+
+        // The completion deferral can outlive the upstream: a broken chat upstream
+        // may stall after finish_reason with no usage trailer and no [DONE], holding
+        // the connection open. Bound the wait so the client still gets a terminal event.
+        if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES &&
+            state?.completionPending && !state?.completedSent && !completionFlushTimer) {
+          completionFlushTimer = setTimeout(() => {
+            completionFlushTimer = null;
+            if (state?.completedSent) return;
+            try { flushPendingCompletion(controller); } catch { /* controller already closed */ }
+          }, PENDING_COMPLETION_FLUSH_MS);
         }
       }
     },
@@ -532,7 +555,7 @@ export function createSSEStream(options = {}) {
 
         finalizeStream();
       } catch (error) {
-        streamFailed = true;
+        monitor.markFailed();
         console.log("Error in flush:", error);
         finalizeStream();
       }

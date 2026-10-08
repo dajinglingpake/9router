@@ -4,7 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
-} from "../services/auth.js";
+} from "../local/auth.js";
 import { getSettings, getProviderConnectionById } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
 import { handleVideoProxyCore, getVideoConfig, sanitizeSecrets } from "open-sse/handlers/videoCore.js";

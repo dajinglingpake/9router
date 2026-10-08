@@ -4,7 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
   isValidApiKey,
-} from "../services/auth.js";
+} from "../local/auth.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
