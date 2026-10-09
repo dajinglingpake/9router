@@ -4,6 +4,7 @@ import { MAX_RATE_LIMIT_COOLDOWN_MS, DEFAULT_ACCOUNT_COOLDOWN_MIN_MS, DEFAULT_AC
 import { resolveProviderId } from "@/shared/constants/providers.js";
 import { pauseAccountQueue } from "../services/concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
+import { markCodexQuotaUnavailable } from "./quotaRouting.js";
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 
@@ -38,6 +39,8 @@ function githubMonthlyResetMs(status, errorText, provider) {
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
+  const quotaFailure = await markCodexQuotaUnavailable(connectionId, status, errorText, resolveProviderId(provider), model, resetsAtMs);
+  if (quotaFailure) return quotaFailure;
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;

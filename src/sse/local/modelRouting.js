@@ -21,6 +21,9 @@ import {
 } from "../services/concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
 import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderCapacityState } from "./requestContext.js";
+import { getCodexRoutingPolicy } from "./routingPolicy.js";
+import { isCodexQuotaError, getAccountQuotaState } from "./quotaRouting.js";
+import { handleLocalCombo } from "./comboRouting.js";
 
 /**
  * Handle single model chat request
@@ -32,7 +35,8 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   // Resolve combo aliases (including cc/<name>) before provider prefixes.
   const comboModels = await getComboModels(modelStr);
   if (comboModels?.length) {
-    return handleSingleModelChat(body, comboModels[0], clientRawRequest, request, apiKey, seenModels, excludedAccounts, deadline, retryCount, [...comboNames, modelStr]);
+    return handleLocalCombo(body, comboModels, modelStr, (_body, candidate) =>
+      handleSingleModelChat(_body, candidate, clientRawRequest, request, apiKey, new Set(seenModels), new Set(excludedAccounts), deadline, retryCount, [...comboNames, modelStr]));
   }
   const modelInfo = await getModelInfo(modelStr);
 
@@ -52,7 +56,9 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const userAgent = request?.headers?.get("user-agent") || "";
 
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
-  const sessionHint = sessionKey ? ` ${NEW_SESSION_HINT}` : "";
+  const chatSettings = await getSettings();
+  const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
+  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；额度耗尽时自动迁移。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
     sessionKey, fillFirst: true, waitForCooldown: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
@@ -63,7 +69,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
   }
 
-  model = modelByConnection[credentials.connectionId] || model;
+  model = credentials.routingModel || modelByConnection[credentials.connectionId] || model;
 
   let apiKeyPermit = null;
   let accountPermit = null;
@@ -85,7 +91,6 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     }
 
     // Use shared chatCore
-    const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     const concurrencyMetadata = buildConcurrencyMetadata({
       body,
@@ -167,6 +172,16 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     const liveConnection = credentials.connectionId === "noauth"
       ? credentials
       : await getProviderConnectionById(credentials.connectionId);
+    const liveQuota = codexPolicy && liveConnection ? getAccountQuotaState(liveConnection, model, null, codexPolicy) : null;
+    if (liveQuota?.exhausted) {
+      if (!sessionKey || codexPolicy.quotaFailover) {
+        excludedAccounts.add(credentials.connectionId);
+        accountPermit?.release(); accountPermit = null;
+        apiKeyPermit?.release(); apiKeyPermit = null;
+        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
+      }
+      return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, sessionHint, clientRawRequest);
+    }
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
       if (!sessionKey) {
         excludedAccounts.add(credentials.connectionId);
@@ -204,7 +219,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       diagnosticContext,
       onUpstreamOverload: modelStats.onOverload,
       onRequestComplete: modelStats.onComplete,
-      body: { ...body, model: `${provider}/${model}` },
+      body: { ...structuredClone(body), model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
@@ -288,13 +303,24 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     if (!(provider === "antigravity" && quotaResetMs)) {
       ({ shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
-    if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
+    const retry = async () => {
       await result.response?.body?.cancel().catch(() => {});
+      // Recursion must not acquire this request's API Key/account permit again
+      // while it is still held by the failed attempt.
+      accountPermit?.release(); accountPermit = null;
+      apiKeyPermit?.release(); apiKeyPermit = null;
       return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
+    };
+    if (sessionKey && codexPolicy?.quotaFailover && isCodexQuotaError(provider, result.status, result.error)) {
+      excludedAccounts.add(credentials.connectionId);
+      return retry();
+    }
+    if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
+      return retry();
     }
     if (!sessionKey && shouldFallback && credentials.connectionId !== "noauth") {
       excludedAccounts.add(credentials.connectionId);
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
+      return retry();
     }
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`, clientRawRequest.upstreamErrorHeaders);
   } catch (error) {

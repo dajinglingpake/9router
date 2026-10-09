@@ -7,6 +7,9 @@ import { getAntigravityQuotaCache } from "../services/antigravityQuota.js";
 import { getConcurrencySnapshot, waitForAccountRequest } from "../services/concurrencyLimiter.js";
 import { clearSessionBinding, getSessionBinding, bindSession } from "../services/sessionRouting.js";
 import * as log from "../utils/logger.js";
+import { getCodexRoutingPolicy } from "./routingPolicy.js";
+import { selectBalancedAccount } from "./accountBalancing.js";
+import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } from "./quotaRouting.js";
 
 // Share selection state across route bundles and development reloads.
 const selectionState = globalThis.__ninerouterAccountSelection ||= {
@@ -73,7 +76,16 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
-  const modelFor = (connection) => options.modelByConnection?.[connection?.id] || model;
+  const providerId = resolveProviderId(provider);
+  const routingSettings = providerId === "codex" ? await getSettings() : null;
+  const codexPolicy = routingSettings ? getCodexRoutingPolicy(routingSettings) : null;
+  const routingQuotas = codexPolicy
+    ? await loadRoutingQuotas(await getProviderConnections({ provider: providerId, isActive: true }), codexPolicy)
+    : new Map();
+  const modelFor = (connection) => {
+    const requested = options.modelByConnection?.[connection?.id] || model;
+    return codexPolicy ? resolveQuotaRoutingModel(connection, requested, routingQuotas.get(connection?.id), codexPolicy, options.contextMarker) : requested;
+  };
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionState.mutex;
   let resolveMutex;
@@ -83,7 +95,6 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     await currentMutex;
 
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
-    const providerId = resolveProviderId(provider);
     const sessionKey = options.sessionKey;
     let binding = await getSessionBinding(sessionKey);
     if (binding && binding.provider !== providerId) {
@@ -139,6 +150,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
+    const quotaStates = new Map(connections.map(connection => [connection.id,
+      codexPolicy ? getAccountQuotaState(connection, modelFor(connection), routingQuotas.get(connection.id), codexPolicy) : null,
+    ]));
+    // Keep the old persisted binding until a replacement is actually selected.
+    // All requests for this session observe the same migration under the mutex.
+    if (binding && codexPolicy?.quotaFailover && quotaStates.get(binding.connectionId)?.exhausted) binding = null;
+
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
     const isAntigravity = providerId === "antigravity";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
@@ -146,6 +164,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
+      if (quotaStates.get(c.id)?.exhausted) return false;
       if (isModelLockActive(c, modelFor(c)) && !(options.waitForCooldown && binding?.connectionId === c.id && Number(c.errorCode) === 503)) return false;
       const enabled = c.providerSpecificData?.enabledModels;
       const requestedModel = options.requestedModel || (options.contextMarker
@@ -166,6 +185,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const capacityConnections = preferConnectionsWithCapacity(availableConnections);
     if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
       const bound = connections.find((item) => item.id === binding.connectionId);
+      const quota = quotaStates.get(binding.connectionId);
+      if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: "当前会话绑定的账号额度已用尽。", retryAfter: quota.retryAt };
       return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: getModelLockUntil(bound, modelFor(bound)) };
     }
 
@@ -180,6 +201,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     });
 
     if (availableConnections.length === 0) {
+      const exhausted = [...quotaStates.values()].filter(quota => quota?.exhausted);
+      if (exhausted.length) return {
+        allRateLimited: true, lastErrorCode: 429, lastError: "可用账号额度已用尽。",
+        retryAfter: exhausted.map(quota => quota.retryAt).filter(Boolean).sort()[0] || null,
+      };
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
       const lockedConns = connections.filter(c => isModelLockActive(c, modelFor(c)));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
@@ -205,17 +231,16 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
-    const settings = await getSettings();
+    const settings = routingSettings || await getSettings();
     // Per-provider strategy overrides global setting
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
     let connection;
-    if (sessionKey || options.fillFirst) {
-      // Fill the first available account only once; a bound session ignores load.
-      connection = binding
-        ? availableConnections.find((item) => item.id === binding.connectionId)
-        : capacityConnections[0];
+    if (binding) connection = availableConnections.find((item) => item.id === binding.connectionId);
+    // Preserve the existing selection path unless a local strategy is chosen.
+    if (!connection && (!codexPolicy || codexPolicy.accountStrategy === "inherit") && (sessionKey || options.fillFirst)) {
+      connection = capacityConnections[0];
     }
     // Pin to preferred connection if specified and available
     if (!connection && preferredConnectionId) {
@@ -223,6 +248,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
+    }
+    if (!connection && codexPolicy && codexPolicy.accountStrategy !== "inherit") {
+      connection = selectBalancedAccount(availableConnections, codexPolicy.accountStrategy,
+        getConcurrencySnapshot(), selectionReservations, selectionCursors, `${providerId}:local-routing`);
     }
     if (!connection && strategy === "round-robin") {
       const hasConcurrencyLimits = capacityConnections.some((item) => Number(item.maxConcurrency) > 0);
@@ -314,6 +343,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
       },
       connectionId: connection.id,
+      routingModel: modelFor(connection),
       releaseSelection,
       maxConcurrency: connection.maxConcurrency || 0,
       minRequestIntervalMs: Number(connection.minRequestIntervalMs) || 0,
