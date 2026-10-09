@@ -8,7 +8,7 @@ const headers = { "Cache-Control": "no-store" };
 
 export async function GET() {
   const config = (await getSettings()).wecomAlerts;
-  // This endpoint always requires dashboard authentication, including when login is disabled.
+  // Dashboard guard follows the instance's requireLogin setting for this endpoint.
   return Response.json({ ...publicAlertConfig(config), webhookUrl: config?.webhookUrl || "", status: await getAlertStatus() }, { headers });
 }
 

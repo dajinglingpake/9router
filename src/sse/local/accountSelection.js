@@ -10,6 +10,7 @@ import * as log from "../utils/logger.js";
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { selectBalancedAccount } from "./accountBalancing.js";
 import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } from "./quotaRouting.js";
+import { isCodexPoolQuotaLow } from "./quotaModelSwitch.js";
 
 // Share selection state across route bundles and development reloads.
 const selectionState = globalThis.__ninerouterAccountSelection ||= {
@@ -79,12 +80,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const providerId = resolveProviderId(provider);
   const routingSettings = providerId === "codex" ? await getSettings() : null;
   const codexPolicy = routingSettings ? getCodexRoutingPolicy(routingSettings) : null;
+  const quotaConnections = codexPolicy ? await getProviderConnections({ provider: providerId, isActive: true }) : [];
   const routingQuotas = codexPolicy
-    ? await loadRoutingQuotas(await getProviderConnections({ provider: providerId, isActive: true }), codexPolicy)
+    ? await loadRoutingQuotas(quotaConnections, codexPolicy)
     : new Map();
+  const poolQuotaLow = codexPolicy ? isCodexPoolQuotaLow(quotaConnections, routingQuotas, codexPolicy) : false;
   const modelFor = (connection) => {
     const requested = options.modelByConnection?.[connection?.id] || model;
-    return codexPolicy ? resolveQuotaRoutingModel(connection, requested, routingQuotas.get(connection?.id), codexPolicy, options.contextMarker) : requested;
+    return codexPolicy ? resolveQuotaRoutingModel(connection, requested, routingQuotas.get(connection?.id), codexPolicy, options.contextMarker, poolQuotaLow) : requested;
   };
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionState.mutex;

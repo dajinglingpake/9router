@@ -2,6 +2,7 @@ export const ALERT_DEFAULTS = {
   enabled: false,
   webhookUrl: "",
   quotaPercent: 10,
+  codexQuotaMode: "account",
   balanceThreshold: 1,
   expiryDays: 3,
   cooldownMinutes: 10,
@@ -27,6 +28,10 @@ export function normalizeAlertConfig(input = {}, current = ALERT_DEFAULTS) {
     result.enabled = input.enabled;
   }
   if (input.webhookUrl?.trim()) result.webhookUrl = validateWebhook(input.webhookUrl.trim());
+  if (input.codexQuotaMode !== undefined) {
+    if (!["account", "total"].includes(input.codexQuotaMode)) throw new Error("Codex 额度告警口径无效");
+    result.codexQuotaMode = input.codexQuotaMode;
+  }
   for (const [key, min, max] of [["quotaPercent", 1, 99], ["balanceThreshold", 0, 10000], ["expiryDays", 1, 90], ["cooldownMinutes", 1, 1440]]) {
     if (input[key] === undefined) continue;
     if (typeof input[key] !== "number" || !Number.isFinite(input[key]) || input[key] < min || input[key] > max) throw new Error("告警阈值超出范围");

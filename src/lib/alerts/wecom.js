@@ -79,6 +79,7 @@ export async function notifyRequestError(entry) {
   const connection = await getProviderConnectionById(entry.connectionId);
   if (!connection || connection.isActive === false) return;
   const kind = networkFailure ? "network" : overloadTimeout ? "overload" : statusCode === 402 ? "quota" : "auth";
+  if (connection.provider === "codex" && kind === "quota" && config.codexQuotaMode === "total") return;
   const label = {
     network: "上游网络连接失败",
     overload: "账号繁忙或等待超时",

@@ -26,7 +26,8 @@ export function getAccountAlerts(connection, usage, config, now = Date.now()) {
   const alerts = [];
   const account = `账号：${connection.name || connection.email || connection.id}\n提供商：${connection.provider}`;
   const low = [], empty = [];
-  const quotas = connection.provider === "codebuddy-cn"
+  const quotas = connection.provider === "codex" && config.codexQuotaMode === "total" ? {}
+    : connection.provider === "codebuddy-cn"
     ? codeBuddyAccountQuota(usage?.quotas || {}, config.quotaPercent, now) : usage?.quotas || {};
   for (const [name, quota] of Object.entries(quotas)) {
     if (!quota || (quota.resetAt && new Date(quota.resetAt).getTime() <= now)) continue;
@@ -94,7 +95,7 @@ export async function checkAccountAlerts() {
     const { loadConnectionUsage, supportsConnectionUsage } = await import("../providerUsage.js");
     for (let connection of await getProviderConnections({ isActive: true })) {
       let usage;
-      if (supportsConnectionUsage(connection) && await claimDailyQuotaCheck(connection.id)) {
+      if (!(connection.provider === "codex" && config.codexQuotaMode === "total") && supportsConnectionUsage(connection) && await claimDailyQuotaCheck(connection.id)) {
         try {
           usage = await loadConnectionUsage(connection, { signal: AbortSignal.timeout(ALERT_USAGE_TIMEOUT_MS) });
           connection = await getProviderConnectionById(connection.id) || connection;
@@ -106,6 +107,11 @@ export async function checkAccountAlerts() {
       for (const alert of getAccountAlerts(connection, usage, config)) {
         void queueAlert(alert).catch(() => console.warn("[Alerts] Unable to queue account alert"));
       }
+    }
+    if (config.codexQuotaMode === "total") {
+      const { loadCodexQuotaSummary } = await import("../local/loadCodexQuotaSummary.js");
+      const { notifyCodexQuotaSummary } = await import("./codexQuota.js");
+      await notifyCodexQuotaSummary(await loadCodexQuotaSummary(), config);
     }
   } catch {
     console.warn("[Alerts] Account check failed");

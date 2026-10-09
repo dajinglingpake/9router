@@ -48,7 +48,7 @@ export default function CodexRoutingSettings() {
           onChange={() => setConfig({ ...config, quotaFailover: !config.quotaFailover })} />
       </label>
       <label className="flex items-center justify-between gap-4">
-        <div><p className="text-sm font-medium">低额度切换 Luna</p><p className="text-xs text-text-muted">保留当前账号，在后续请求使用 Luna。额度恢复后使用原请求模型。</p></div>
+        <div><p className="text-sm font-medium">低额度切换 Luna</p><p className="text-xs text-text-muted">单个账号 5 小时用量达到阈值时，只切换该账号；5 小时或每周总用量达到阈值时，全部账号后续请求使用 Luna。保留会话绑定，额度恢复后使用原请求模型。</p></div>
         <Toggle disabled={disabled} checked={config.quotaModelSwitch}
           onChange={() => setConfig({ ...config, quotaModelSwitch: !config.quotaModelSwitch })} />
       </label>
@@ -57,14 +57,14 @@ export default function CodexRoutingSettings() {
           value={config.quotaUsedPercent} disabled={disabled || !config.quotaModelSwitch}
           hint="例如 90% 表示剩余约 10% 时切换。"
           onChange={event => setConfig({ ...config, quotaUsedPercent: Number(event.target.value) })} />
-        <Select label="检查额度周期" aria-label="检查额度周期" value={config.quotaWindow} disabled={disabled || (!config.quotaModelSwitch && config.accountStrategy !== "quota-priority")}
+        <Select label="账号分配参考周期" aria-label="账号分配参考周期" value={config.quotaWindow} disabled={disabled || config.accountStrategy !== "quota-priority"}
           options={[{ value: "any", label: "5 小时 / 每周（取较低剩余）" }, { value: "session", label: "仅 5 小时额度" }, { value: "weekly", label: "仅每周额度" }]}
           onChange={event => setConfig({ ...config, quotaWindow: event.target.value })} />
       </div>
       {config.accountStrategy === "quota-priority" && config.quotaWindow === "any" && <p className="text-xs text-text-muted">额度优先按 5 小时与每周额度中较低的剩余比例比较。</p>}
       <Select label="低额度使用的模型" aria-label="低额度使用的模型" options={models} value={config.quotaFallbackModel}
         disabled={disabled || !config.quotaModelSwitch} onChange={event => setConfig({ ...config, quotaFallbackModel: event.target.value })} />
-      <p className="text-xs text-text-muted">启用对应开关后，才按额度迁移账号或切换模型。模型切换需要有效额度数据且账号已启用对应模型；额度查询失败不会触发降级，审查和 Spark 使用各自额度。</p>
+      <p className="text-xs text-text-muted">启用对应开关后生效。只有周额度的账号，5 小时额度与周额度共用。不同套餐分别汇总，同一周期所有适用套餐都达到阈值才全局切换。额度查询失败不触发该周期的全局降级，模型须已启用；审查和 Spark 保持原模型。</p>
       <Button disabled={disabled} onClick={save}>保存账号路由</Button>
       {message && <p role="status" className="text-sm">{message}</p>}
     </div>

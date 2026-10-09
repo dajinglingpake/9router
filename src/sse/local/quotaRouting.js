@@ -15,13 +15,13 @@ function quotaLockKey(model) {
   return `modelLock_codex-quota-${quotaFamily(model)}`;
 }
 
-async function loadCachedQuota(connection) {
+export async function loadCodexQuotaSnapshot(connection, { force = false } = {}) {
   const previous = quotaCache.get(connection.id);
   if (previous?.pending) return previous.pending;
-  if (previous && Date.now() - previous.checkedAt < QUOTA_CACHE_TTL_MS) return previous.usage;
+  if (!force && previous && Date.now() - previous.checkedAt < QUOTA_CACHE_TTL_MS) return previous.usage;
   const entry = { checkedAt: Date.now(), usage: null, pending: null };
   quotaCache.set(connection.id, entry);
-  entry.pending = loadConnectionUsage(connection, { signal: AbortSignal.timeout(QUOTA_FETCH_TIMEOUT_MS) })
+  entry.pending = loadConnectionUsage(connection, { force, signal: AbortSignal.timeout(QUOTA_FETCH_TIMEOUT_MS) })
     .then(usage => { entry.usage = usage?.quotas ? usage : null; return entry.usage; })
     .catch(() => null)
     .finally(() => { entry.checkedAt = Date.now(); entry.pending = null; });
@@ -33,7 +33,7 @@ export async function loadRoutingQuotas(connections, policy) {
   const ids = new Set(connections.map(connection => connection.id));
   for (const id of quotaCache.keys()) if (!ids.has(id)) quotaCache.delete(id);
   // Network I/O happens before the account-selection mutex is acquired.
-  return new Map(await Promise.all(connections.map(async connection => [connection.id, await loadCachedQuota(connection)])));
+  return new Map(await Promise.all(connections.map(async connection => [connection.id, await loadCodexQuotaSnapshot(connection)])));
 }
 
 export function getAccountQuotaState(connection, model, usage, policy, now = Date.now()) {
@@ -60,11 +60,11 @@ export function getAccountQuotaState(connection, model, usage, policy, now = Dat
   };
 }
 
-export function resolveQuotaRoutingModel(connection, model, usage, policy, contextMarker = null) {
+export function resolveQuotaRoutingModel(connection, model, usage, policy, contextMarker = null, poolQuotaLow = false) {
   const requestedModel = getProviderModels("cx").find(entry => entry.id === model);
   if (!policy.quotaModelSwitch || !requestedModel || requestedModel.kind || quotaFamily(model) !== "normal") return model;
-  const quota = getAccountQuotaState(connection, model, usage, policy);
-  if (quota.usedPercent === null || quota.usedPercent < policy.quotaUsedPercent || quota.exhausted) return model;
+  const quota = getAccountQuotaState(connection, model, usage, { ...policy, quotaWindow: "session" });
+  if (quota.exhausted || (!poolQuotaLow && (quota.usedPercent === null || quota.usedPercent < policy.quotaUsedPercent))) return model;
   const target = policy.quotaFallbackModel;
   const requested = contextMarker ? `${target}[${contextMarker}]` : target;
   const entry = getProviderModels("cx").find(item => item.id === requested);

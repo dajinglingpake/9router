@@ -4,6 +4,7 @@
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { U, parseResetTime, toFiniteNumber } from "./shared.js";
+import { normalizeCodexQuotaWindows } from "./local/codexQuotaWindows.js";
 
 // Codex (OpenAI) API config
 const CODEX_CONFIG = {
@@ -47,6 +48,7 @@ function formatCodexWindow(window) {
     remaining: Math.max(0, 100 - used),
     resetAt: parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null),
     unlimited: false,
+    windowSeconds: toFiniteNumber(window?.limit_window_seconds ?? window?.window_seconds, 0),
   };
 }
 
@@ -128,6 +130,7 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
     appendCodexQuotaWindows(quotas, "", normalRateLimit);
     appendCodexQuotaWindows(quotas, "review", reviewRateLimit);
     appendCodexQuotaWindows(quotas, "spark", sparkRateLimit);
+    normalizeCodexQuotaWindows(quotas);
 
     return {
       plan: data.plan_type || data.summary?.plan || "unknown",

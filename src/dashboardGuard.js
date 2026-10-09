@@ -42,7 +42,6 @@ const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex", "
 
 // Always require JWT token regardless of requireLogin setting
 const ALWAYS_PROTECTED = [
-  "/api/settings/alerts",
   "/api/shutdown",
   "/api/settings/audit-logs",
   "/api/settings/database",
