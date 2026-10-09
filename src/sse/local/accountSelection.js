@@ -251,7 +251,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (!connection && codexPolicy && codexPolicy.accountStrategy !== "inherit") {
       connection = selectBalancedAccount(availableConnections, codexPolicy.accountStrategy,
-        getConcurrencySnapshot(), selectionReservations, selectionCursors, `${providerId}:local-routing`);
+        getConcurrencySnapshot(), selectionReservations, selectionCursors, `${providerId}:local-routing`, quotaStates);
     }
     if (!connection && strategy === "round-robin") {
       const hasConcurrencyLimits = capacityConnections.some((item) => Number(item.maxConcurrency) > 0);

@@ -11,13 +11,17 @@ export const CODEX_ROUTING_DEFAULTS = Object.freeze({
 export const QUOTA_CACHE_TTL_MS = 60_000;
 export const QUOTA_FETCH_TIMEOUT_MS = 5_000;
 
+export function usesQuotaRouting(policy) {
+  return policy.accountStrategy === "quota-priority" || policy.quotaFailover || policy.quotaModelSwitch;
+}
+
 export function normalizeCodexRouting(input = {}, previous = CODEX_ROUTING_DEFAULTS) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("账号路由配置格式错误");
   const result = { ...CODEX_ROUTING_DEFAULTS, ...previous };
   for (const key of Object.keys(CODEX_ROUTING_DEFAULTS)) {
     if (Object.hasOwn(input, key)) result[key] = input[key];
   }
-  if (!["inherit", "least-loaded", "round-robin", "fill-first"].includes(result.accountStrategy)) throw new Error("账号分配策略无效");
+  if (!["inherit", "quota-priority", "least-loaded", "round-robin", "fill-first"].includes(result.accountStrategy)) throw new Error("账号分配策略无效");
   for (const key of ["quotaFailover", "quotaModelSwitch"]) {
     if (typeof result[key] !== "boolean") throw new Error("自动切换开关无效");
   }

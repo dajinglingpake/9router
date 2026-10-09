@@ -1,10 +1,13 @@
+import { getAccountActiveCount } from "./accountLoad.js";
+import { preferHighestQuota } from "./quotaPriority.js";
+
 // Called under accountSelection's mutex; reservations include selections that
 // have not entered the concurrency limiter yet.
-export function selectBalancedAccount(connections, strategy, loads, reservations, cursors, scope) {
+export function selectBalancedAccount(connections, strategy, loads, reservations, cursors, scope, quotaStates = new Map()) {
   if (!connections.length) return null;
   const load = connection => {
     const pool = loads.find(item => item.scope === "account" && item.id === connection.id);
-    const active = (pool?.active || 0) + (reservations.get(connection.id) || 0);
+    const active = Math.max(pool?.active || 0, getAccountActiveCount(connection.id)) + (reservations.get(connection.id) || 0);
     const limit = Number(connection.maxConcurrency) || 0;
     return { active, queued: pool?.queued || 0, limit };
   };
@@ -12,8 +15,14 @@ export function selectBalancedAccount(connections, strategy, loads, reservations
     const item = load(connection);
     return !item.queued && (!item.limit || item.active < item.limit);
   });
-  let candidates = ready.length ? ready : connections;
+  let candidates = strategy === "quota-priority" || !ready.length ? connections : ready;
   if (strategy === "fill-first") return candidates[0];
+  const idle = candidates.filter(connection => {
+    const item = load(connection);
+    return item.active === 0 && item.queued === 0;
+  });
+  if (idle.length) candidates = idle;
+  if (strategy === "quota-priority") candidates = preferHighestQuota(candidates, quotaStates);
   if (strategy === "least-loaded") {
     const score = connection => {
       const item = load(connection);

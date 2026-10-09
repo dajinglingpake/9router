@@ -24,6 +24,7 @@ import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderC
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { isCodexQuotaError, getAccountQuotaState } from "./quotaRouting.js";
 import { handleLocalCombo } from "./comboRouting.js";
+import { acquireAccountSlot } from "./accountLoad.js";
 
 /**
  * Handle single model chat request
@@ -139,7 +140,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       if (sessionKey && Number(credentials._connection?.errorCode) === 503 && lockedUntil > Date.now()) {
         pauseAccountQueue(credentials.connectionId, lockedUntil);
       }
-      const accountPermitPromise = acquireConcurrencySlot({
+      const accountPermitPromise = acquireAccountSlot({
         scope: "account",
         id: credentials.connectionId,
         limit: credentials.maxConcurrency,
@@ -150,9 +151,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
           providerScope: provider,
           ...concurrencyMetadata,
         },
-      });
-      // Register the active/queued slot before releasing the selection reservation.
-      credentials.releaseSelection?.();
+      }, credentials.releaseSelection);
       accountPermit = await accountPermitPromise;
       clientRawRequest.state = "running";
       clientRawRequest.waitMs = accountPermit.waitMs;

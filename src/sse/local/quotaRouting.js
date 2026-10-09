@@ -2,7 +2,7 @@ import { loadConnectionUsage } from "@/lib/providerUsage.js";
 import { getProviderConnectionById, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { getProviderModels } from "open-sse/config/providerModels.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
-import { QUOTA_CACHE_TTL_MS, QUOTA_FETCH_TIMEOUT_MS, getCodexRoutingPolicy } from "./routingPolicy.js";
+import { QUOTA_CACHE_TTL_MS, QUOTA_FETCH_TIMEOUT_MS, getCodexRoutingPolicy, usesQuotaRouting } from "./routingPolicy.js";
 
 const quotaCache = globalThis.__ninerouterRoutingQuotaCache ||= new Map();
 
@@ -29,7 +29,7 @@ async function loadCachedQuota(connection) {
 }
 
 export async function loadRoutingQuotas(connections, policy) {
-  if (!policy.quotaFailover && !policy.quotaModelSwitch) return new Map();
+  if (!usesQuotaRouting(policy)) return new Map();
   const ids = new Set(connections.map(connection => connection.id));
   for (const id of quotaCache.keys()) if (!ids.has(id)) quotaCache.delete(id);
   // Network I/O happens before the account-selection mutex is acquired.
@@ -37,7 +37,7 @@ export async function loadRoutingQuotas(connections, policy) {
 }
 
 export function getAccountQuotaState(connection, model, usage, policy, now = Date.now()) {
-  if (!policy.quotaFailover && !policy.quotaModelSwitch) return { exhausted: false, retryAt: null, usedPercent: null };
+  if (!usesQuotaRouting(policy)) return { exhausted: false, retryAt: null, usedPercent: null };
   const family = quotaFamily(model);
   const prefix = family === "normal" ? "" : `${family}_`;
   const windows = ["session", "weekly"].flatMap(name => {
@@ -85,7 +85,7 @@ export function isCodexQuotaError(provider, status, error) {
 export async function markCodexQuotaUnavailable(connectionId, status, error, provider, model, resetsAtMs) {
   if (!isCodexQuotaError(provider, status, error)) return null;
   const policy = getCodexRoutingPolicy(await getSettings());
-  if (!policy.quotaFailover && !policy.quotaModelSwitch) return null;
+  if (!usesQuotaRouting(policy)) return null;
   const connection = await getProviderConnectionById(connectionId);
   if (!connection) return null;
   const until = Number(resetsAtMs) > Date.now() ? Number(resetsAtMs) : Date.now() + MAX_RATE_LIMIT_COOLDOWN_MS;
