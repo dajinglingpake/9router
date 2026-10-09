@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { getEventListeners } from "node:events";
+import { describe, expect, it, vi } from "vitest";
 
 import { createDisconnectAwareStream, pipeWithDisconnect, createStreamController } from "../../open-sse/utils/streamHandler.js";
 import { buildAbortedResponsesTerminalBytes } from "../../open-sse/utils/responsesStreamHelpers.js";
@@ -31,6 +32,60 @@ async function readAll(stream) {
   text += decoder.decode();
   return text;
 }
+
+describe("stream lifecycle cleanup", () => {
+  it.each(["complete", "error", "disconnect"])("removes the caller abort listener on %s", (outcome) => {
+    const caller = new AbortController();
+    const ctrl = createStreamController({ externalSignal: caller.signal, log: { errorLine: vi.fn() } });
+    expect(getEventListeners(caller.signal, "abort")).toHaveLength(1);
+    if (outcome === "complete") ctrl.handleComplete();
+    else if (outcome === "error") ctrl.handleError(new Error("upstream failed"));
+    else ctrl.handleDisconnect();
+    expect(getEventListeners(caller.signal, "abort")).toHaveLength(0);
+  });
+
+  it("treats Next.js ResponseAborted as a client disconnect", () => {
+    const onError = vi.fn();
+    const onDisconnect = vi.fn();
+    const log = { errorLine: vi.fn() };
+    const ctrl = createStreamController({ onError, onDisconnect, log });
+    ctrl.handleError(Object.assign(new Error(), { name: "ResponseAborted" }));
+    expect(onError).not.toHaveBeenCalled();
+    expect(log.errorLine).not.toHaveBeenCalled();
+    expect(onDisconnect).toHaveBeenCalledOnce();
+    expect(ctrl.signal.aborted).toBe(true);
+  });
+
+  it("settles cancellation even when upstream cleanup rejects", async () => {
+    const reason = Object.assign(new Error(), { name: "ResponseAborted" });
+    const upstream = new ReadableStream({ cancel: () => Promise.reject(reason) });
+    const out = createDisconnectAwareStream({
+      readable: upstream,
+      writable: { getWriter: () => ({ abort: () => Promise.reject(reason) }) },
+    }, createStreamController());
+    await expect(out.cancel(reason)).resolves.toBeUndefined();
+    expect(upstream.locked).toBe(false);
+  });
+
+  it("closes a cancelled client stream without synthesizing an upstream failure", async () => {
+    const caller = new AbortController();
+    const onError = vi.fn();
+    const onDisconnect = vi.fn();
+    const onTerminal = vi.fn(buildAbortedResponsesTerminalBytes);
+    const ctrl = createStreamController({ externalSignal: caller.signal, onError, onDisconnect });
+    const upstream = new ReadableStream();
+    const out = createDisconnectAwareStream({
+      readable: upstream,
+      writable: { getWriter: () => ({ abort: () => Promise.resolve() }) },
+    }, ctrl, onTerminal);
+    const reading = readAll(out);
+    caller.abort(Object.assign(new Error(), { name: "ResponseAborted" }));
+    await expect(reading).resolves.toBe("");
+    expect(onTerminal).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDisconnect).toHaveBeenCalledOnce();
+  });
+});
 
 describe("Responses abort terminal synthesis", () => {
   it("emits response.failed + [DONE] when upstream errors (abort/stall)", async () => {

@@ -386,12 +386,16 @@ export class CodexExecutor extends BaseExecutor {
       async pull(controller) {
         try {
           const { done, value } = await upstreamReader.read();
-          if (done) { controller.close(); return; }
+          if (done) { upstreamReader.releaseLock(); controller.close(); return; }
           controller.enqueue(value);
-        } catch (e) { controller.error(e); }
+        } catch (e) {
+          try { upstreamReader.releaseLock(); } catch { /* already released */ }
+          controller.error(e);
+        }
       },
-      cancel(reason) {
-        try { upstreamReader?.cancel(reason); } catch { /* noop */ }
+      async cancel(reason) {
+        try { await upstreamReader?.cancel(reason); } catch { /* best-effort cleanup */ }
+        finally { try { upstreamReader?.releaseLock(); } catch { /* already released */ } }
       },
     });
     return { matched: null, message: null, accountFallback: false, replacementBody };

@@ -123,6 +123,18 @@ describe("BaseExecutor.execute — baseUrls fallback", () => {
 });
 
 describe("BaseExecutor.execute — network error retry/fallback", () => {
+  it("does not retry a caller cancellation with Next.js ResponseAborted", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 3, delayMs: 0 } } });
+    const caller = new AbortController();
+    const reason = Object.assign(new Error(), { name: "ResponseAborted" });
+    fetchMock.mockImplementationOnce(async () => {
+      caller.abort(reason);
+      throw reason;
+    });
+    await expect(ex.execute({ model: "m", body: {}, credentials: creds, signal: caller.signal })).rejects.toBe(reason);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("maps network exception to 502 retry config", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 1, delayMs: 0 } } });
     fetchMock

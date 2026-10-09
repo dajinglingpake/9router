@@ -206,6 +206,8 @@ export class BaseExecutor {
           callerAborted: !!signal?.aborted, connectTimedOut: !!connectCtrl?.signal.aborted,
         });
         lastError = error;
+        // A caller cancellation must not start another upstream request.
+        if (signal?.aborted) throw error;
         const isConnectTimeout = connectCtrl?.signal.aborted && error.name === "AbortError";
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
         // Connect timeout is internal — convert to retryable network error, don't propagate AbortError

@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { executeMock } = vi.hoisted(() => ({
@@ -54,6 +55,31 @@ describe("handleChatCore Headroom diagnostics", () => {
       headers: {},
       transformedBody: null,
     });
+  });
+
+  it.each(["network", "http", "cancel"])("releases caller abort listeners after a %s error", async (outcome) => {
+    const caller = new AbortController();
+    if (outcome === "http") {
+      executeMock.mockResolvedValue({ response: new Response("busy", { status: 503 }) });
+    } else {
+      executeMock.mockImplementationOnce(async () => {
+        const error = outcome === "cancel"
+          ? Object.assign(new Error(), { name: "ResponseAborted" })
+          : new Error("network failed");
+        if (outcome === "cancel") caller.abort(error);
+        throw error;
+      });
+    }
+    const result = await handleChatCore({
+      body: { model: "gpt-4o", stream: false, messages: [{ role: "user", content: "hello" }] },
+      modelInfo: { provider: "openai", model: "gpt-4o" },
+      credentials: { apiKey: "test-key", providerSpecificData: {} },
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), errorLine: vi.fn() },
+      clientAbortSignal: caller.signal,
+    });
+    expect(result.status).toBe(outcome === "http" ? 503 : outcome === "cancel" ? 499 : 502);
+    expect(getEventListeners(caller.signal, "abort")).toHaveLength(0);
+    expect(executeMock).toHaveBeenCalledTimes(1);
   });
 
   it("logs why Headroom was skipped on chat completions", async () => {

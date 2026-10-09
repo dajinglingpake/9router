@@ -95,6 +95,19 @@ describe("Codex fast tier and capacity handling", () => {
     expect(peek.matched).toBeNull();
     await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
   });
+
+  it("awaits upstream cancellation and releases its reader when cleanup rejects", async () => {
+    const reason = Object.assign(new Error(), { name: "ResponseAborted" });
+    const upstream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"OK"}\n\n'));
+      },
+      cancel: () => Promise.reject(reason),
+    });
+    const peek = await new CodexExecutor()._peekSseTransientError(new Response(upstream));
+    await expect(peek.replacementBody.cancel(reason)).resolves.toBeUndefined();
+    expect(upstream.locked).toBe(false);
+  });
 });
 
 describe("Codex reasoning normalization", () => {

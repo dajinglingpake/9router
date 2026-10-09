@@ -2,6 +2,8 @@
 import { STREAM_STALL_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
+const isAbortError = (error) => error?.name === "AbortError" || error?.name === "ResponseAborted";
+
 // Get HH:MM:SS timestamp
 function getTimeString() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -19,13 +21,13 @@ export function createStreamController({ onDisconnect, onError, onComplete, log,
   const abortController = new AbortController();
   const startTime = Date.now();
   let disconnected = false;
-  let abortTimeout = null;
+  const forwardExternalAbort = () => abortController.abort(externalSignal.reason);
+  const cleanup = () => externalSignal?.removeEventListener("abort", forwardExternalAbort);
 
   // Next.js does not reliably call ReadableStream.cancel() when the browser
   // disconnects. Forwarding request.signal here gives stall/abort handling a
   // deterministic trigger instead of depending on stream cancellation alone.
   if (externalSignal) {
-    const forwardExternalAbort = () => abortController.abort(externalSignal.reason);
     if (externalSignal.aborted) {
       forwardExternalAbort();
     } else {
@@ -42,6 +44,15 @@ export function createStreamController({ onDisconnect, onError, onComplete, log,
     else console.log(`[${getTimeString()}] ${symbol} ${provider}/${model} · ${status} · ${duration}ms`);
   };
 
+  const handleDisconnect = (reason = "client_closed") => {
+    if (disconnected) return;
+    disconnected = true;
+    cleanup();
+    dbg("CTRL", `${provider}/${model} | disconnect=${reason} | dur=${Date.now() - startTime}ms`);
+    abortController.abort();
+    onDisconnect?.({ reason, duration: Date.now() - startTime });
+  };
+
   return {
     signal: abortController.signal,
     startTime,
@@ -49,52 +60,28 @@ export function createStreamController({ onDisconnect, onError, onComplete, log,
     isConnected: () => !disconnected,
 
     // Call when client disconnects
-    handleDisconnect: (reason = "client_closed") => {
-      if (disconnected) return;
-      disconnected = true;
-
-      // Debug-only: Responses API has no [DONE] sentinel, so codex/droid close the
-      // socket on every completed request. "📊 done" is the authoritative outcome line.
-      dbg("CTRL", `${provider}/${model} | disconnect=${reason} | dur=${Date.now() - startTime}ms`);
-
-      // Delay abort to allow cleanup
-      abortTimeout = setTimeout(() => {
-        abortController.abort();
-      }, 500);
-
-      onDisconnect?.({ reason, duration: Date.now() - startTime });
-    },
+    handleDisconnect,
 
     // Call when stream completes normally (no line here — "📊 done" is authoritative)
     handleComplete: () => {
       if (disconnected) return;
       disconnected = true;
+      cleanup();
       onComplete?.();
-
-      if (abortTimeout) {
-        clearTimeout(abortTimeout);
-        abortTimeout = null;
-      }
     },
 
     // Call on error
     handleError: (error) => {
       if (disconnected) return;
-      disconnected = true;
-
-      if (abortTimeout) {
-        clearTimeout(abortTimeout);
-        abortTimeout = null;
-      }
-
-      if (error.name === "AbortError") {
-        logStream("⚡", "ABORTED");
-        onError?.(error);
+      if (isAbortError(error)) {
+        handleDisconnect(error.name);
         return;
       }
-
+      disconnected = true;
+      cleanup();
       logStream("✗", `ERROR: ${error.message}${error.stack ? `\n    ${error.stack}` : ""}`, true);
       onError?.(error);
+      abortController.abort(error);
     },
 
     abort: () => abortController.abort()
@@ -117,13 +104,21 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
+  let cancelling = null;
+  const releaseLocks = () => {
+    try { reader.releaseLock(); } catch { /* already released */ }
+    try { writer.releaseLock?.(); } catch { /* already released */ }
+  };
+  const cancelUpstream = (reason) => cancelling ||= Promise.allSettled([
+    Promise.resolve().then(() => reader.cancel(reason)),
+    Promise.resolve().then(() => writer.abort(reason)),
+  ]).then(releaseLocks);
 
   const readWithAbort = (signal) => {
     if (!signal) return reader.read();
     if (signal.aborted) {
       const reason = signal.reason;
-      const error = reason instanceof Error ? reason : new Error(String(reason || "Request aborted"));
-      if (!error.name) error.name = "AbortError";
+      const error = reason instanceof Error ? reason : new DOMException(String(reason || "Request aborted"), "AbortError");
       return Promise.reject(error);
     }
 
@@ -135,8 +130,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         settled = true;
         cleanup();
         const reason = signal.reason;
-        const error = reason instanceof Error ? reason : new Error(String(reason || "Request aborted"));
-        if (!error.name) error.name = "AbortError";
+        const error = reason instanceof Error ? reason : new DOMException(String(reason || "Request aborted"), "AbortError");
         reject(error);
       };
 
@@ -181,24 +175,25 @@ export function createDisconnectAwareStream(transformStream, streamController, o
 
         if (done) {
           streamController.handleComplete();
+          releaseLocks();
           controller.close();
           return;
         }
         controller.enqueue(value);
       } catch (error) {
         const wasConnected = streamController.isConnected();
+        const clientAborted = wasConnected && isAbortError(error);
         // Controller already closed = downstream ended; not an upstream error, skip noisy log.
         const msg0 = error?.message || "";
         const isControllerClosed = msg0.includes("already closed") || msg0.includes("Invalid state");
         if (!isControllerClosed) streamController.handleError(error);
-        reader.cancel().catch(() => {});
-        writer.abort().catch(() => {});
+        void cancelUpstream(error);
 
         // Treat network resets / socket hang up / abort as graceful close
         const msg = error?.message || "";
         const code = error?.code || error?.cause?.code || "";
         const isNetworkClose =
-          error.name === "AbortError" ||
+          isAbortError(error) ||
           msg.includes("aborted") ||
           msg.includes("socket hang up") ||
           msg.includes("ECONNRESET") ||
@@ -213,7 +208,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         // (Responses passthrough prefers response.failed + [DONE] over a raw transport error)
         try {
           if (!wasConnected || isNetworkClose || onAbortTerminal) {
-            emitTerminal(controller);
+            if (!clientAborted) emitTerminal(controller);
             controller.close();
           } else {
             controller.error(error);
@@ -224,8 +219,7 @@ export function createDisconnectAwareStream(transformStream, streamController, o
 
     cancel(reason) {
       streamController.handleDisconnect(reason || "cancelled");
-      reader.cancel();
-      writer.abort();
+      return cancelUpstream(reason);
     }
   });
 }

@@ -450,23 +450,26 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
+    const cancelled = clientAbortSignal?.aborted || error.name === "AbortError" || error.name === "ResponseAborted";
+    const status = cancelled ? 499 : HTTP_STATUS.BAD_GATEWAY;
     trackDone(true);
-    appendLog({ status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}`, message: error.message || String(error) });
+    appendLog({ status: `FAILED ${status}`, message: error.message || String(error) });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
       request: extractRequestConfig(body, stream),
       providerRequest: translatedBody || null,
-      response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
+      response: { error: error.message || String(error), status, thinking: null },
       pxpipe: pxpipeSummary,
       status: "error"
     }, { endpoint: clientRawRequest?.endpoint || null })).catch(() => { });
 
-    if (error.name === "AbortError") {
-      streamController.handleError(error);
+    if (cancelled) {
+      streamController.handleDisconnect(error.name);
       return createErrorResult(499, "Request aborted");
     }
+    streamController.handleComplete();
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     if (log?.errorLine) {
       log.errorLine(reqTag, "✗", `ERROR 502 · ${provider}/${model} · ${Date.now() - requestStartTime}ms\n    ${errMsg}${error.stack ? `\n    ${error.stack}` : ""}`);
@@ -529,6 +532,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!providerResponse.ok) {
     trackDone(true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
+    streamController.handleComplete();
     appendLog({ status: `FAILED ${statusCode}`, message });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
