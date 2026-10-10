@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { keyAccessFromColumns, keyAccessToColumns } from "@/shared/utils/keyAccess.js";
+import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
 import {
   isIpAllowed,
   mergeClaimAllowedIps,
@@ -33,6 +35,7 @@ function rowToKey(row, maxConcurrentRequests = 0) {
     claimedAt: row.claimedAt || null,
     allowedIps: parseAllowedIps(row.allowedIps),
     maxConcurrentRequests: normalizeConcurrencyLimit(maxConcurrentRequests),
+    access: keyAccessFromColumns(row.accessRestricted, row.accessAllow),
   };
 }
 
@@ -70,6 +73,8 @@ export async function getApiKeyByName(name) {
   );
   return rowToKey(row, readConcurrencyLimit(db, row?.id));
 }
+
+export { getApiKeyByValue as getApiKeyByKey };
 
 export async function claimApiKeyByName(name, clientIp, requestedAllowedIps = []) {
   const normalizedName = normalizeApiKeyName(name);
@@ -128,10 +133,12 @@ export async function createApiKey(name, machineId, maxConcurrentRequests = 0) {
     claimedAt: null,
     allowedIps: [],
     maxConcurrentRequests: normalizeConcurrencyLimit(maxConcurrentRequests),
+    access: { ...KEY_ACCESS_UNRESTRICTED, allow: [] },
   };
+  const cols = keyAccessToColumns(KEY_ACCESS_UNRESTRICTED);
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, claimedAt, allowedIps) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, apiKey.claimedAt, serializeAllowedIps(apiKey.allowedIps)]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, claimedAt, allowedIps, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, apiKey.claimedAt, serializeAllowedIps(apiKey.allowedIps), cols.accessRestricted, cols.accessAllow]
   );
   if (apiKey.maxConcurrentRequests > 0) {
     db.run(
@@ -150,9 +157,10 @@ export async function updateApiKey(id, data) {
     if (!row) return;
     const merged = { ...rowToKey(row, readConcurrencyLimit(db, id)), ...data };
     const allowedIps = data.allowedIps !== undefined ? parseAllowedIps(data.allowedIps) : merged.allowedIps;
+    const cols = keyAccessToColumns(merged.access);
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, allowedIps = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, serializeAllowedIps(allowedIps), id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, allowedIps = ?, accessRestricted = ?, accessAllow = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, serializeAllowedIps(allowedIps), cols.accessRestricted, cols.accessAllow, id]
     );
     const maxConcurrentRequests = normalizeConcurrencyLimit(merged.maxConcurrentRequests);
     if (maxConcurrentRequests > 0) {

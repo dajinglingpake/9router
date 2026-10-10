@@ -5,7 +5,7 @@ import { estimateInputTokenBreakdown } from "open-sse/utils/usageTracking.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
-import { extractApiKey, isValidApiKey } from "./auth.js";
+import { isValidApiKey } from "./auth.js";
 import { acquireConcurrencySlot, ConcurrencyQueueError } from "../services/concurrencyLimiter.js";
 import { extractClientIp } from "../utils/clientIp.js";
 import { readChatRequestBody } from "../utils/requestBody.js";
@@ -13,6 +13,7 @@ import * as log from "../utils/logger.js";
 import { getRequestId, rejectChatRequest, resolveRequestProviderScope } from "./requestContext.js";
 import { handleSingleModelChat } from "./modelRouting.js";
 import { getModelInfo } from "../services/model.js";
+import { extractClientApiKey as extractApiKey, getKeyAccessContext, enforceKeyAccess } from "../services/keyAccess.js";
 
 /**
  * Handle chat completion request
@@ -162,6 +163,9 @@ async function handleChatInternal(request, clientRawRequest = null) {
 
   const modelInfo = await getModelInfo(modelStr);
   if (modelInfo.disabled) return rejectChatRequest(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`, clientRawRequest, "router");
+  const keyAccess = await getKeyAccessContext(request);
+  const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
+  if (keyAccessDenied) return keyAccessDenied;
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";

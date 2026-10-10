@@ -8,6 +8,7 @@ import {
   updateProviderConnection,
   deleteProviderConnection,
 } from "@/models";
+import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -74,11 +75,7 @@ export async function GET(request, { params }) {
 
     // Hide sensitive fields
     const overloadWarnings = await getAccountOverloadWarnings(id);
-    const result = { ...connection, accountExpiry: getAccountExpiry(connection), overloadWarning: overloadWarnings[id] || null };
-    delete result.apiKey;
-    delete result.accessToken;
-    delete result.refreshToken;
-    delete result.idToken;
+    const result = { ...toProviderConnectionResponse(connection), accountExpiry: getAccountExpiry(connection), overloadWarning: overloadWarnings[id] || null };
 
     return NextResponse.json({ connection: result });
   } catch (error) {
@@ -190,10 +187,20 @@ export async function PUT(request, { params }) {
         proxyPoolResult.hasProxyPoolField
       )
     ) {
+      const incomingProviderSpecificData = { ...(providerSpecificData || {}) };
+      const isAwsCredential = usesAwsCredentialForm(existing.provider);
+      // The edit form cannot read the stored token back. An empty password field means
+      // keep the saved credential; null explicitly removes it.
+      if (isAwsCredential && incomingProviderSpecificData.sessionToken === "") {
+        delete incomingProviderSpecificData.sessionToken;
+      }
       updateData.providerSpecificData = {
         ...(existing.providerSpecificData || {}),
-        ...(providerSpecificData || {}),
+        ...incomingProviderSpecificData,
       };
+      if (isAwsCredential && incomingProviderSpecificData.sessionToken === null) {
+        delete updateData.providerSpecificData.sessionToken;
+      }
 
       if (proxyConfig.hasAnyProxyField) {
         updateData.providerSpecificData.connectionProxyEnabled = proxyConfig.connectionProxyEnabled;
@@ -213,11 +220,7 @@ export async function PUT(request, { params }) {
     const updated = await updateProviderConnection(id, updateData);
 
     // Hide sensitive fields
-    const result = { ...updated, accountExpiry: getAccountExpiry(updated) };
-    delete result.apiKey;
-    delete result.accessToken;
-    delete result.refreshToken;
-    delete result.idToken;
+    const result = { ...toProviderConnectionResponse(updated), accountExpiry: getAccountExpiry(updated) };
 
     return NextResponse.json({ connection: result });
   } catch (error) {

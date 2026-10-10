@@ -3,7 +3,7 @@ import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/con
 import { formatRetryAfter, isModelLockActive, getModelLockUntil, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { DEFAULT_ACCOUNT_COOLDOWN_MIN_MS, DEFAULT_ACCOUNT_COOLDOWN_MAX_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
-import { getAntigravityQuotaCache } from "../services/antigravityQuota.js";
+import { getAntigravityQuotaCache, getAntigravityModelQuota } from "../services/antigravityQuota.js";
 import { getConcurrencySnapshot, waitForAccountRequest } from "../services/concurrencyLimiter.js";
 import { clearSessionBinding, getSessionBinding, bindSession } from "../services/sessionRouting.js";
 import * as log from "../utils/logger.js";
@@ -51,7 +51,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const poolQuotaLow = codexPolicy ? isCodexPoolQuotaLow(quotaConnections, routingQuotas, codexPolicy) : false;
   const modelFor = (connection) => {
     const requested = options.modelByConnection?.[connection?.id] || model;
-    return codexPolicy ? resolveQuotaRoutingModel(connection, requested, routingQuotas.get(connection?.id), codexPolicy, options.contextMarker, poolQuotaLow) : requested;
+    return codexPolicy && options.allowQuotaModelSwitch !== false
+      ? resolveQuotaRoutingModel(connection, requested, routingQuotas.get(connection?.id), codexPolicy, options.contextMarker, poolQuotaLow)
+      : requested;
   };
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionState.mutex;
@@ -143,7 +145,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
       // Antigravity: skip if live quota exhausted for this model
       if (isAntigravity && model && antigravityQuotaCache) {
-        const quota = antigravityQuotaCache.get(c.id)?.[modelFor(c)];
+        const connQuotas = antigravityQuotaCache.get(c.id);
+        const quota = getAntigravityModelQuota(connQuotas, modelFor(c)) || connQuotas?.[modelFor(c)];
         if (quota && quota.remainingPercentage <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
           const account = c.id?.slice(0, 8) || "unknown";
           log.info("AG_QUOTA", `${account} | CACHE_BLOCK ${modelFor(c)} — skip upstream until ${quota.resetAt}`);
@@ -188,7 +191,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       expiries.push(...connections.map(c => coolingAccounts.get(c.id)).filter(Boolean));
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
-          const resetAt = antigravityQuotaCache.get(c.id)?.[modelFor(c)]?.resetAt;
+          const connQuotas = antigravityQuotaCache.get(c.id);
+          const resetAt = (getAntigravityModelQuota(connQuotas, modelFor(c)) || connQuotas?.[modelFor(c)])?.resetAt;
           if (resetAt && new Date(resetAt).getTime() > Date.now()) expiries.push(resetAt);
         });
       }

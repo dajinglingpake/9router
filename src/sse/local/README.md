@@ -4,6 +4,7 @@
 `src/sse/services/auth.js` 保留上游实现，便于后续合并。
 
 - `chat.js`：请求解码、API Key 校验和进入账号调度前的短期排队。
+- API Key 模型和组合白名单复用上游 `services/keyAccess.js`，在本地聊天入口、组合展开前校验；额度降级模型也必须在白名单内，否则继续使用原模型。
 - `modelRouting.js`：组合的账号专属模型、会话绑定、并发队列、冷却重试和流结束释放。
 - `requestContext.js`：请求标识、调用方归属和并发监控元数据。
 - `accountSelection.js`：按容量选择账号、选择预占和会话账号绑定。

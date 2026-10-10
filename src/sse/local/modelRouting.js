@@ -24,6 +24,7 @@ import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderC
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { isCodexQuotaError, getAccountQuotaState } from "./quotaRouting.js";
 import { handleLocalCombo } from "./comboRouting.js";
+import { getKeyAccessContext, filterAdapterModels } from "../services/keyAccess.js";
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 
 /**
@@ -63,10 +64,15 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
   const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
+  // Automatic quota downgrades must respect the key's model allow list.
+  const fallbackModels = codexPolicy?.quotaModelSwitch
+    ? await filterAdapterModels(await getKeyAccessContext(request), [`${provider}/${codexPolicy.quotaFallbackModel}`], [])
+    : null;
   const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；额度耗尽时按配置自动迁移，过载时请稍后重试。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
     sessionKey, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
+    allowQuotaModelSwitch: !fallbackModels || fallbackModels.length > 0,
   });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
