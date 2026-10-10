@@ -36,6 +36,14 @@ export async function resolveModelAlias(alias) {
  * Get full model info (parse or resolve)
  */
 export async function getModelInfo(modelStr) {
+  const comboName = typeof modelStr === "string" && modelStr.startsWith("cc/") ? modelStr.slice(3) : modelStr;
+  if (typeof comboName === "string" && !comboName.includes("/")) {
+    const combo = await getComboByName(comboName);
+    if (combo) {
+      // Disabled combo names must never fall through to provider inference.
+      return { provider: null, model: comboName, ...(combo.isActive === false ? { disabled: true } : {}) };
+    }
+  }
   const parsed = parseModel(modelStr);
 
   if (!parsed.isAlias) {
@@ -66,15 +74,6 @@ export async function getModelInfo(modelStr) {
     };
   }
 
-  // Check if this is a combo name before resolving as alias
-  // This prevents combo names from being incorrectly routed to providers
-  const combo = await getComboByName(parsed.model);
-  if (combo) {
-    // Return null provider to signal this should be handled as combo
-    // The caller (handleChat) will detect this and handle it as combo
-    return { provider: null, model: parsed.model };
-  }
-
   return getModelInfoCore(modelStr, getModelAliases);
 }
 
@@ -90,6 +89,7 @@ export async function getComboModels(modelStr) {
   if (comboName.includes("/")) return null;
 
   const combo = await getComboByName(comboName);
+  if (combo?.isActive === false) return [];
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }

@@ -333,7 +333,7 @@ export async function buildModelsList(kindFilter, options = {}) {
 
   let combos = [];
   try {
-    combos = await getCombos();
+    combos = (await getCombos()).filter(combo => combo.isActive !== false);
   } catch (e) {
     console.log("Could not fetch combos");
   }

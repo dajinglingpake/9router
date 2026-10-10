@@ -12,6 +12,7 @@ import { readChatRequestBody } from "../utils/requestBody.js";
 import * as log from "../utils/logger.js";
 import { getRequestId, rejectChatRequest, resolveRequestProviderScope } from "./requestContext.js";
 import { handleSingleModelChat } from "./modelRouting.js";
+import { getModelInfo } from "../services/model.js";
 
 /**
  * Handle chat completion request
@@ -158,6 +159,9 @@ async function handleChatInternal(request, clientRawRequest = null) {
     log.warn("CHAT", "Missing model");
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Missing model", clientRawRequest);
   }
+
+  const modelInfo = await getModelInfo(modelStr);
+  if (modelInfo.disabled) return rejectChatRequest(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`, clientRawRequest, "router");
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";

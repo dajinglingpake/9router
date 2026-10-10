@@ -67,6 +67,7 @@ export default function CombosPage() {
   const [presetLoading, setPresetLoading] = useState(null); // "cursor" | "claude" | null
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [togglingIds, setTogglingIds] = useState([]);
   const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
@@ -234,6 +235,7 @@ export default function CombosPage() {
       }
     } catch (error) {
       console.log("Error updating combo:", error);
+      alert("保存组合失败，请重试。");
     }
   };
 
@@ -241,6 +243,15 @@ export default function CombosPage() {
     const updated = { ...base };
     for (const name of names) delete updated[name];
     return updated;
+  };
+
+  const handleToggleActive = async (combo, isActive) => {
+    setTogglingIds(prev => [...prev, combo.id]);
+    try {
+      await handleUpdate(combo.id, { isActive });
+    } finally {
+      setTogglingIds(prev => prev.filter(id => id !== combo.id));
+    }
   };
 
   const persistComboStrategies = async (updated) => {
@@ -451,6 +462,9 @@ export default function CombosPage() {
       )}
 
       <h2 className="text-base font-semibold" data-i18n-skip>通用组合</h2>
+      <p className="text-sm text-text-muted" data-i18n-skip>
+        禁用后保留配置，并停止通过该组合名称调用。开关不影响其他组合或提供商模型的直接调用。
+      </p>
       {/* Combos List */}
       {combos.length === 0 ? (
         <Card>
@@ -540,6 +554,8 @@ export default function CombosPage() {
                   onCopy={copy}
                   onEdit={() => { setEditingScope("common"); setEditingCombo(combo); }}
                   onDelete={() => handleDelete(combo.id)}
+                  onToggleActive={(isActive) => handleToggleActive(combo, isActive)}
+                  toggling={togglingIds.includes(combo.id)}
                   strategy={comboStrategies[combo.name] || {}}
                   onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
                   selected={selectedIds.includes(combo.id)}
@@ -608,7 +624,7 @@ const fmtK = (n) => {
   return `${Math.round(n / 1000)}k`;
 };
 
-function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, accountScoped = false, selected = false, onToggleSelect }) {
+function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, accountScoped = false, selected = false, onToggleSelect, onToggleActive, toggling = false }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
@@ -636,7 +652,10 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
             <span className="material-symbols-outlined text-primary text-[18px]">layers</span>
           </div>
           <div className="min-w-0 flex-1">
-            <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+            <div className="flex min-w-0 items-center gap-2">
+              <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
+              {combo.isActive === false && <span className="shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-xs text-text-muted dark:bg-white/5" data-i18n-skip>已禁用</span>}
+            </div>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
@@ -691,6 +710,14 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
 
         {/* Actions */}
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:shrink-0">
+          {!accountScoped && <Toggle
+            checked={combo.isActive !== false}
+            onChange={onToggleActive}
+            disabled={toggling}
+            size="sm"
+            label={combo.isActive === false ? "已禁用" : "已启用"}
+            ariaLabel={`启用组合 ${combo.name}`}
+          />}
           {/* Common strategy is shared by account customizations. */}
           {!accountScoped && <div className="w-full sm:w-[200px]">
             <Select

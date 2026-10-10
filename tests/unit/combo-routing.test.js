@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { getRotatedModels, resetComboRotation } from "../../open-sse/services/combo.js";
+import { getRotatedModels, resetComboRotation, getComboModelsFromData } from "../../open-sse/services/combo.js";
+
+it("keeps disabled combos recognized without exposing their models", () => {
+  expect(getComboModelsFromData("disabled", [{ name: "disabled", models: ["provider/model"], isActive: false }])).toEqual([]);
+  expect(getComboModelsFromData("active", [{ name: "active", models: ["provider/model"] }])).toEqual(["provider/model"]);
+});
 
 describe("combo round-robin routing", () => {
   beforeEach(() => {

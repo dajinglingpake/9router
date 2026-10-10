@@ -260,6 +260,7 @@ export function getComboModelsFromData(modelStr, combosData) {
   const combos = Array.isArray(combosData) ? combosData : (combosData?.combos || []);
   
   const combo = combos.find(c => c.name === modelStr);
+  if (combo?.isActive === false) return [];
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }

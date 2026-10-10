@@ -38,6 +38,17 @@ async function modelsWithCombo(providerId, modelId, combos) {
 }
 
 describe("/v1/models combo limits", () => {
+  it("hides disabled combo names and cc aliases while retaining enabled entries", async () => {
+    const models = await modelsWithCombo("deepseek", "deepseek-chat", [
+      { name: "disabled-combo", models: ["ds/deepseek-chat"], isActive: false },
+      { name: "enabled-combo", models: ["ds/deepseek-chat"], isActive: true },
+      { name: "legacy-combo", models: ["ds/deepseek-chat"] },
+    ]);
+    const names = models.map(model => model.id);
+    expect(names).not.toContain("disabled-combo");
+    expect(names).not.toContain("cc/disabled-combo");
+    expect(names).toEqual(expect.arrayContaining(["enabled-combo", "cc/enabled-combo", "legacy-combo", "ds/deepseek-chat"]));
+  });
   it.each([
     ["ocg", "opencode-go", "mimo-v2.5"],
     ["xmtp", "xiaomi-tokenplan", "mimo-v2.5"],

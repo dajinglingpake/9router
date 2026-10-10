@@ -29,6 +29,10 @@ export async function PUT(request, { params }) {
     const { id } = await params;
     const body = await request.json();
 
+    if (body.isActive !== undefined && typeof body.isActive !== "boolean") {
+      return NextResponse.json({ error: "组合启用状态必须为布尔值。" }, { status: 400 });
+    }
+
     if (body.accountOverrides !== undefined) {
       if (!body.accountOverrides || typeof body.accountOverrides !== "object" || Array.isArray(body.accountOverrides)) {
         return NextResponse.json({ error: "账号定制配置格式不正确。" }, { status: 400 });

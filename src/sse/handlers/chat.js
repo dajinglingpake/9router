@@ -86,6 +86,9 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
 
+  const modelInfo = await getModelInfo(modelStr);
+  if (modelInfo.disabled) return errorResponse(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`);
+
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
@@ -166,6 +169,7 @@ export async function handleChat(request, clientRawRequest = null) {
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null) {
   const modelInfo = await getModelInfo(modelStr);
+  if (modelInfo.disabled) return errorResponse(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {

@@ -41,6 +41,10 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   }
   const modelInfo = await getModelInfo(modelStr);
 
+  if (modelInfo.disabled) {
+    return rejectChatRequest(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`, clientRawRequest, "router");
+  }
+
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
     log.warn("CHAT", "Invalid model format", { model: modelStr });

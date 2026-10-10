@@ -8,6 +8,7 @@ function rowToCombo(row) {
     id: row.id,
     name: row.name,
     kind: row.kind,
+    isActive: parseJson(row.isActive, true) !== false,
     models: parseJson(row.models, []),
     accountOverrides: parseJson(row.accountOverrides, {}),
     createdAt: row.createdAt,
@@ -15,8 +16,9 @@ function rowToCombo(row) {
   };
 }
 
-const COMBO_SELECT = `SELECT combos.*, kv.value AS accountOverrides FROM combos
-  LEFT JOIN kv ON kv.scope = 'comboAccountOverrides' AND kv.key = combos.id`;
+const COMBO_SELECT = `SELECT combos.*, overrides.value AS accountOverrides, enabled.value AS isActive FROM combos
+  LEFT JOIN kv AS overrides ON overrides.scope = 'comboAccountOverrides' AND overrides.key = combos.id
+  LEFT JOIN kv AS enabled ON enabled.scope = 'comboEnabled' AND enabled.key = combos.id`;
 
 export async function getCombos() {
   const db = await getAdapter();
@@ -43,14 +45,18 @@ export async function createCombo(data) {
     id: uuidv4(),
     name: data.name,
     kind: data.kind || null,
+    isActive: data.isActive !== false,
     models: data.models || [],
     createdAt: now,
     updatedAt: now,
   };
-  db.run(
-    `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
-  );
+  db.transaction(() => {
+    db.run(
+      `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+      [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
+    );
+    if (!combo.isActive) db.run(`INSERT INTO kv(scope, key, value) VALUES('comboEnabled', ?, 'false')`, [combo.id]);
+  });
   return combo;
 }
 
@@ -69,6 +75,10 @@ export async function updateCombo(id, data) {
       db.run(`INSERT INTO kv(scope, key, value) VALUES('comboAccountOverrides', ?, ?)
         ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`, [id, stringifyJson(data.accountOverrides)]);
     }
+    if (data.isActive !== undefined) {
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('comboEnabled', ?, ?)
+        ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`, [id, stringifyJson(merged.isActive)]);
+    }
     result = merged;
   });
   return result;
@@ -80,7 +90,7 @@ export async function deleteCombo(id) {
   db.transaction(() => {
     const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
     deleted = (res?.changes ?? 0) > 0;
-    db.run(`DELETE FROM kv WHERE scope = 'comboAccountOverrides' AND key = ?`, [id]);
+    db.run(`DELETE FROM kv WHERE scope IN ('comboAccountOverrides', 'comboEnabled') AND key = ?`, [id]);
   });
   return deleted;
 }
