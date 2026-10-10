@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { deleteMeta, getMeta, setMeta } from "@/lib/db/helpers/metaStore.js";
 import { extractClientSessionId } from "open-sse/utils/sessionManager.js";
 
-export const NEW_SESSION_HINT = "上游暂不可用时会自动切换账号；其他情况如需换账号，请开启新会话。";
+export const NEW_SESSION_HINT = "优先均衡账号负载；账号繁忙或上游暂不可用时会自动切换到其他可用账号。";
 
 export function getSessionRoutingKey(headers, body, callerId) {
   // Request IDs and prompt-content hashes cannot identify a whole conversation.

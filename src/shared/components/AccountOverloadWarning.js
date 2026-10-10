@@ -65,7 +65,7 @@ export default function AccountOverloadWarning({ connection, onUpdated }) {
         onClick={loadDetails}
         data-account-overload-warning={connection.id}
         aria-label={`查看 ${warning.count} 次过载详情`}
-        title="查看过载详情；该账号自动选取时排在无过载记录账号之后"
+        title="查看过载详情；负载相同时优先选择无过载记录的账号"
         className="mt-1 rounded-full hover:bg-yellow-500/10 focus-visible:outline-2 focus-visible:outline-yellow-500"
       >
         <Badge variant="warning" size="sm" icon="warning">过载 {warning.count} 次</Badge>
@@ -78,7 +78,7 @@ export default function AccountOverloadWarning({ connection, onUpdated }) {
       }>
         <div className="space-y-4 text-sm">
           <p className="break-all font-medium">{connection.name || connection.email || connection.id}</p>
-          <p className="text-text-muted">上次清除后记录到上游过载或暂不可用（503）{details?.overloadWarning?.count ?? warning.count} 次。自动选择时优先使用没有过载记录的可用账号。</p>
+          <p className="text-text-muted">上次清除后记录到上游过载或暂不可用（503）{details?.overloadWarning?.count ?? warning.count} 次。自动选择时先均衡负载，负载相同时优先使用没有过载记录的账号。</p>
           <p className="text-xs text-text-muted">清除会重置计数并恢复正常排序，保留历史日志和当前冷却状态。</p>
           {loading && <p role="status">正在加载详情…</p>}
           {error && <div role="alert" className="text-red-500">{error}{!details && <Button variant="ghost" size="sm" onClick={loadDetails}>重试</Button>}</div>}

@@ -24,7 +24,7 @@ import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderC
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { isCodexQuotaError, getAccountQuotaState } from "./quotaRouting.js";
 import { handleLocalCombo } from "./comboRouting.js";
-import { acquireAccountSlot } from "./accountLoad.js";
+import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 
 /**
  * Handle single model chat request
@@ -63,7 +63,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
   const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
-  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；上游暂不可用或额度耗尽时自动迁移。" : NEW_SESSION_HINT}` : "";
+  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "优先均衡账号负载；上游暂不可用或额度耗尽时自动迁移。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
     sessionKey, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
@@ -207,7 +207,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     const diagnosticContext = {
       requestId, connectionId: credentials.connectionId, retryCount,
       session: sessionKey?.slice(0, 12) || null,
-      active: accountState?.active || 1, queued: accountState?.queued || 0,
+      active: Math.max(accountState?.active || 0, getAccountActiveCount(credentials.connectionId)), queued: accountState?.queued || 0,
       limit: credentials.maxConcurrency || 0, accountState: accountState?.state || "running",
       waitMs: accountPermit.waitMs, remainingMs: Math.max(0, deadline - Date.now()),
       requestBytes: concurrencyMetadata.requestBytes, thinking: concurrencyMetadata.thinkingLevel,

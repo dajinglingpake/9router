@@ -3,41 +3,29 @@ import { preferHighestQuota } from "./quotaPriority.js";
 
 // Called under accountSelection's mutex; reservations include selections that
 // have not entered the concurrency limiter yet.
-export function selectBalancedAccount(connections, strategy, loads, reservations, cursors, scope, quotaStates = new Map()) {
-  if (!connections.length) return null;
-  const load = connection => {
+export function preferLeastLoadedAccounts(connections, loads, reservations) {
+  if (!connections.length) return [];
+  const scored = connections.map(connection => {
     const pool = loads.find(item => item.scope === "account" && item.id === connection.id);
     const active = Math.max(pool?.active || 0, getAccountActiveCount(connection.id)) + (reservations.get(connection.id) || 0);
     const limit = Number(connection.maxConcurrency) || 0;
-    return { active, queued: pool?.queued || 0, limit };
-  };
-  const ready = connections.filter(connection => {
-    const item = load(connection);
+    return { connection, active, queued: pool?.queued || 0, limit };
+  });
+  const ready = scored.filter(item => {
     return !item.queued && (!item.limit || item.active < item.limit);
   });
-  let candidates = strategy === "quota-priority" || !ready.length ? connections : ready;
+  const candidates = ready.length ? ready : scored;
+  const minQueued = Math.min(...candidates.map(item => item.queued));
+  const sameQueue = candidates.filter(item => item.queued === minQueued);
+  const minActive = Math.min(...sameQueue.map(item => item.active));
+  return sameQueue.filter(item => item.active === minActive).map(item => item.connection);
+}
+
+export function selectBalancedAccount(connections, strategy, loads, reservations, cursors, scope, quotaStates = new Map()) {
+  let candidates = preferLeastLoadedAccounts(connections, loads, reservations);
+  if (!candidates.length) return null;
   if (strategy === "fill-first") return candidates[0];
-  const idle = candidates.filter(connection => {
-    const item = load(connection);
-    return item.active === 0 && item.queued === 0;
-  });
-  if (idle.length) candidates = idle;
   if (strategy === "quota-priority") candidates = preferHighestQuota(candidates, quotaStates);
-  if (strategy === "least-loaded") {
-    const score = connection => {
-      const item = load(connection);
-      return [item.queued, item.active / (item.limit || 1)];
-    };
-    const sorted = [...candidates].sort((a, b) => {
-      const left = score(a), right = score(b);
-      return left[0] - right[0] || left[1] - right[1];
-    });
-    const best = score(sorted[0]);
-    candidates = sorted.filter(connection => {
-      const item = score(connection);
-      return item[0] === best[0] && item[1] === best[1];
-    });
-  }
   // Remember the last account rather than an array index: the candidate set
   // changes as slots fill, quotas reset, or accounts are enabled/disabled.
   const last = cursors.get(scope);

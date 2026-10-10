@@ -8,7 +8,7 @@ import { getConcurrencySnapshot, waitForAccountRequest } from "../services/concu
 import { clearSessionBinding, getSessionBinding, bindSession } from "../services/sessionRouting.js";
 import * as log from "../utils/logger.js";
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
-import { selectBalancedAccount } from "./accountBalancing.js";
+import { preferLeastLoadedAccounts, selectBalancedAccount } from "./accountBalancing.js";
 import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } from "./quotaRouting.js";
 import { isCodexPoolQuotaLow } from "./quotaModelSwitch.js";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo.js";
@@ -19,43 +19,6 @@ const selectionState = globalThis.__ninerouterAccountSelection ||= {
 };
 const selectionCursors = selectionState.cursors;
 const selectionReservations = selectionState.reservations;
-
-function preferConnectionsWithCapacity(connections) {
-  if (connections.length < 2) return connections;
-
-  const loads = new Map(
-    getConcurrencySnapshot()
-      .filter((item) => item.scope === "account")
-      .map((item) => [item.id, item])
-  );
-  const getLoad = (connection) => {
-    const limit = Number(connection.maxConcurrency) || 0;
-    const pool = loads.get(connection.id);
-    const active = (pool?.active || 0) + (selectionReservations.get(connection.id) || 0);
-    const queued = pool?.queued || 0;
-    return { limit, active, queued };
-  };
-
-  // Prefer accounts that can start immediately. This prevents fill-first from
-  // sending every request to the first account while another account is idle.
-  const ready = connections.filter((connection) => {
-    const { limit, active, queued } = getLoad(connection);
-    return limit === 0 || (active < limit && queued === 0);
-  });
-  if (ready.length > 0) return ready;
-
-  // If every account is busy, prefer the least-loaded account so new waiters
-  // do not keep piling onto the first account's queue.
-  return [...connections].sort((a, b) => {
-    const left = getLoad(a);
-    const right = getLoad(b);
-    const leftQueued = left.queued;
-    const rightQueued = right.queued;
-    if (leftQueued !== rightQueued) return leftQueued - rightQueued;
-    if (left.limit === 0 || right.limit === 0) return left.limit === 0 ? -1 : 1;
-    return (left.active / left.limit) - (right.active / right.limit);
-  });
-}
 
 function pickNextConnection(connections, providerId) {
   if (connections.length === 0) return null;
@@ -192,19 +155,20 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return true;
     });
 
-    // Overload history takes precedence over quota and rotation. Keep cooled
-    // accounts as a fallback when no account without a warning is available.
+    // Balance current work before comparing overload history or quota. An idle
+    // recovered account is preferable to piling more work onto a busy account.
     const overloadWarnings = await getAccountOverloadWarnings();
-    const withoutOverloads = availableConnections.filter(connection => !overloadWarnings[connection.id]);
-    const routingConnections = withoutOverloads.length ? withoutOverloads : availableConnections;
-    const capacityConnections = preferConnectionsWithCapacity(routingConnections);
+    const leastLoaded = preferLeastLoadedAccounts(availableConnections, getConcurrencySnapshot(), selectionReservations);
+    const withoutOverloads = leastLoaded.filter(connection => !overloadWarnings[connection.id]);
+    const capacityConnections = withoutOverloads.length ? withoutOverloads : leastLoaded;
     if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
       const bound = connections.find((item) => item.id === binding.connectionId);
       const quota = quotaStates.get(binding.connectionId);
       if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: "当前会话绑定的账号额度已用尽。", retryAfter: quota.retryAt };
       return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: getModelLockUntil(bound, modelFor(bound)) };
     }
-    if (binding && overloadWarnings[binding.connectionId] && withoutOverloads.length) binding = null;
+    // Keep affinity only when it does not defeat load balancing or overload priority.
+    if (binding && !capacityConnections.some(connection => connection.id === binding.connectionId)) binding = null;
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
     connections.forEach(c => {
@@ -267,7 +231,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
     }
     if (!connection && codexPolicy && codexPolicy.accountStrategy !== "inherit") {
-      connection = selectBalancedAccount(routingConnections, codexPolicy.accountStrategy,
+      connection = selectBalancedAccount(capacityConnections, codexPolicy.accountStrategy,
         getConcurrencySnapshot(), selectionReservations, selectionCursors, `${providerId}:local-routing`, quotaStates);
     }
     if (!connection && strategy === "round-robin") {
