@@ -17,7 +17,7 @@ import { getModelInfo, getComboModels, getComboAccountModels } from "../services
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import {
   acquireConcurrencySlot, holdConcurrencyUntilResponseDone, ConcurrencyQueueError,
-  getConcurrencySnapshot, pauseAccountQueue, resumeAccountQueue, queueTimeoutMs,
+  getConcurrencySnapshot, resumeAccountQueue, queueTimeoutMs,
 } from "../services/concurrencyLimiter.js";
 import * as log from "../utils/logger.js";
 import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderCapacityState } from "./requestContext.js";
@@ -63,13 +63,16 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
   const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
-  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；额度耗尽时自动迁移。" : NEW_SESSION_HINT}` : "";
+  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；上游暂不可用或额度耗尽时自动迁移。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
-    sessionKey, fillFirst: true, waitForCooldown: true, modelByConnection,
+    sessionKey, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
   });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
+    if (sessionKey && status === HTTP_STATUS.SERVICE_UNAVAILABLE && (credentials?.allRateLimited || excludedAccounts.size > 0)) {
+      return rejectAccountCooldown(status, "上游暂时不可用，暂无其他可用账号可切换。", credentials?.retryAfter, "", clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
+    }
     if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。", clientRawRequest?.upstreamErrorHeaders);
     return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
   }
@@ -81,6 +84,13 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   let responseOwnsPermits = false;
   Object.assign(clientRawRequest, { provider, routingModel: model, connectionId: credentials.connectionId, retryCount, deadline });
   const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model, requestId, endpoint: clientRawRequest?.endpoint, caller: clientRawRequest });
+  const retry = async (response = null) => {
+    await response?.body?.cancel().catch(() => {});
+    // Release permits before recursion so the next account can be acquired.
+    accountPermit?.release(); accountPermit = null;
+    apiKeyPermit?.release(); apiKeyPermit = null;
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
+  };
   try {
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -140,10 +150,6 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     }
 
     try {
-      const lockedUntil = new Date(getModelLockUntil(credentials._connection, model)).getTime();
-      if (sessionKey && Number(credentials._connection?.errorCode) === 503 && lockedUntil > Date.now()) {
-        pauseAccountQueue(credentials.connectionId, lockedUntil);
-      }
       const accountPermitPromise = acquireAccountSlot({
         scope: "account",
         id: credentials.connectionId,
@@ -179,19 +185,18 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     if (liveQuota?.exhausted) {
       if (!sessionKey || codexPolicy.quotaFailover) {
         excludedAccounts.add(credentials.connectionId);
-        accountPermit?.release(); accountPermit = null;
-        apiKeyPermit?.release(); apiKeyPermit = null;
-        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
+        return retry();
       }
       return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, sessionHint, clientRawRequest);
     }
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
       if (!sessionKey) {
         excludedAccounts.add(credentials.connectionId);
-        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount, comboNames);
+        return retry();
       }
       if (liveConnection?.isActive && Number(liveConnection.errorCode) === 503 && isModelLockActive(liveConnection, model)) {
-        return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount, comboNames);
+        excludedAccounts.add(credentials.connectionId);
+        return retry();
       }
       return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "当前会话绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
     }
@@ -306,24 +311,17 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     if (!(provider === "antigravity" && quotaResetMs)) {
       ({ shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
-    const retry = async () => {
-      await result.response?.body?.cancel().catch(() => {});
-      // Recursion must not acquire this request's API Key/account permit again
-      // while it is still held by the failed attempt.
-      accountPermit?.release(); accountPermit = null;
-      apiKeyPermit?.release(); apiKeyPermit = null;
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
-    };
     if (sessionKey && codexPolicy?.quotaFailover && isCodexQuotaError(provider, result.status, result.error)) {
       excludedAccounts.add(credentials.connectionId);
-      return retry();
+      return retry(result.response);
     }
-    if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE) {
-      return retry();
+    if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth") {
+      excludedAccounts.add(credentials.connectionId);
+      return retry(result.response);
     }
     if (!sessionKey && shouldFallback && credentials.connectionId !== "noauth") {
       excludedAccounts.add(credentials.connectionId);
-      return retry();
+      return retry(result.response);
     }
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`, clientRawRequest.upstreamErrorHeaders);
   } catch (error) {

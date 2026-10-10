@@ -137,9 +137,6 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     // A deleted or replaced connection cannot serve the old sticky session.
-    // Clear only this stale binding so the current request can select and bind
-    // a new account. Existing connections that are merely locked still follow
-    // the cooldown path below and never fail over automatically.
     const boundConnection = binding ? await getProviderConnectionById(binding.connectionId) : null;
     if (binding && !boundConnection) {
       await clearSessionBinding(sessionKey);
@@ -156,9 +153,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const quotaStates = new Map(connections.map(connection => [connection.id,
       codexPolicy ? getAccountQuotaState(connection, modelFor(connection), routingQuotas.get(connection.id), codexPolicy) : null,
     ]));
-    // Keep the old persisted binding until a replacement is actually selected.
-    // All requests for this session observe the same migration under the mutex.
-    if (binding && codexPolicy?.quotaFailover && quotaStates.get(binding.connectionId)?.exhausted) binding = null;
+    const coolingAccounts = new Map(getConcurrencySnapshot()
+      .filter(pool => pool.scope === "account" && pool.cooldownRemainingMs > 0)
+      .map(pool => [pool.id, new Date(Date.now() + pool.cooldownRemainingMs).toISOString()]));
+    // Keep the persisted binding until a replacement is selected under the
+    // mutex. Overloaded accounts must not hold a session through cooldown.
+    if (binding && (
+      excludeSet.has(binding.connectionId)
+      || coolingAccounts.has(binding.connectionId)
+      || (Number(boundConnection?.errorCode) === 503 && isModelLockActive(boundConnection, modelFor(boundConnection)))
+      || (codexPolicy?.quotaFailover && quotaStates.get(binding.connectionId)?.exhausted)
+    )) binding = null;
 
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
     const isAntigravity = providerId === "antigravity";
@@ -167,8 +172,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
+      if (coolingAccounts.has(c.id)) return false;
       if (quotaStates.get(c.id)?.exhausted) return false;
-      if (isModelLockActive(c, modelFor(c)) && !(options.waitForCooldown && binding?.connectionId === c.id && Number(c.errorCode) === 503)) return false;
+      if (isModelLockActive(c, modelFor(c))) return false;
       const enabled = c.providerSpecificData?.enabledModels;
       const requestedModel = options.requestedModel || (options.contextMarker
         ? `${modelFor(c)}[${options.contextMarker}]` : modelFor(c));
@@ -212,6 +218,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
       const lockedConns = connections.filter(c => isModelLockActive(c, modelFor(c)));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      expiries.push(...connections.map(c => coolingAccounts.get(c.id)).filter(Boolean));
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
           const resetAt = antigravityQuotaCache.get(c.id)?.[modelFor(c)]?.resetAt;
@@ -220,7 +227,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
       const earliest = expiries.sort()[0] || null;
       if (earliest) {
-        const earliestConn = lockedConns[0];
+        const earliestConn = lockedConns[0] || connections.find(c => coolingAccounts.has(c.id));
         log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
         return {
           allRateLimited: true,
