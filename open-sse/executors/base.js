@@ -3,7 +3,7 @@ import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js"
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { parseRetryAfterMs } from "../utils/retryAfter.js";
-import { upstreamResponseDiagnostics, safeDiagnosticMessage } from "../utils/upstreamDiagnostics.js";
+import { upstreamResponseDiagnostics, upstreamErrorMessage, safeDiagnosticMessage } from "../utils/upstreamDiagnostics.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 
@@ -169,7 +169,7 @@ export class BaseExecutor {
             retryCount: diagnosticContext?.retryCount,
             sseAttempt: diagnosticContext?.sseAttempt,
             attempt: retryAttemptsByUrl[urlIndex] + 1,
-            message: safeDiagnosticMessage(response.statusText || "HTTP 503"),
+            message: await upstreamErrorMessage(response),
           });
         }
         if (diagnosticContext) log?.info?.("UPSTREAM_HTTP", this.provider, {

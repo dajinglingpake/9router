@@ -10,12 +10,19 @@ export function upstreamResponseDiagnostics(response) {
   return { upstreamStatus: response?.status, headers };
 }
 
+export async function upstreamErrorMessage(response) {
+  try {
+    // Inspect a copy so the provider parser can still read the original body.
+    const body = await response.clone().text();
+    if (body.trim()) return safeDiagnosticMessage(body);
+  } catch {
+    // An unavailable body must not turn an upstream error into a network error.
+  }
+  return safeDiagnosticMessage(response.statusText || `HTTP ${response.status}`);
+}
+
 export function safeDiagnosticMessage(value) {
-  return String(value || "")
-    .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]")
-    .replace(/\bsk-[\w-]+/g, "[REDACTED]")
-    .replace(/https?:\/\/[^\s"<>]+/g, "[URL]")
-    .slice(0, DIAGNOSTIC_MAX_TEXT_LENGTH);
+  return String(value || "").slice(0, DIAGNOSTIC_MAX_TEXT_LENGTH);
 }
 
 export function sseErrorDiagnostics(text) {

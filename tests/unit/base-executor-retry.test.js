@@ -66,6 +66,73 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
     expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['{"detail":"Unable to verify Daybreak Blue access. Please try again."}'],
+    ['{"error":{"code":"server_is_overloaded","message":"Please try again later."}}'],
+    ["no healthy upstream"],
+    ["upstream connect error or disconnect/reset before headers. reset reason: connection timeout"],
+  ])("preserves the upstream 503 reason and original response body: %s", async (body) => {
+    const ex = makeExec({ baseUrl: "https://x/api" });
+    const onUpstreamOverload = vi.fn();
+    fetchMock.mockResolvedValue(new Response(body, {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: { "x-request-id": "upstream-123" },
+    }));
+
+    const out = await ex.execute({ model: "m", body: {}, credentials: creds, onUpstreamOverload });
+
+    expect(onUpstreamOverload).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      message: body,
+      upstreamStatus: 503,
+      headers: { "x-request-id": "upstream-123" },
+    }));
+    expect(out.response.bodyUsed).toBe(false);
+    await expect(out.response.text()).resolves.toBe(body);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["access check failed: Bearer test-token sk-test-key https://example.com/private"],
+    [JSON.stringify({ error: { message: "access check failed: Bearer test-token", key: "sk-test-key", url: "https://example.com/private" } })],
+  ])("preserves upstream credentials and URLs in the diagnostic message: %s", async (body) => {
+    const ex = makeExec({ baseUrl: "https://x/api" });
+    const onUpstreamOverload = vi.fn();
+    fetchMock.mockResolvedValue(new Response(body, { status: 503 }));
+
+    const out = await ex.execute({ model: "m", body: {}, credentials: creds, onUpstreamOverload });
+
+    expect(onUpstreamOverload).toHaveBeenCalledWith(expect.objectContaining({
+      message: body,
+    }));
+    await expect(out.response.text()).resolves.toBe(body);
+  });
+
+  it.each(["", " \n "])("falls back to the status text only for an empty error body: %j", async (body) => {
+    const ex = makeExec({ baseUrl: "https://x/api" });
+    const onUpstreamOverload = vi.fn();
+    fetchMock.mockResolvedValue(new Response(body, { status: 503, statusText: "Service Unavailable" }));
+
+    await ex.execute({ model: "m", body: {}, credentials: creds, onUpstreamOverload });
+
+    expect(onUpstreamOverload).toHaveBeenCalledWith(expect.objectContaining({ message: "Service Unavailable" }));
+  });
+
+  it("preserves the 503 status when the diagnostic body cannot be read", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api" });
+    const onUpstreamOverload = vi.fn();
+    const response = new Response("no healthy upstream", { status: 503 });
+    vi.spyOn(response, "clone").mockImplementation(() => { throw new TypeError("body unavailable"); });
+    fetchMock.mockResolvedValue(response);
+
+    const out = await ex.execute({ model: "m", body: {}, credentials: creds, onUpstreamOverload });
+
+    expect(out.response.status).toBe(503);
+    expect(onUpstreamOverload).toHaveBeenCalledWith(expect.objectContaining({ message: "HTTP 503" }));
+    await expect(out.response.text()).resolves.toBe("no healthy upstream");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("retries 502 `attempts` times then succeeds", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 3, delayMs: 0 } } });
     fetchMock

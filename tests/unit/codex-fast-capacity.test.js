@@ -13,10 +13,10 @@ function streamFromText(text) {
 }
 
 describe("Codex fast tier and capacity handling", () => {
-  it("logs the original 200-SSE error and upstream id before converting it to 503", async () => {
+  it.each(["busy", "access check failed: Bearer test-token sk-test-key https://example.com/private"])("logs the original 200-SSE error and upstream id before converting it to 503: %s", async (message) => {
     const executor = new CodexExecutor();
     const call = vi.spyOn(BaseExecutor.prototype, "execute").mockResolvedValue({ response: new Response(streamFromText(
-      'event: error\ndata: {"error":{"code":"server_is_overloaded","message":"busy"}}\n\n'
+      `event: error\ndata: ${JSON.stringify({ error: { code: "server_is_overloaded", message } })}\n\n`
     ), { headers: { "x-request-id": "upstream-123", "content-type": "text/event-stream" } }) });
     try {
       const log = { warn: vi.fn() };
@@ -29,13 +29,13 @@ describe("Codex fast tier and capacity handling", () => {
       expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
       expect(onUpstreamOverload).toHaveBeenCalledWith(expect.objectContaining({
         upstreamStatus: 200, retryCount: 2, sseAttempt: 1,
-        message: JSON.stringify({ code: "server_is_overloaded", message: "busy" }),
+        message: JSON.stringify({ code: "server_is_overloaded", message }),
         headers: { "x-request-id": "upstream-123" },
       }));
       expect(log.warn).toHaveBeenCalledWith("UPSTREAM_SSE_ERROR", "codex", expect.objectContaining({
         requestId: "local-123", connectionId: "account-a", retryCount: 2, sseAttempt: 1,
         upstreamStatus: 200, headers: { "x-request-id": "upstream-123" },
-        error: { code: "server_is_overloaded", message: "busy" }, willRetry: false,
+        error: { code: "server_is_overloaded", message }, willRetry: false,
       }));
     } finally { call.mockRestore(); }
   });

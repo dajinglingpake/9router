@@ -1039,10 +1039,7 @@ export async function appendRequestLog(entry = {}) {
     connectionId: entry.connectionId || null,
     source: entry.source || "upstream",
     endpoint: entry.endpoint || null,
-    message: String(entry.message || "")
-      .replace(/\bBearer\s+[\w.+/=-]+/gi, "Bearer [REDACTED]")
-      .replace(/\bsk-[\w-]+/g, "[REDACTED]")
-      .slice(0, 8000),
+    message: String(entry.message || "").slice(0, 8000),
   };
   runtimeRequestErrors.push(error);
   const cutoff = Date.now() - 5 * 60 * 1000;
