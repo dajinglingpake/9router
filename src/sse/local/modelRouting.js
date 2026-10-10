@@ -184,6 +184,12 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     const liveConnection = credentials.connectionId === "noauth"
       ? credentials
       : await getProviderConnectionById(credentials.connectionId);
+    // Administrative removal may happen while the request is queued. Release
+    // the old permits and reselect without sending traffic to that account.
+    if (!liveConnection || !liveConnection.isActive) {
+      excludedAccounts.add(credentials.connectionId);
+      return retry();
+    }
     const liveQuota = codexPolicy && liveConnection ? getAccountQuotaState(liveConnection, model, null, codexPolicy) : null;
     if (liveQuota?.exhausted) {
       if (!sessionKey || codexPolicy.quotaFailover) {
@@ -192,7 +198,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       }
       return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, sessionHint, clientRawRequest);
     }
-    if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
+    if (isModelLockActive(liveConnection, model)) {
       if (!sessionKey && Number(liveConnection?.errorCode) !== HTTP_STATUS.SERVICE_UNAVAILABLE) {
         excludedAccounts.add(credentials.connectionId);
         return retry();

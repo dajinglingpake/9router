@@ -109,6 +109,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       log.info("AUTH", `${provider} | cleared stale session binding ${binding.connectionId?.slice(0, 8) || "unknown"}`);
       binding = null;
     }
+    // A manually disabled account cannot serve its sessions. Persist the new
+    // binding only after a replacement passes the usual availability filters.
+    if (binding && !boundConnection.isActive) binding = null;
 
     if (connections.length === 0) {
       if (binding) return { sessionUnavailable: true, lastErrorCode: 503, lastError: "当前会话绑定的账号已停用或删除。" };
