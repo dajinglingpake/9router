@@ -22,6 +22,7 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
+import BulkConnectionTimingModal from "./BulkConnectionTimingModal";
 import BulkImportGrokCliModal from "./BulkImportGrokCliModal";
 import CustomConfigCard from "./CustomConfigCard";
 
@@ -55,6 +56,7 @@ export default function ProviderDetailPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
+  const [showBulkTimingModal, setShowBulkTimingModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [modelAliases, setModelAliases] = useState({});
   const [customModels, setCustomModels] = useState([]);
@@ -1528,7 +1530,7 @@ export default function ProviderDetailPage() {
         <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Connections</h2>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-4">
               {connections.length > 0 && proxyPools.length > 0 && (
                 <Button
                   size="sm"
@@ -1541,6 +1543,16 @@ export default function ProviderDetailPage() {
               )}
               {connections.length > 0 && (
                 <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon="timer"
+                    onClick={() => setShowBulkTimingModal(true)}
+                    disabled={selectedConnectionIds.length === 0}
+                    title={selectedConnectionIds.length === 0 ? translate("Select connections first") : undefined}
+                  >
+                    {translate("Bulk edit timing")}
+                  </Button>
                   {selectedConnectionIds.length > 0 && (
                     <Button
                       size="sm"
@@ -1838,6 +1850,13 @@ export default function ProviderDetailPage() {
       </Card>
 
       {bulkActionModal}
+      {showBulkTimingModal && (
+        <BulkConnectionTimingModal
+          connections={selectedConnections}
+          onSaved={fetchConnections}
+          onClose={() => setShowBulkTimingModal(false)}
+        />
+      )}
 
       {/* Modals */}
       {providerId === "kiro" ? (

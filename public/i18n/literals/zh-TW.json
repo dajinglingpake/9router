@@ -201,5 +201,15 @@
   "Account cooldown minimum (seconds)": "帳戶冷卻最小值（秒）",
   "Account cooldown maximum (seconds)": "帳戶冷卻最大值（秒）",
   "Used for transient upstream 502/503 errors.": "用於上游暫時性 502/503 錯誤。",
-  "The actual cooldown is randomized between minimum and maximum.": "實際冷卻時間將在最小值和最大值之間隨機。"
+  "The actual cooldown is randomized between minimum and maximum.": "實際冷卻時間將在最小值和最大值之間隨機。",
+  "Bulk edit timing": "批次設定間隔/冷卻",
+  "Request interval": "請求間隔",
+  "Account cooldown": "帳戶冷卻",
+  "Selected connections": "已選連線",
+  "Select connections first": "請先勾選需要設定的連線",
+  "Only checked settings are applied to selected connections.": "僅將勾選的設定套用至已選連線。",
+  "Mixed values": "目前值不同，請填寫",
+  "Apply to selected": "套用至已選連線",
+  "Enter both values within the allowed range, with minimum no greater than maximum.": "請在允許範圍內填寫最小值和最大值，且最小值不能大於最大值。",
+  "Saved": "已儲存"
 }

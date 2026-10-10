@@ -1450,5 +1450,14 @@
   "Singapore": "新加坡",
   "Europe · Amsterdam": "欧洲 · 阿姆斯特丹",
   "Russia": "俄罗斯",
-  "India": "印度"
+  "India": "印度",
+  "Bulk edit timing": "批量配置间隔/冷却",
+  "Request interval": "请求间隔",
+  "Account cooldown": "账号冷却",
+  "Selected connections": "已选连接",
+  "Select connections first": "请先勾选需要配置的连接",
+  "Only checked settings are applied to selected connections.": "仅将勾选的设置应用到已选连接。",
+  "Mixed values": "当前值不同，请填写",
+  "Apply to selected": "应用到已选连接",
+  "Enter both values within the allowed range, with minimum no greater than maximum.": "请在允许范围内填写最小值和最大值，且最小值不能大于最大值。"
 }
