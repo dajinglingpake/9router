@@ -11,6 +11,7 @@ import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { selectBalancedAccount } from "./accountBalancing.js";
 import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } from "./quotaRouting.js";
 import { isCodexPoolQuotaLow } from "./quotaModelSwitch.js";
+import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo.js";
 
 // Share selection state across route bundles and development reloads.
 const selectionState = globalThis.__ninerouterAccountSelection ||= {
@@ -191,13 +192,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return true;
     });
 
-    const capacityConnections = preferConnectionsWithCapacity(availableConnections);
+    // Overload history takes precedence over quota and rotation. Keep cooled
+    // accounts as a fallback when no account without a warning is available.
+    const overloadWarnings = await getAccountOverloadWarnings();
+    const withoutOverloads = availableConnections.filter(connection => !overloadWarnings[connection.id]);
+    const routingConnections = withoutOverloads.length ? withoutOverloads : availableConnections;
+    const capacityConnections = preferConnectionsWithCapacity(routingConnections);
     if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
       const bound = connections.find((item) => item.id === binding.connectionId);
       const quota = quotaStates.get(binding.connectionId);
       if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: "当前会话绑定的账号额度已用尽。", retryAfter: quota.retryAt };
       return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: getModelLockUntil(bound, modelFor(bound)) };
     }
+    if (binding && overloadWarnings[binding.connectionId] && withoutOverloads.length) binding = null;
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
     connections.forEach(c => {
@@ -260,7 +267,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
     }
     if (!connection && codexPolicy && codexPolicy.accountStrategy !== "inherit") {
-      connection = selectBalancedAccount(availableConnections, codexPolicy.accountStrategy,
+      connection = selectBalancedAccount(routingConnections, codexPolicy.accountStrategy,
         getConcurrencySnapshot(), selectionReservations, selectionCursors, `${providerId}:local-routing`, quotaStates);
     }
     if (!connection && strategy === "round-robin") {

@@ -82,6 +82,52 @@ function success() {
 }
 
 describe("session overload failover", () => {
+  it.each(["inherit", "quota-priority", "fill-first", "least-loaded", "round-robin"])("deprioritizes recovered overload accounts ahead of the %s strategy", async accountStrategy => {
+    const a = await account("overloaded-high-quota"), b = await account("healthy-low-quota");
+    await db.updateSettings({ localCodexRouting: { accountStrategy, quotaFailover: false }, fallbackStrategy: "round-robin" });
+    await db.updateProviderConnection(a.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
+    await db.updateProviderConnection(a.id, { testStatus: "active" });
+    const { loadConnectionUsage } = await import("@/lib/providerUsage.js");
+    loadConnectionUsage.mockImplementation(async connection => ({ quotas: { session: { used: connection.id === a.id ? 0 : 80, total: 100 } } }));
+    for (let i = 0; i < 3; i++) {
+      const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey(`new-${i}`) });
+      expect(selected.connectionId).toBe(b.id);
+      selected.releaseSelection?.();
+    }
+  });
+
+  it("moves a binding off a recovered overload account when a clean account is available", async () => {
+    const a = await account("a"), b = await account("b");
+    await sessions.bindSession(sessionKey(), "codex", a.id);
+    await db.updateProviderConnection(a.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
+    await db.updateProviderConnection(a.id, { testStatus: "active" });
+    const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
+    expect(selected.connectionId).toBe(b.id);
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(b.id);
+    selected.releaseSelection?.();
+  });
+
+  it("uses an overload account as fallback but never while it is cooling down", async () => {
+    const a = await account("a"), b = await account("b");
+    await db.updateProviderConnection(a.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
+    await db.updateProviderConnection(b.id, { errorCode: 429, [`modelLock_${MODEL}`]: new Date(Date.now() + 30_000).toISOString() });
+    const selected = await selection.getProviderCredentials("codex", null, MODEL);
+    expect(selected.connectionId).toBe(a.id);
+    limiter.pauseAccountQueue(a.id, Date.now() + 30_000);
+    expect(await selection.getProviderCredentials("codex", null, MODEL)).toMatchObject({ allRateLimited: true });
+  });
+
+  it("restores ordinary selection after clearing overload history", async () => {
+    const a = await account("a"), b = await account("b");
+    await db.updateSettings({ localCodexRouting: { accountStrategy: "fill-first", quotaFailover: false } });
+    await db.updateProviderConnection(a.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
+    const warningRepo = await import("@/lib/db/repos/accountOverloadWarningsRepo.js");
+    expect((await selection.getProviderCredentials("codex", null, MODEL)).connectionId).toBe(b.id);
+    const warning = (await warningRepo.getAccountOverloadWarnings(a.id))[a.id];
+    await warningRepo.dismissAccountOverloadWarning(a.id, warning.eventId);
+    expect((await selection.getProviderCredentials("codex", null, MODEL)).connectionId).toBe(a.id);
+  });
+
   it("moves a bound session after 503 and keeps later requests on the replacement", async () => {
     const a = await account("a"), b = await account("b");
     await sessions.bindSession(sessionKey(), "codex", a.id);

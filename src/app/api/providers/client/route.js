@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/localDb";
 import { backfillCodexEmails } from "@/lib/oauth/providers";
 import { getAccountExpiry } from "@/lib/accountExpiry";
+import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 
 const SAFE_FIELDS = [
@@ -105,7 +106,10 @@ export async function GET(request) {
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const currentPage = Math.min(page, totalPages);
     const offset = (currentPage - 1) * pageSize;
-    const pageConnections = sortedConnections.slice(offset, offset + pageSize).map(sanitize);
+    const warnings = await getAccountOverloadWarnings();
+    const pageConnections = sortedConnections.slice(offset, offset + pageSize).map(connection => ({
+      ...sanitize(connection), overloadWarning: warnings[connection.id] || null,
+    }));
 
     return NextResponse.json({
       connections: pageConnections,

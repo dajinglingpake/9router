@@ -55,7 +55,7 @@ describe("account overload history warnings", () => {
     const id = await log(a.id, { timestamp: 1000, transient: true });
     await errors.markRequestErrorsRecovered([Promise.resolve(id)]);
     await db.updateProviderConnection(a.id, { testStatus: "active", lastError: null });
-    expect((await warnings.getAccountOverloadWarnings())[a.id]).toEqual({ eventId: expect.any(String), lastAt: 1000 });
+    expect((await warnings.getAccountOverloadWarnings())[a.id]).toEqual({ eventId: expect.any(String), lastAt: 1000, count: 1 });
     expect((await errors.getRequestErrors()).items[0].recovered).toBe(true);
   });
 
@@ -202,5 +202,75 @@ describe("account overload history warnings", () => {
 
   it("rejects clearing an unknown account", async () => {
     expect((await dismissRoute("missing-account", "00000000-0000-0000-0000-000000000000")).status).toBe(404);
+  });
+
+  it.each([false, true])("counts a failed attempt once with either health/log write order (health first: %s)", async healthFirst => {
+    const a = await account();
+    const health = () => db.updateProviderConnection(a.id, { errorCode: 503, lastErrorAt: "2026-10-10T01:00:00Z" });
+    for (let i = 0; i < 3; i++) {
+      if (healthFirst) await health();
+      await log(a.id, { requestId: `attempt-${i}`, transient: true });
+      if (!healthFirst) await health();
+      await log(a.id, { requestId: `attempt-${i}`, transient: false });
+    }
+    expect((await warnings.getAccountOverloadWarnings(a.id))[a.id].count).toBe(3);
+    await errors.clearRequestErrors({ beforeId: Number.MAX_SAFE_INTEGER });
+    expect((await warnings.getAccountOverloadWarnings(a.id))[a.id].count).toBe(3);
+  });
+
+  it("resets counts and limits details to failures after the last clear", async () => {
+    const a = await account(), b = await account("other");
+    await log(a.id);
+    await log(a.id);
+    const first = (await warnings.getAccountOverloadWarnings(a.id))[a.id];
+    expect(first.count).toBe(2);
+    await warnings.dismissAccountOverloadWarning(a.id, first.eventId);
+    await log(a.id, { upstreamStatus: 200, recovered: true });
+    await log(b.id);
+    const { GET } = await import("@/app/api/providers/[id]/overload-warning/route.js");
+    const details = await (await GET(null, { params: Promise.resolve({ id: a.id }) })).json();
+    expect(details.overloadWarning.count).toBe(1);
+    expect(details.items).toHaveLength(1);
+    expect(details.items[0]).toMatchObject({ model: "test-model", upstreamStatus: 200, recovered: true, statusCode: 503 });
+    expect(JSON.stringify(details)).not.toMatch(/private-token|private-refresh|accessToken|refreshToken/);
+    expect((await GET(null, { params: Promise.resolve({ id: "missing" }) })).status).toBe(404);
+  });
+
+  it("upgrades legacy counters and UUID-only dismissals without resurrecting cleared errors", async () => {
+    const a = await account();
+    await log(a.id);
+    await log(a.id);
+    const old = (await warnings.getAccountOverloadWarnings(a.id))[a.id];
+    delete old.count;
+    const adapter = global._dbAdapter.instance;
+    adapter.run(`UPDATE kv SET value = ? WHERE scope = 'accountOverloadHistory' AND key = ?`, [JSON.stringify(old), a.id]);
+    expect((await warnings.getAccountOverloadWarnings(a.id))[a.id].count).toBe(2);
+    adapter.run(`UPDATE kv SET value = ? WHERE scope = 'accountOverloadHistory' AND key = ?`, [JSON.stringify(old), a.id]);
+    adapter.run(`INSERT INTO kv(scope, key, value) VALUES('accountOverloadDismissed', ?, ?)`, [a.id, old.eventId]);
+    await log(a.id, { model: "new-model" });
+    const details = await warnings.getAccountOverloadDetails(a.id);
+    expect(details.overloadWarning.count).toBe(1);
+    expect(details.items.map(item => item.model)).toEqual(["new-model"]);
+  });
+
+  it("paginates details without reducing the persistent count", async () => {
+    const a = await account();
+    for (let i = 0; i < 55; i++) await log(a.id);
+    const details = await warnings.getAccountOverloadDetails(a.id);
+    expect(details.overloadWarning.count).toBe(55);
+    expect(details.items).toHaveLength(50);
+    expect(details.hasMore).toBe(true);
+  });
+
+  it("includes safe overload counts in the quota tracker account response", async () => {
+    const a = await account();
+    await log(a.id);
+    const { GET } = await import("@/app/api/providers/client/route.js");
+    const response = await GET(new Request("http://localhost/api/providers/client?provider=codex"));
+    expect(response.status).toBe(200);
+    const connection = (await response.json()).connections[0];
+    expect(connection.overloadWarning.count).toBe(1);
+    expect(connection.accessToken).toBeUndefined();
+    expect(connection.refreshToken).toBeUndefined();
   });
 });

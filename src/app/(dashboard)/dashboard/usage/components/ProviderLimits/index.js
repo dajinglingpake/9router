@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import AccountExpiry from "@/shared/components/AccountExpiry";
+import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
@@ -1156,6 +1157,9 @@ export default function ProviderLimits() {
                         </p>
                       ) : null}
                       <AccountExpiry connection={conn} />
+                      <AccountOverloadWarning connection={conn} onUpdated={(overloadWarning) => setConnections(prev => prev.map(c =>
+                        c.id === conn.id ? { ...c, overloadWarning } : c
+                      ))} />
                       {conn.provider === "kiro" && (
                         <div className="mt-1 flex flex-wrap items-center gap-1">
                           <span className="rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-semibold text-brand-600 dark:text-brand-300">

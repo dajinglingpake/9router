@@ -42,7 +42,7 @@ export function saveRequestError(entry) {
       [record.timestamp, record.connectionId, record.provider, record.model, record.category, record.requestId, record.retryCount, Number(record.transient), Number(record.recovered), JSON.stringify(record)]
     );
     if (record.source === "upstream" && record.statusCode === 503 && record.connectionId) {
-      recordAccountOverloadWarning(db, record.connectionId, record.timestamp);
+      recordAccountOverloadWarning(db, record.connectionId, record.timestamp, true);
     }
     // Delivery runs separately; network failures must never block requests or log writes.
     void notifyRequestError(record).catch(() => console.warn("[Alerts] Unable to queue request alert"));

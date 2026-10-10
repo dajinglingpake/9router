@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
-import { dismissAccountOverloadWarning, getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
+import { dismissAccountOverloadWarning, getAccountOverloadWarnings, getAccountOverloadDetails } from "@/lib/db/repos/accountOverloadWarningsRepo";
 
 export const dynamic = "force-dynamic";
+
+export async function GET(request, { params }) {
+  const { id } = await params;
+  if (!await getProviderConnectionById(id)) {
+    return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+  }
+  return NextResponse.json(await getAccountOverloadDetails(id));
+}
 
 export async function DELETE(request, { params }) {
   const { id } = await params;
