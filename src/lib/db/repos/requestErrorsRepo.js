@@ -4,6 +4,7 @@ import { getRequestErrorInfo } from "../../requestErrorInfo.js";
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 import { DIAGNOSTIC_RESPONSE_HEADERS } from "open-sse/config/errorConfig.js";
 import { notifyRequestError } from "../../alerts/wecom.js";
+import { recordAccountOverloadWarning } from "./accountOverloadWarningsRepo.js";
 
 // Serialize inserts, recovery updates and clearing so earlier writes cannot reappear after clearing.
 const state = globalThis._requestErrorWrites ||= { pending: Promise.resolve() };
@@ -40,6 +41,9 @@ export function saveRequestError(entry) {
       `INSERT INTO requestErrors(timestamp, connectionId, provider, model, category, requestId, retryCount, transient, recovered, data) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [record.timestamp, record.connectionId, record.provider, record.model, record.category, record.requestId, record.retryCount, Number(record.transient), Number(record.recovered), JSON.stringify(record)]
     );
+    if (record.source === "upstream" && record.statusCode === 503 && record.connectionId) {
+      recordAccountOverloadWarning(db, record.connectionId, record.timestamp);
+    }
     // Delivery runs separately; network failures must never block requests or log writes.
     void notifyRequestError(record).catch(() => console.warn("[Alerts] Unable to queue request alert"));
     return Number(result.lastInsertRowid);

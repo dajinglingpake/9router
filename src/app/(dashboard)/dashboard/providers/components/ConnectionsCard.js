@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/connectionStatus";
 import PropTypes from "prop-types";
 import { Card, Badge, Button, Modal, Select, Toggle, EditConnectionModal, ConfirmModal } from "@/shared/components";
+import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 
 // ── CooldownTimer ──────────────────────────────────────────────
 function CooldownTimer({ until }) {
@@ -30,7 +31,7 @@ function CooldownTimer({ until }) {
 CooldownTimer.propTypes = { until: PropTypes.string.isRequired };
 
 // ── ConnectionRow ──────────────────────────────────────────────
-function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete }) {
+function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, onClearOverloadWarning }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const [isCooldown, setIsCooldown] = useState(false);
@@ -117,6 +118,7 @@ function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMov
             <Badge variant={getStatusVariant()} size="sm" dot>
               {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
             </Badge>
+            <AccountOverloadWarning connection={connection} onCleared={onClearOverloadWarning} />
             <Badge variant="default" size="sm">
               Concurrency: {connection.maxConcurrency > 0 ? connection.maxConcurrency : "Unlimited"}
             </Badge>
@@ -194,6 +196,7 @@ ConnectionRow.propTypes = {
   onUpdateProxy: PropTypes.func,
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  onClearOverloadWarning: PropTypes.func.isRequired,
 };
 
 // ── AddApiKeyModal ─────────────────────────────────────────────
@@ -449,6 +452,9 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                   onMoveUp={() => handleSwapPriority(idx, idx - 1)}
                   onMoveDown={() => handleSwapPriority(idx, idx + 1)}
                   onToggleActive={(isActive) => handleToggleActive(conn.id, isActive)}
+                  onClearOverloadWarning={(overloadWarning) => setConnections(prev => prev.map(c =>
+                    c.id === conn.id ? { ...c, overloadWarning } : c
+                  ))}
                   onUpdateProxy={(poolId) => handleUpdateProxy(conn.id, poolId)}
                   onEdit={() => { setSelectedConnection(conn); setShowEditModal(true); }}
                   onDelete={() => handleDelete(conn.id)}

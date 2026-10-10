@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAccountExpiry } from "@/lib/accountExpiry";
+import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 import { DEFAULT_ACCOUNT_COOLDOWN_MIN_MS, DEFAULT_ACCOUNT_COOLDOWN_MAX_MS } from "open-sse/config/errorConfig.js";
 import {
   getProviderConnectionById,
@@ -72,7 +73,8 @@ export async function GET(request, { params }) {
     }
 
     // Hide sensitive fields
-    const result = { ...connection, accountExpiry: getAccountExpiry(connection) };
+    const overloadWarnings = await getAccountOverloadWarnings(id);
+    const result = { ...connection, accountExpiry: getAccountExpiry(connection), overloadWarning: overloadWarnings[id] || null };
     delete result.apiKey;
     delete result.accessToken;
     delete result.refreshToken;

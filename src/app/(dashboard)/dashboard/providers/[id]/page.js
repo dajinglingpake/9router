@@ -1054,6 +1054,9 @@ export default function ProviderDetailPage() {
                 onMoveUp={() => handleSwapPriority(index, index - 1)}
                 onMoveDown={() => handleSwapPriority(index, index + 1)}
                 onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
+                onClearOverloadWarning={(overloadWarning) => setConnections(prev => prev.map(c =>
+                  c.id === conn.id ? { ...c, overloadWarning } : c
+                ))}
                 autoPing={AUTO_PING_SETTINGS_KEYS[providerId] && conn.authType === "oauth" ? {
                   on: autoPing.connections[conn.id] === true,
                   onToggle: (on) => handleAutoPingConnection(conn.id, on),

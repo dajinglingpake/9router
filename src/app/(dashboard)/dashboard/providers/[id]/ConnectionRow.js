@@ -6,8 +6,9 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 import AccountExpiry from "@/shared/components/AccountExpiry";
+import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, onClearOverloadWarning, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -169,6 +170,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             <Badge variant={getStatusVariant()} size="sm" dot>
               {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
             </Badge>
+            <AccountOverloadWarning connection={connection} onCleared={onClearOverloadWarning} />
             <Badge variant="default" size="sm">
               {authLabel}
             </Badge>
@@ -311,6 +313,7 @@ ConnectionRow.propTypes = {
   onUpdateProxy: PropTypes.func,
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  onClearOverloadWarning: PropTypes.func.isRequired,
   oneByOneStatus: PropTypes.shape({
     state: PropTypes.string,
     error: PropTypes.string,

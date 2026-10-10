@@ -10,6 +10,7 @@ import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
 import { getAccountExpiry } from "@/lib/accountExpiry";
+import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +52,7 @@ async function normalizeProxyPoolId(proxyPoolId) {
 export async function GET() {
   try {
     const connections = await getProviderConnections();
+    const overloadWarnings = await getAccountOverloadWarnings();
 
     // Build nodeNameMap for compatible providers (id → name)
     let nodeNameMap = {};
@@ -71,6 +73,7 @@ export async function GET() {
         ...c,
         name,
         accountExpiry: getAccountExpiry(c),
+        overloadWarning: overloadWarnings[c.id] || null,
         apiKey: undefined,
         accessToken: undefined,
         refreshToken: undefined,

@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { recordAccountOverloadWarning } from "./accountOverloadWarningsRepo.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -284,6 +285,11 @@ export async function updateProviderConnection(id, data, { resetHealthState = tr
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
     const patch = { ...data };
+    if (patch.errorCode === 503) {
+      recordAccountOverloadWarning(db, id, patch.lastErrorAt || new Date().toISOString());
+    } else if (existing.errorCode === 503 && existing.lastErrorAt && !db.get(`SELECT key FROM kv WHERE scope = 'accountOverloadHistory' AND key = ?`, [id])) {
+      recordAccountOverloadWarning(db, id, existing.lastErrorAt);
+    }
     // Runtime success must not clear a lock renewed since it read the account.
     for (const [key, expected] of Object.entries(expectedModelLocks)) {
       if (key.startsWith(MODEL_LOCK_PREFIX) && existing[key] !== expected) delete patch[key];
