@@ -36,14 +36,14 @@ export default function CodexRoutingSettings() {
 
   return <Card>
     <h2 className="text-lg font-semibold mb-2">Codex 账号路由</h2>
-    <p className="text-sm text-text-muted mb-4">先均衡账号负载，再按过载历史和所选策略分配。已有会话优先保持绑定，绑定账号较忙时自动迁移到负载更低的可用账号。</p>
+    <p className="text-sm text-text-muted mb-4">新会话先均衡账号负载，再按过载历史和所选策略分配。已有会话保持账号绑定，账号繁忙或上游过载时返回错误并提示稍后重试，不自动换号。</p>
     <div className="space-y-4">
       <Select label="新会话账号分配" aria-label="新会话账号分配" disabled={disabled} value={config.accountStrategy}
         options={[{ value: "inherit", label: "沿用原有账号分配策略" }, { value: "quota-priority", label: "额度优先（负载优先均衡）" }, { value: "least-loaded", label: "负载均衡（同负载轮询）" }, { value: "round-robin", label: "轮询账号（负载优先均衡）" }, { value: "fill-first", label: "账号顺序（负载优先均衡）" }]}
         onChange={event => setConfig({ ...config, accountStrategy: event.target.value })} />
       {config.accountStrategy === "quota-priority" && <p className="text-xs text-text-muted">先选择空闲账号；都忙时选择排队较少、运行请求较少的账号。负载相同时优先无过载记录的账号，再比较剩余额度，额度相同时轮询。额度全部未知时回退到轮询。</p>}
       <label className="flex items-center justify-between gap-4">
-        <div><p className="text-sm font-medium">额度耗尽后迁移会话</p><p className="text-xs text-text-muted">开启后，额度耗尽也会选择其他可用账号并重新绑定。负载均衡和过载迁移始终生效。</p></div>
+        <div><p className="text-sm font-medium">额度耗尽后迁移会话</p><p className="text-xs text-text-muted">开启后，仅额度耗尽时选择其他可用账号并重新绑定；繁忙或过载不触发换号。</p></div>
         <Toggle disabled={disabled} checked={config.quotaFailover}
           onChange={() => setConfig({ ...config, quotaFailover: !config.quotaFailover })} />
       </label>

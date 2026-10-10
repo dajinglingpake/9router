@@ -76,7 +76,7 @@ function sessionKey(sessionId = "failover-session") {
 function send(sessionId = "failover-session") {
   const body = { model: `cx/${MODEL}`, input: "hello", stream: false };
   const request = new Request("http://localhost/v1/responses", {
-    method: "POST", headers: { "Content-Type": "application/json", "x-session-id": sessionId }, body: JSON.stringify(body),
+    method: "POST", headers: { "Content-Type": "application/json", ...(sessionId ? { "x-session-id": sessionId } : {}) }, body: JSON.stringify(body),
   });
   const caller = { headers: Object.fromEntries(request.headers), body, endpoint: "/v1/responses", apiKeyRecordId: "test-caller" };
   return routing.handleSingleModelChat(body, body.model, caller, request, null, new Set(), new Set(), Date.now() + 1500);
@@ -90,8 +90,8 @@ function success() {
   return { success: true, response: Response.json({ ok: true }) };
 }
 
-describe("session overload failover", () => {
-  it.each(["inherit", "quota-priority", "fill-first", "least-loaded", "round-robin"])("chooses idle recovered accounts before busy healthy accounts with %s", async accountStrategy => {
+describe("stable account bindings during overload", () => {
+  it.each(["inherit", "quota-priority", "fill-first", "least-loaded", "round-robin"])("balances new sessions but preserves busy bindings with %s", async accountStrategy => {
     const busy = await account("busy-high-quota", 0), idle = await account("idle-overload-history", 0);
     await db.updateSettings({ localCodexRouting: { accountStrategy, quotaFailover: false } });
     await db.updateProviderConnection(idle.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
@@ -103,8 +103,8 @@ describe("session overload failover", () => {
       const key = sessionKey(`idle-first-${bound}`);
       if (bound) await sessions.bindSession(key, "codex", busy.id);
       const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: key });
-      expect(selected.connectionId).toBe(idle.id);
-      expect((await sessions.getSessionBinding(key)).connectionId).toBe(idle.id);
+      expect(selected.connectionId).toBe(bound ? busy.id : idle.id);
+      expect((await sessions.getSessionBinding(key)).connectionId).toBe(bound ? busy.id : idle.id);
       selected.releaseSelection?.();
     }
   });
@@ -126,7 +126,7 @@ describe("session overload failover", () => {
     expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
-  it("moves a busy binding to the least busy account before considering overload history or quota", async () => {
+  it("keeps a busy binding even when another account has less work", async () => {
     const busy = await account("busy", 0), lessBusy = await account("less-busy", 0);
     await db.updateSettings({ localCodexRouting: { accountStrategy: "quota-priority", quotaFailover: false } });
     await db.updateProviderConnection(lessBusy.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
@@ -134,8 +134,8 @@ describe("session overload failover", () => {
     await occupy(lessBusy, 1);
     await sessions.bindSession(sessionKey(), "codex", busy.id);
     const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
-    expect(selected.connectionId).toBe(lessBusy.id);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(lessBusy.id);
+    expect(selected.connectionId).toBe(busy.id);
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(busy.id);
     selected.releaseSelection?.();
   });
 
@@ -194,14 +194,15 @@ describe("session overload failover", () => {
     }
   });
 
-  it("moves a binding off a recovered overload account when a clean account is available", async () => {
-    const a = await account("a"), b = await account("b");
+  it("keeps a recovered binding despite its overload history", async () => {
+    const a = await account("a");
+    await account("b");
     await sessions.bindSession(sessionKey(), "codex", a.id);
     await db.updateProviderConnection(a.id, { errorCode: 503, lastErrorAt: new Date().toISOString() });
     await db.updateProviderConnection(a.id, { testStatus: "active" });
     const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
-    expect(selected.connectionId).toBe(b.id);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(b.id);
+    expect(selected.connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
     selected.releaseSelection?.();
   });
 
@@ -226,35 +227,47 @@ describe("session overload failover", () => {
     expect((await selection.getProviderCredentials("codex", null, MODEL)).connectionId).toBe(a.id);
   });
 
-  it("moves a bound session after 503 and keeps later requests on the replacement", async () => {
+  it.each([false, true])("returns 503 without switching accounts or losing the binding (quota failover: %s)", async quotaFailover => {
     const a = await account("a"), b = await account("b");
+    await db.updateSettings({ localCodexRouting: { accountStrategy: "least-loaded", quotaFailover } });
     await sessions.bindSession(sessionKey(), "codex", a.id);
     const failure = overloaded();
     const cancel = vi.spyOn(failure.response.body, "cancel");
     upstream.mockResolvedValueOnce(failure).mockImplementation(async () => success());
 
-    expect(await (await send()).json()).toEqual({ ok: true });
-    expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id, b.id]);
+    const response = await send();
+    expect(response.status).toBe(503);
+    expect((await response.json()).error.message).toContain(OVERLOAD);
+    expect(response.headers.get("Retry-After")).not.toBeNull();
+    expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id]);
     expect(cancel).toHaveBeenCalledOnce();
-    expect(await sessions.getSessionBinding(sessionKey())).toEqual({ provider: "codex", connectionId: b.id });
+    expect(await sessions.getSessionBinding(sessionKey())).toEqual({ provider: "codex", connectionId: a.id });
     expect(loads.getAccountActiveCount(a.id)).toBe(0);
     expect(loads.getAccountActiveCount(b.id)).toBe(0);
     expect((await db.getProviderConnectionById(a.id)).errorCode).toBe(503);
 
+    expect((await send()).status).toBe(503);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect((await db.getProviderConnectionById(b.id)).errorCode).toBeFalsy();
+
+    limiter.__test__.reset();
+    await db.updateProviderConnection(a.id, { testStatus: "active", errorCode: null, modelLock___all: null });
     expect(await (await send()).json()).toEqual({ ok: true });
-    expect(upstream.mock.calls.at(-1)[0].connectionId).toBe(b.id);
+    expect(upstream.mock.calls.at(-1)[0].connectionId).toBe(a.id);
   });
 
-  it("skips an account already cooling down from a 503 before calling upstream", async () => {
-    const a = await account("a"), b = await account("b");
+  it("returns the bound account's cooldown without contacting another account", async () => {
+    const a = await account("a");
+    await account("b");
     await sessions.bindSession(sessionKey(), "codex", a.id);
     await db.updateProviderConnection(a.id, { errorCode: 503, modelLock___all: new Date(Date.now() + 30_000).toISOString() });
     upstream.mockResolvedValue(success());
 
-    expect(await (await send()).json()).toEqual({ ok: true });
-    expect(upstream).toHaveBeenCalledOnce();
-    expect(upstream.mock.calls[0][0].connectionId).toBe(b.id);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(b.id);
+    const response = await send();
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).not.toBeNull();
+    expect(upstream).not.toHaveBeenCalled();
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
   });
 
   it.each([429, 503])("never binds a new session to an account with a persisted %i cooldown", async (status) => {
@@ -273,9 +286,9 @@ describe("session overload failover", () => {
     limiter.pauseAccountQueue(a.id, Date.now() + 30_000);
 
     const credentials = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
-    expect(credentials.connectionId).toBe(b.id);
+    expect(credentials).toMatchObject(bound ? { sessionUnavailable: true, lastErrorCode: 503, retryAfter: expect.any(String) } : { connectionId: b.id });
     credentials.releaseSelection?.();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(b.id);
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(bound ? a.id : b.id);
   });
 
   it("leaves a new session unbound when every account is cooling down", async () => {
@@ -288,20 +301,29 @@ describe("session overload failover", () => {
     expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
-  it("tries each account at most once even if an earlier cooldown clears during failover", async () => {
-    const a = await account("a"), b = await account("b");
+  it("does not spread one overloaded request across the other nine accounts", async () => {
+    const a = await account("a");
+    const others = [];
+    for (let i = 0; i < 9; i++) others.push(await account(`other-${i}`));
     await sessions.bindSession(sessionKey(), "codex", a.id);
-    upstream.mockImplementation(async ({ connectionId }) => {
-      if (connectionId === b.id) await db.updateProviderConnection(a.id, { testStatus: "active" });
-      return overloaded();
-    });
+    upstream.mockImplementation(async () => overloaded());
 
     const response = await send();
     expect(response.status).toBe(503);
-    expect((await response.json()).error.message).toContain("暂无其他可用账号可切换");
-    expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id, b.id]);
+    expect((await response.json()).error.message).toContain(OVERLOAD);
+    expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id]);
     expect(loads.getAccountActiveCount(a.id)).toBe(0);
-    expect(loads.getAccountActiveCount(b.id)).toBe(0);
+    for (const other of others) expect((await db.getProviderConnectionById(other.id)).errorCode).toBeFalsy();
+    expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
+  });
+
+  it("does not retry 503 on another account even without a session identifier", async () => {
+    await account("a");
+    await account("b");
+    upstream.mockImplementation(async () => overloaded());
+    expect((await send(null)).status).toBe(503);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
   it("preserves the persisted binding and returns promptly when there is no replacement", async () => {
@@ -311,7 +333,7 @@ describe("session overload failover", () => {
 
     const response = await send();
     expect(response.status).toBe(503);
-    expect((await response.json()).error.message).toContain("暂无其他可用账号可切换");
+    expect((await response.json()).error.message).toContain(OVERLOAD);
     expect(response.headers.get("Retry-After")).not.toBeNull();
     expect(upstream).toHaveBeenCalledOnce();
     expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
@@ -343,44 +365,59 @@ describe("session overload failover", () => {
 
   it("only migrates to accounts that have the requested model enabled", async () => {
     const a = await account("a"), b = await account("b"), c = await account("c");
+    await db.updateSettings({ localCodexRouting: { accountStrategy: "least-loaded", quotaFailover: true } });
     await db.updateProviderConnection(b.id, { providerSpecificData: { enabledModels: ["gpt-6-luna"] } });
     await sessions.bindSession(sessionKey(), "codex", a.id);
-    upstream.mockResolvedValueOnce(overloaded()).mockResolvedValueOnce(success());
+    upstream.mockResolvedValueOnce({ success: false, status: 429, error: "usage_limit_reached", response: Response.json({}, { status: 429 }) }).mockResolvedValueOnce(success());
 
     expect(await (await send()).json()).toEqual({ ok: true });
     expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id, c.id]);
     expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(c.id);
   });
 
-  it("releases a selected account's slot when it becomes overloaded before the upstream call", async () => {
-    const a = await account("a"), b = await account("b");
-    await sessions.bindSession(sessionKey(), "codex", a.id);
+  it.each([false, true])("releases the slot without switching when an account locks before the upstream call (bound: %s)", async bound => {
+    const a = await account("a");
+    await account("b");
+    if (bound) await sessions.bindSession(sessionKey(), "codex", a.id);
     refresh.mockImplementationOnce(async (_provider, credentials) => {
       await db.updateProviderConnection(a.id, { errorCode: 503, modelLock___all: new Date(Date.now() + 30_000).toISOString() });
       return credentials;
     });
     upstream.mockResolvedValue(success());
 
-    expect(await (await send()).json()).toEqual({ ok: true });
-    expect(upstream).toHaveBeenCalledOnce();
-    expect(upstream.mock.calls[0][0].connectionId).toBe(b.id);
+    expect((await send(bound ? "failover-session" : null)).status).toBe(503);
+    expect(upstream).not.toHaveBeenCalled();
+    if (bound) expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
     expect(loads.getAccountActiveCount(a.id)).toBe(0);
     expect(limiter.__test__.snapshot("account", a.id)?.active || 0).toBe(0);
   });
 
-  it("balances concurrent requests in one overloaded session across idle replacements", async () => {
-    const a = await account("a"), b = await account("b");
-    const c = await account("c");
+  it("keeps concurrent requests in a cooling session away from every upstream account", async () => {
+    const a = await account("a");
+    await account("b");
+    await account("c");
     await sessions.bindSession(sessionKey(), "codex", a.id);
     await db.updateProviderConnection(a.id, { errorCode: 503, modelLock___all: new Date(Date.now() + 30_000).toISOString() });
 
     const selected = await Promise.all([1, 2].map(() => selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() })));
-    expect(selected.map(credentials => credentials.connectionId)).toEqual([b.id, c.id]);
+    expect(selected).toEqual([expect.objectContaining({ sessionUnavailable: true }), expect.objectContaining({ sessionUnavailable: true })]);
     selected.forEach(credentials => credentials.releaseSelection?.());
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(c.id);
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
-  it("keeps provider bindings isolated when migrating an overloaded account", async () => {
+  it("keeps simultaneous requests in a healthy session on its first selected account", async () => {
+    const a = await account("a", 0);
+    await account("b", 0);
+    await account("c", 0);
+    const selected = await Promise.all([1, 2, 3].map(() => selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() })));
+    expect(selected.map(credentials => credentials.connectionId)).toEqual([a.id, a.id, a.id]);
+    selected.forEach(credentials => credentials.releaseSelection?.());
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
+  });
+
+  it("keeps bindings isolated between providers", async () => {
     const a = await account("a");
     await sessions.bindSession(sessionKey(), "other-provider", a.id);
     expect(await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() }))

@@ -120,12 +120,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const coolingAccounts = new Map(getConcurrencySnapshot()
       .filter(pool => pool.scope === "account" && pool.cooldownRemainingMs > 0)
       .map(pool => [pool.id, new Date(Date.now() + pool.cooldownRemainingMs).toISOString()]));
-    // Keep the persisted binding until a replacement is selected under the
-    // mutex. Overloaded accounts must not hold a session through cooldown.
+    // Only explicit exclusions or configured quota failover may replace an
+    // existing binding. Busy or cooling accounts keep their sessions.
     if (binding && (
       excludeSet.has(binding.connectionId)
-      || coolingAccounts.has(binding.connectionId)
-      || (Number(boundConnection?.errorCode) === 503 && isModelLockActive(boundConnection, modelFor(boundConnection)))
       || (codexPolicy?.quotaFailover && quotaStates.get(binding.connectionId)?.exhausted)
     )) binding = null;
 
@@ -165,10 +163,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const bound = connections.find((item) => item.id === binding.connectionId);
       const quota = quotaStates.get(binding.connectionId);
       if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: "当前会话绑定的账号额度已用尽。", retryAfter: quota.retryAt };
-      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: getModelLockUntil(bound, modelFor(bound)) };
+      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: coolingAccounts.get(binding.connectionId) || getModelLockUntil(bound, modelFor(bound)) };
     }
-    // Keep affinity only when it does not defeat load balancing or overload priority.
-    if (binding && !capacityConnections.some(connection => connection.id === binding.connectionId)) binding = null;
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
     connections.forEach(c => {

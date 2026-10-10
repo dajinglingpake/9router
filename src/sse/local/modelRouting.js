@@ -63,16 +63,13 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
   const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
-  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "优先均衡账号负载；上游暂不可用或额度耗尽时自动迁移。" : NEW_SESSION_HINT}` : "";
+  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；额度耗尽时按配置自动迁移，过载时请稍后重试。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
     sessionKey, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
   });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-    if (sessionKey && status === HTTP_STATUS.SERVICE_UNAVAILABLE && (credentials?.allRateLimited || excludedAccounts.size > 0)) {
-      return rejectAccountCooldown(status, "上游暂时不可用，暂无其他可用账号可切换。", credentials?.retryAfter, "", clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
-    }
     if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。", clientRawRequest?.upstreamErrorHeaders);
     return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
   }
@@ -190,11 +187,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, sessionHint, clientRawRequest);
     }
     if (!liveConnection || !liveConnection.isActive || isModelLockActive(liveConnection, model)) {
-      if (!sessionKey) {
-        excludedAccounts.add(credentials.connectionId);
-        return retry();
-      }
-      if (liveConnection?.isActive && Number(liveConnection.errorCode) === 503 && isModelLockActive(liveConnection, model)) {
+      if (!sessionKey && Number(liveConnection?.errorCode) !== HTTP_STATUS.SERVICE_UNAVAILABLE) {
         excludedAccounts.add(credentials.connectionId);
         return retry();
       }
@@ -308,22 +301,24 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     // Do not persist a modelLock_* for this path.
     clientRawRequest.upstreamErrorHeaders = upstreamResponseHeaders(result.response?.headers);
     let shouldFallback = !!quotaResetMs;
+    let cooldownMs = 0;
     if (!(provider === "antigravity" && quotaResetMs)) {
-      ({ shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
+      ({ shouldFallback, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
     if (sessionKey && codexPolicy?.quotaFailover && isCodexQuotaError(provider, result.status, result.error)) {
       excludedAccounts.add(credentials.connectionId);
       return retry(result.response);
     }
-    if (sessionKey && result.status === HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth") {
+    if (!sessionKey && shouldFallback && result.status !== HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth") {
       excludedAccounts.add(credentials.connectionId);
       return retry(result.response);
     }
-    if (!sessionKey && shouldFallback && credentials.connectionId !== "noauth") {
-      excludedAccounts.add(credentials.connectionId);
-      return retry(result.response);
+    await result.response?.body?.cancel().catch(() => {});
+    const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`, clientRawRequest.upstreamErrorHeaders);
+    if (result.status === HTTP_STATUS.SERVICE_UNAVAILABLE && cooldownMs > 0) {
+      response.headers.set("Retry-After", String(Math.ceil(cooldownMs / 1000)));
     }
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`, clientRawRequest.upstreamErrorHeaders);
+    return response;
   } catch (error) {
     if (sessionKey && Date.now() >= deadline && !request?.signal?.aborted) {
       return rejectChatRequest(503, "账号繁忙，等待重试已超过时限，请稍后重试。", clientRawRequest, "router");
