@@ -1,21 +1,5 @@
 [
   {
-    "name": "claude-opus-4-8",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "claude-opus-4-8[1m]",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "claude-sonnet-4-6",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "claude-haiku-4-5-20251001",
-    "models": ["oc/deepseek-v4-flash-free"]
-  },
-  {
     "name": "codex-auto-review",
     "models": ["cx/gpt-5.6-sol-review"]
   },
@@ -50,37 +34,5 @@
   {
     "name": "gpt-5.5",
     "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "gpt-5.4",
-    "models": ["cx/gpt-5.4"]
-  },
-  {
-    "name": "claude-sonnet-4-7",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "claude-opus-4-7",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "claude-opus-4-6",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "claude-sonnet-4-5-20250929",
-    "models": ["cx/gpt-5.5"]
-  },
-  {
-    "name": "gpt-5.3-codex",
-    "models": ["cx/gpt-5.3-codex"]
-  },
-  {
-    "name": "gpt-5.3-codex-spark",
-    "models": ["cx/gpt-5.3-codex-spark"]
-  },
-  {
-    "name": "gpt-5.3-codex-spark-review",
-    "models": ["cx/gpt-5.3-codex-spark-review"]
   }
 ]
