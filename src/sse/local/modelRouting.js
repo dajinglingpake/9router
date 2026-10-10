@@ -24,8 +24,9 @@ import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderC
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { isCodexQuotaError, getAccountQuotaState } from "./quotaRouting.js";
 import { handleLocalCombo } from "./comboRouting.js";
-import { getKeyAccessContext, filterAdapterModels } from "../services/keyAccess.js";
+import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from "../services/keyAccess.js";
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
+import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
 
 /**
  * Handle single model chat request
@@ -64,19 +65,26 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
   const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
+  const apiKeyRoutingKey = codexPolicy?.apiKeyAffinity
+    ? getApiKeyRoutingKey(provider, clientRawRequest?.apiKeyRecordId, apiKey || extractClientApiKey(request))
+    : null;
+  const stickyBinding = !!(apiKeyRoutingKey || sessionKey);
+  const quotaFailover = !!(apiKeyRoutingKey || codexPolicy?.quotaFailover);
   // Automatic quota downgrades must respect the key's model allow list.
   const fallbackModels = codexPolicy?.quotaModelSwitch
     ? await filterAdapterModels(await getKeyAccessContext(request), [`${provider}/${codexPolicy.quotaFallbackModel}`], [])
     : null;
-  const sessionHint = sessionKey ? ` ${codexPolicy?.quotaFailover ? "当前会话保持账号绑定；额度耗尽时按配置自动迁移，过载时请稍后重试。" : NEW_SESSION_HINT}` : "";
+  const sessionHint = apiKeyRoutingKey
+    ? " 当前 API Key 保持账号绑定；账号停用、删除或额度耗尽时自动迁移，繁忙或过载时请稍后重试。"
+    : sessionKey ? ` ${quotaFailover ? "当前会话保持账号绑定；额度耗尽时按配置自动迁移，过载时请稍后重试。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
-    sessionKey, fillFirst: true, modelByConnection,
+    sessionKey, apiKeyRoutingKey, apiKeyRecordId: clientRawRequest?.apiKeyRecordId, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
     allowQuotaModelSwitch: !fallbackModels || fallbackModels.length > 0,
   });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-    if (!sessionKey && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。", clientRawRequest?.upstreamErrorHeaders);
+    if (!stickyBinding && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。", clientRawRequest?.upstreamErrorHeaders);
     return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
   }
 
@@ -192,22 +200,22 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     }
     const liveQuota = codexPolicy && liveConnection ? getAccountQuotaState(liveConnection, model, null, codexPolicy) : null;
     if (liveQuota?.exhausted) {
-      if (!sessionKey || codexPolicy.quotaFailover) {
+      if (!stickyBinding || quotaFailover) {
         excludedAccounts.add(credentials.connectionId);
         return retry();
       }
       return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, sessionHint, clientRawRequest);
     }
     if (isModelLockActive(liveConnection, model)) {
-      if (!sessionKey && Number(liveConnection?.errorCode) !== HTTP_STATUS.SERVICE_UNAVAILABLE) {
+      if (!stickyBinding && Number(liveConnection?.errorCode) !== HTTP_STATUS.SERVICE_UNAVAILABLE) {
         excludedAccounts.add(credentials.connectionId);
         return retry();
       }
-      return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "当前会话绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
+      return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
     }
 
     const attemptTimeout = new AbortController();
-    const attemptTimer = sessionKey ? setTimeout(() => attemptTimeout.abort(), Math.max(0, deadline - Date.now())) : null;
+    const attemptTimer = stickyBinding ? setTimeout(() => attemptTimeout.abort(), Math.max(0, deadline - Date.now())) : null;
     const accountState = getConcurrencySnapshot().find(item => item.scope === "account" && item.id === credentials.connectionId);
     const diagnosticContext = {
       requestId, connectionId: credentials.connectionId, retryCount,
@@ -250,7 +258,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
-      clientAbortSignal: sessionKey ? AbortSignal.any([request?.signal, attemptTimeout.signal].filter(Boolean)) : request?.signal,
+      clientAbortSignal: stickyBinding ? AbortSignal.any([request?.signal, attemptTimeout.signal].filter(Boolean)) : request?.signal,
       pxpipeEnabled: !!chatSettings.pxpipeEnabled,
       pxpipeMinChars: chatSettings.pxpipeMinChars,
       pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
@@ -317,11 +325,11 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     if (!(provider === "antigravity" && quotaResetMs)) {
       ({ shouldFallback, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
-    if (sessionKey && codexPolicy?.quotaFailover && isCodexQuotaError(provider, result.status, result.error)) {
+    if (stickyBinding && quotaFailover && isCodexQuotaError(provider, result.status, result.error)) {
       excludedAccounts.add(credentials.connectionId);
       return retry(result.response);
     }
-    if (!sessionKey && shouldFallback && result.status !== HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth") {
+    if (!stickyBinding && shouldFallback && result.status !== HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth") {
       excludedAccounts.add(credentials.connectionId);
       return retry(result.response);
     }
@@ -332,7 +340,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     }
     return response;
   } catch (error) {
-    if (sessionKey && Date.now() >= deadline && !request?.signal?.aborted) {
+    if (stickyBinding && Date.now() >= deadline && !request?.signal?.aborted) {
       return rejectChatRequest(503, "账号繁忙，等待重试已超过时限，请稍后重试。", clientRawRequest, "router");
     }
     const cancelled = request?.signal?.aborted || error.name === "AbortError";

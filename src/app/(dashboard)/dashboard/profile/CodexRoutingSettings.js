@@ -36,14 +36,19 @@ export default function CodexRoutingSettings() {
 
   return <Card>
     <h2 className="text-lg font-semibold mb-2">Codex 账号路由</h2>
-    <p className="text-sm text-text-muted mb-4">新会话先均衡账号负载，再按过载历史和所选策略分配。已有会话保持账号绑定；账号被停用或删除时重新分配，繁忙或上游过载时提示稍后重试。</p>
+    <p className="text-sm text-text-muted mb-4">配置首次账号分配策略与绑定方式。绑定账号被停用或删除时重新分配，繁忙或上游过载时提示稍后重试。</p>
     <div className="space-y-4">
-      <Select label="新会话账号分配" aria-label="新会话账号分配" disabled={disabled} value={config.accountStrategy}
+      <label className="flex items-center justify-between gap-4">
+        <div><p className="text-sm font-medium">按 API Key 固定账号</p><p className="text-xs text-text-muted">首次请求到达时才绑定，优先选择未绑定其他 Key 的可用账号；全部已分配后，先均衡绑定 Key 数，再按下方策略分配。同 Key 的所有 Codex 会话共用账号，重启后保留；仅在账号停用、删除或额度耗尽时迁移，繁忙、冷却或过载不换号。未使用 API Key 的请求仍按会话路由。</p></div>
+        <Toggle disabled={disabled} checked={config.apiKeyAffinity}
+          onChange={() => setConfig({ ...config, apiKeyAffinity: !config.apiKeyAffinity })} />
+      </label>
+      <Select label={config.apiKeyAffinity ? "首次账号分配" : "新会话账号分配"} aria-label="账号分配策略" disabled={disabled} value={config.accountStrategy}
         options={[{ value: "inherit", label: "沿用原有账号分配策略" }, { value: "quota-priority", label: "额度优先（负载优先均衡）" }, { value: "least-loaded", label: "负载均衡（同负载轮询）" }, { value: "round-robin", label: "轮询账号（负载优先均衡）" }, { value: "fill-first", label: "账号顺序（负载优先均衡）" }]}
         onChange={event => setConfig({ ...config, accountStrategy: event.target.value })} />
       {config.accountStrategy === "quota-priority" && <p className="text-xs text-text-muted">先选择空闲账号；都忙时选择排队较少、运行请求较少的账号。负载相同时优先无过载记录的账号，再比较剩余额度，额度相同时轮询。额度全部未知时回退到轮询。</p>}
       <label className="flex items-center justify-between gap-4">
-        <div><p className="text-sm font-medium">额度耗尽后迁移会话</p><p className="text-xs text-text-muted">开启后，额度耗尽也会选择其他可用账号并重新绑定；繁忙或过载不触发换号。</p></div>
+        <div><p className="text-sm font-medium">额度耗尽后迁移会话</p><p className="text-xs text-text-muted">控制按会话路由的额度迁移。按 API Key 固定账号时，额度耗尽始终自动迁移，不受此开关影响；繁忙或过载不触发换号。</p></div>
         <Toggle disabled={disabled} checked={config.quotaFailover}
           onChange={() => setConfig({ ...config, quotaFailover: !config.quotaFailover })} />
       </label>

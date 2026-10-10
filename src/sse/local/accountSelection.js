@@ -12,6 +12,7 @@ import { preferLeastLoadedAccounts, selectBalancedAccount } from "./accountBalan
 import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } from "./quotaRouting.js";
 import { isCodexPoolQuotaLow } from "./quotaModelSwitch.js";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo.js";
+import { getApiKeyBinding, bindApiKey, getApiKeyBindingCounts } from "./apiKeyRouting.js";
 
 // Share selection state across route bundles and development reloads.
 const selectionState = globalThis.__ninerouterAccountSelection ||= {
@@ -65,10 +66,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
     const sessionKey = options.sessionKey;
-    let binding = await getSessionBinding(sessionKey);
-    if (binding && binding.provider !== providerId) {
+    const sessionBinding = await getSessionBinding(sessionKey);
+    if (sessionBinding && sessionBinding.provider !== providerId) {
       return { sessionUnavailable: true, lastErrorCode: 409, lastError: "当前会话已绑定其他提供商，不能切换。" };
     }
+    const apiKeyKey = codexPolicy?.apiKeyAffinity ? options.apiKeyRoutingKey : null;
+    let binding = apiKeyKey ? await getApiKeyBinding(apiKeyKey) : sessionBinding;
+    const bindingSubject = apiKeyKey ? "当前 API Key" : "当前会话";
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
@@ -105,7 +109,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // A deleted or replaced connection cannot serve the old sticky session.
     const boundConnection = binding ? await getProviderConnectionById(binding.connectionId) : null;
     if (binding && !boundConnection) {
-      await clearSessionBinding(sessionKey);
+      if (!apiKeyKey) await clearSessionBinding(sessionKey);
       log.info("AUTH", `${provider} | cleared stale session binding ${binding.connectionId?.slice(0, 8) || "unknown"}`);
       binding = null;
     }
@@ -114,7 +118,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (binding && !boundConnection.isActive) binding = null;
 
     if (connections.length === 0) {
-      if (binding) return { sessionUnavailable: true, lastErrorCode: 503, lastError: "当前会话绑定的账号已停用或删除。" };
+      if (binding) return { sessionUnavailable: true, lastErrorCode: 503, lastError: `${bindingSubject}绑定的账号已停用或删除。` };
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
     }
@@ -129,7 +133,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // existing binding. Busy or cooling accounts keep their sessions.
     if (binding && (
       excludeSet.has(binding.connectionId)
-      || (codexPolicy?.quotaFailover && quotaStates.get(binding.connectionId)?.exhausted)
+      || ((apiKeyKey || codexPolicy?.quotaFailover) && quotaStates.get(binding.connectionId)?.exhausted)
     )) binding = null;
 
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
@@ -161,15 +165,23 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     // Balance current work before comparing overload history or quota. An idle
     // recovered account is preferable to piling more work onto a busy account.
+    // Allocate lazily on the first request. Give each key its own available
+    // account before sharing, then balance the number of bound keys.
+    const keyCounts = apiKeyKey && !binding ? await getApiKeyBindingCounts(providerId) : null;
+    const fewestKeys = keyCounts && availableConnections.length
+      ? Math.min(...availableConnections.map(connection => keyCounts.get(connection.id) || 0)) : 0;
+    const allocationConnections = keyCounts
+      ? availableConnections.filter(connection => (keyCounts.get(connection.id) || 0) === fewestKeys)
+      : availableConnections;
     const overloadWarnings = await getAccountOverloadWarnings();
-    const leastLoaded = preferLeastLoadedAccounts(availableConnections, getConcurrencySnapshot(), selectionReservations);
+    const leastLoaded = preferLeastLoadedAccounts(allocationConnections, getConcurrencySnapshot(), selectionReservations);
     const withoutOverloads = leastLoaded.filter(connection => !overloadWarnings[connection.id]);
     const capacityConnections = withoutOverloads.length ? withoutOverloads : leastLoaded;
     if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
       const bound = connections.find((item) => item.id === binding.connectionId);
       const quota = quotaStates.get(binding.connectionId);
-      if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: "当前会话绑定的账号额度已用尽。", retryAfter: quota.retryAt };
-      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || "当前会话绑定的账号暂不可用。", retryAfter: coolingAccounts.get(binding.connectionId) || getModelLockUntil(bound, modelFor(bound)) };
+      if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: `${bindingSubject}绑定的账号额度已用尽。`, retryAfter: quota.retryAt };
+      return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || `${bindingSubject}绑定的账号暂不可用。`, retryAfter: coolingAccounts.get(binding.connectionId) || getModelLockUntil(bound, modelFor(bound)) };
     }
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length} | capacity-ready: ${capacityConnections.length}`);
@@ -228,7 +240,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     // Pin to preferred connection if specified and available
     if (!connection && preferredConnectionId) {
-      connection = availableConnections.find((c) => c.id === preferredConnectionId);
+      connection = allocationConnections.find((c) => c.id === preferredConnectionId);
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
@@ -292,9 +304,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
-    if (sessionKey && !binding) await bindSession(sessionKey, providerId, connection.id);
+    if (apiKeyKey && !binding) await bindApiKey(apiKeyKey, providerId, connection.id, options.apiKeyRecordId);
+    if (sessionKey && (apiKeyKey ? sessionBinding?.connectionId !== connection.id : !binding)) {
+      await bindSession(sessionKey, providerId, connection.id);
+    }
     let releaseSelection;
-    if (sessionKey || options.fillFirst) {
+    if (apiKeyKey || sessionKey || options.fillFirst) {
       selectionReservations.set(connection.id, (selectionReservations.get(connection.id) || 0) + 1);
       let released = false;
       releaseSelection = () => {
