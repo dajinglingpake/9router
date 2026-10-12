@@ -504,9 +504,13 @@ export default function ProviderLimits() {
           if (USAGE_SUPPORTED_PROVIDERS.includes(provider)) {
             await fetchQuota(connectionId, provider);
           }
+        } else {
+          const data = await res.json();
+          throw new Error(data.error || "保存账号失败，请重试。");
         }
       } catch (error) {
         console.error("Error saving connection:", error);
+        throw error;
       }
     },
     [selectedConnection, fetchConnections, fetchQuota],

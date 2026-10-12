@@ -10,6 +10,8 @@ import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 const SAFE_FIELDS = [
   "id", "provider", "authType", "name", "email", "displayName",
   "priority", "globalPriority", "isActive", "defaultModel",
+  "maxConcurrency", "minRequestIntervalMs", "maxRequestIntervalMs",
+  "accountCooldownMinMs", "accountCooldownMaxMs",
   "testStatus", "lastError", "lastErrorAt", "errorCode",
   "expiresAt", "accountExpiresAt", "lastUsedAt", "consecutiveUseCount",
   "createdAt", "updatedAt",

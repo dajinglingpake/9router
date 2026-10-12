@@ -156,6 +156,29 @@ describe("exclusive account isolation", () => {
     expect(refreshed.connections[0].exclusiveApiKeyNames[0]).toBe("owner（已停用）");
     expect(refreshed.connections[0].exclusiveApiKeyNames[1]).toContain("已删除 Key");
   });
+  it.each([
+    { isActive: true, maxConcurrency: 3, minRequestIntervalMs: 1000, maxRequestIntervalMs: 3000, accountCooldownMinMs: 5000, accountCooldownMaxMs: 15000 },
+    { isActive: false, maxConcurrency: 0, minRequestIntervalMs: 0, maxRequestIntervalMs: 0, accountCooldownMinMs: 15000, accountCooldownMaxMs: 30000 },
+  ])("preserves saved quota edit settings and bindings when active=$isActive", async settings => {
+    const accountExpiresAt = "2027-01-01T00:00:00.000Z";
+    expect((await update(privateA.id, { ...settings, accountExpiresAt })).status).toBe(200);
+    const { GET } = await import("@/app/api/providers/client/route.js");
+    const getAccount = async () => {
+      const response = await GET(new Request("http://localhost/api/providers/client?provider=codex"));
+      expect(response.status).toBe(200);
+      return (await response.json()).connections.find(c => c.id === privateA.id);
+    };
+    const saved = await getAccount();
+    const expected = { ...settings, accountExpiresAt, exclusiveApiKeyIds: [owner.id] };
+    expect(saved).toMatchObject(expected);
+    for (const field of ["apiKey", "accessToken", "refreshToken", "idToken"]) expect(saved[field]).toBeUndefined();
+
+    // A name-only edit must not reset the settings shown in the quota form.
+    const edits = Object.fromEntries(Object.keys(expected).map(field => [field, saved[field]]));
+    expect((await update(privateA.id, { ...edits, name: "renamed from quota" })).status).toBe(200);
+    expect(await db.getProviderConnectionById(privateA.id)).toMatchObject({ ...expected, name: "renamed from quota" });
+    expect(await getAccount()).toMatchObject({ ...expected, name: "renamed from quota" });
+  });
   it("rejects assigning one key to multiple accounts in the same provider", async () => {
     expect((await update(shared.id, { exclusiveApiKeyIds: [owner.id] })).status).toBe(409);
     await expect(db.createProviderConnection({ provider: "codex", authType: "oauth", name: "duplicate", exclusiveApiKeyIds: [owner.id] })).rejects.toMatchObject({ code: "EXCLUSIVE_API_KEY_CONFLICT" });
