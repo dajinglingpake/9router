@@ -1088,6 +1088,7 @@ export default function ProviderDetailPage() {
                   setShowEditModal(true);
                 }}
                 onDelete={() => handleDelete(conn.id)}
+                onRelogin={fetchConnections}
                 oneByOneStatus={oneByOneResults[conn.id] || null}
               />
             </div>

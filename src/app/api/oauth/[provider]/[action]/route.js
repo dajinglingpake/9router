@@ -8,6 +8,7 @@ import {
   pollForToken
 } from "@/lib/oauth/providers";
 import { createProviderConnection } from "@/models";
+import { getCodexReloginTarget, reloginCodexConnection } from "@/lib/oauth/reloginCodex.js";
 import { readDesktopPassToken } from "open-sse/shared/mimoAccount.js";
 import {
   startCodexProxy,
@@ -167,6 +168,11 @@ export async function GET(request, { params }) {
       const state = searchParams.get("state");
       const codeVerifier = searchParams.get("code_verifier");
       const redirectUri = searchParams.get("redirect_uri");
+      const reloginConnectionId = searchParams.get("connection_id");
+      if (reloginConnectionId !== null) {
+        if (provider !== "codex") return NextResponse.json({ error: "当前仅支持 Codex 重新登录。" }, { status: 400 });
+        await getCodexReloginTarget(reloginConnectionId);
+      }
       const result = provider === "xai"
         ? await startXaiProxy(Number(appPort))
         : await startCodexProxy(Number(appPort));
@@ -174,7 +180,7 @@ export async function GET(request, { params }) {
       if (result.success && state && codeVerifier && redirectUri) {
         serverSide = provider === "xai"
           ? registerXaiSession({ state, codeVerifier, redirectUri })
-          : registerCodexSession({ state, codeVerifier, redirectUri });
+          : registerCodexSession({ state, codeVerifier, redirectUri, reloginConnectionId });
       }
       return NextResponse.json({ ...result, serverSide });
     }
@@ -287,7 +293,7 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth GET error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: error.status || 500 });
   }
 }
 
@@ -301,6 +307,12 @@ export async function POST(request, { params }) {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid or empty request body" }, { status: 400 });
+    }
+    if (body.connectionId !== undefined) {
+      if (provider !== "codex" || action !== "exchange") {
+        return NextResponse.json({ error: "当前仅支持 Codex 重新登录。" }, { status: 400 });
+      }
+      await getCodexReloginTarget(body.connectionId);
     }
 
     if (action === "register-session") {
@@ -436,14 +448,20 @@ export async function POST(request, { params }) {
         if (accountId) providerSpecificData.chatgptAccountId = accountId;
         if (planType) providerSpecificData.chatgptPlanType = planType;
 
-        const connection = await createProviderConnection({
+        const connectionData = {
           provider,
           authType: "access_token",
           accessToken: code,
           email: email || null,
           providerSpecificData,
           testStatus: "active",
-        });
+        };
+        const connection = body.connectionId !== undefined
+          ? await reloginCodexConnection(body.connectionId, {
+              ...connectionData,
+              expiresAt: directPayload.exp ? new Date(directPayload.exp * 1000).toISOString() : null,
+            })
+          : await createProviderConnection(connectionData);
 
         return NextResponse.json({
           success: true,
@@ -471,7 +489,7 @@ export async function POST(request, { params }) {
       });
 
       // Save to database
-      const connection = await createProviderConnection({
+      const connectionData = {
         provider,
         authType: "oauth",
         ...tokenData,
@@ -479,7 +497,10 @@ export async function POST(request, { params }) {
           ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString() 
           : null,
         testStatus: "active",
-      });
+      };
+      const connection = body.connectionId !== undefined
+        ? await reloginCodexConnection(body.connectionId, connectionData)
+        : await createProviderConnection(connectionData);
 
       return NextResponse.json({ 
         success: true, 
@@ -571,6 +592,6 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth POST error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: error.status || 500 });
   }
 }

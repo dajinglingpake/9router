@@ -5,6 +5,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import AccountExpiry from "@/shared/components/AccountExpiry";
 import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
+import CodexReloginButton from "@/shared/components/CodexReloginButton";
 import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
@@ -1263,6 +1264,8 @@ export default function ProviderLimits() {
                         </button>
                       </Tooltip>
                     )}
+                    <CodexReloginButton connection={conn} iconOnly disabled={rowBusy}
+                      onSuccess={async () => { await fetchConnections(); await refreshProvider(conn.id, conn.provider); }} />
                     <Tooltip text="Refresh quota">
                       <button
                         type="button"

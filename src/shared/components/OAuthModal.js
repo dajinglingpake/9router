@@ -35,7 +35,8 @@ const PASTE_TOKEN_PROVIDERS = {
  * - Localhost: Auto callback via popup message
  * - Remote: Manual paste callback URL
  */
-export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, onClose, oauthMeta, idcConfig }) {
+export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, onClose, oauthMeta, idcConfig, reloginConnection }) {
+  const reloginConnectionId = provider === "codex" ? reloginConnection?.id : undefined;
   const [step, setStep] = useState("waiting"); // waiting | input | success | error
   const [authData, setAuthData] = useState(null);
   const [callbackUrl, setCallbackUrl] = useState("");
@@ -90,6 +91,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          connectionId: reloginConnectionId,
           code,
           redirectUri: authData.redirectUri,
           codeVerifier: authData.codeVerifier,
@@ -110,7 +112,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(err.message);
       setStep("error");
     }
-  }, [authData, provider, oauthMeta]);
+  }, [authData, provider, oauthMeta, reloginConnectionId]);
 
   const completeXaiManualCode = useCallback(async (code) => {
     if (!authData?.state) return;
@@ -389,6 +391,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           proxyUrl.searchParams.set("state", data.state);
           proxyUrl.searchParams.set("code_verifier", data.codeVerifier);
           proxyUrl.searchParams.set("redirect_uri", redirectUri);
+          if (reloginConnectionId) proxyUrl.searchParams.set("connection_id", reloginConnectionId);
           const proxyRes = await fetch(proxyUrl.toString());
           const proxyData = await proxyRes.json();
           codexProxyActive = proxyData.success;
@@ -753,7 +756,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const isXaiProvider = provider === "xai";
   const isKimchiProvider = provider === "kimchi";
   const deviceLoginUrl = deviceData?.verification_uri_complete || deviceData?.verification_uri || "";
-  const modalTitle = isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
+  const modalTitle = reloginConnectionId ? "重新登录 OpenAI Codex"
+    : isXaiProvider ? "Connect Grok Build OAuth" : `Connect ${providerInfo.name}`;
   const manualPlaceholder = isXaiProvider
     ? "http://127.0.0.1:56121/callback?code=... or copied code"
     : isKimchiProvider
@@ -763,6 +767,10 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   return (
     <Modal isOpen={isOpen} title={modalTitle} onClose={handleClose} size="lg">
       <div className="flex flex-col gap-4">
+        {reloginConnectionId && <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+          <p className="break-all">请使用原账号 {reloginConnection.email || reloginConnection.name || ""} 登录。</p>
+          <p className="mt-1 text-xs text-text-muted">只更新此账号的登录凭证，保留专用 API Key 绑定及其他配置。禁用账号登录后仍保持禁用。</p>
+        </div>}
         {/* Proxy OAuth (trae/windsurf/zed): browser flow; paste-token only when configured */}
         {PROXY_OAUTH_PROVIDERS.has(provider) && (step === "waiting" || step === "input" || step === "error") && (
           <>
@@ -1002,6 +1010,7 @@ OAuthModal.propTypes = {
   providerInfo: PropTypes.shape({ name: PropTypes.string }),
   onSuccess: PropTypes.func,
   onClose: PropTypes.func.isRequired,
+  reloginConnection: PropTypes.shape({ id: PropTypes.string.isRequired, name: PropTypes.string, email: PropTypes.string }),
   /** Extra metadata passed to /authorize and /exchange (e.g. gitlab clientId/baseUrl) */
   oauthMeta: PropTypes.object,
   /** Optional Kiro IDC config for AWS IAM Identity Center device flow */

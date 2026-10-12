@@ -42,6 +42,12 @@
 聊天排队结束后再次检查账号归属。停用或删除 Key 不会自动公开专用账号，
 需要手动清空绑定以恢复共享，或重新绑定。提供商账号列表及「配额跟踪」显示全部绑定人名称，
 Key 停用或删除后显示对应状态。设置变更不取消已经发送到上游的请求。
+Codex 账号可在提供商账号列表或「配额跟踪」点击「重新登录」，复用现有授权弹窗，
+支持自动回调、手动粘贴回调地址及网站 Token。凭证保存逻辑独立位于
+`src/lib/oauth/reloginCodex.js`，更新指定账号，不创建替代账号。
+保存前核对原账号邮箱和 ChatGPT 账号/工作空间 ID；误登其他账号、授权失败或账号已删除时不覆盖原凭证。
+重新登录保留账号名称、专用 Key 绑定、并发、代理、间隔、冷却配置和启用状态，
+清除旧凭证相关的错误及模型锁。禁用账号仍保持禁用，需手动开启后才能接收请求。
 绑定账号被手动停用或删除时，在下一次请求中选择可用账号重新绑定；
 替代账号仍须通过冷却、额度和模型启用筛选。排队期间停用也会在访问上游前重新分配。
 手动选择「额度优先」时，新会话先选空闲账号中剩余额度最高的；
@@ -69,10 +75,10 @@ Key 停用或删除后显示对应状态。设置变更不取消已经发送到�
 同步到本地调度调用点，不复制 Codex 执行器或翻译器。模型启用列表筛选同时检查
 账号专属模型与 `[1m]` 上下文标记。
 
-仓库只维护上游已有测试。本地策略通过隔离实例和临时验证脚本检查，
-不在测试目录维护额外用例。验证上游 Codex 请求格式和流式完成行为可运行：
+本地策略与凭证更新通过隔离数据库测试及隔离实例验证，不使用实际账号执行测试登录。
+关键绑定、重新登录及上游 Codex 请求格式和流式完成行为可运行：
 
 ```bash
 cd tests
-./node_modules/.bin/vitest run unit/codex-gpt6-lite.test.js unit/openai-responses-completion-watchdog.test.js unit/v1-models-combo-context.test.js --maxWorkers=4
+./node_modules/.bin/vitest run unit/account-api-key-bindings.test.js unit/codex-relogin.test.js unit/codex-gpt6-lite.test.js unit/openai-responses-completion-watchdog.test.js unit/v1-models-combo-context.test.js --maxWorkers=4
 ```
