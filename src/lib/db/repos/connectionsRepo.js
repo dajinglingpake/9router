@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { recordAccountOverloadWarning } from "./accountOverloadWarningsRepo.js";
+import { assertExclusiveApiKeyBindings } from "@/lib/accountApiKeyBindings.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -9,7 +10,7 @@ const OPTIONAL_FIELDS = [
   "scope", "projectId", "apiKey", "testStatus",
   "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn", "errorCode",
   "consecutiveUseCount", "idToken", "lastRefreshAt", "minRequestIntervalMs", "maxRequestIntervalMs",
-  "accountCooldownMinMs", "accountCooldownMaxMs",
+  "accountCooldownMinMs", "accountCooldownMaxMs", "exclusiveApiKeyId", "exclusiveApiKeyIds",
 ];
 
 const MODEL_LOCK_PREFIX = "modelLock_";
@@ -228,6 +229,7 @@ export async function createProviderConnection(data) {
       }
       const normalized = resetHealthStateOnActivation(existing, data);
       const merged = { ...existing, ...normalized, updatedAt: now };
+      if (data.exclusiveApiKeyIds !== undefined || data.exclusiveApiKeyId !== undefined) assertExclusiveApiKeyBindings(db, merged);
       upsert(db, merged);
       result = merged;
       return;
@@ -264,6 +266,7 @@ export async function createProviderConnection(data) {
     }
     if (data.email !== undefined) conn.email = data.email;
 
+    assertExclusiveApiKeyBindings(db, conn);
     upsert(db, conn);
     // No reorderInTx here. `conn.priority` is already MAX(priority)+1, so the
     // row sorts last and the resulting order is what reorderInTx would have
@@ -296,6 +299,7 @@ export async function updateProviderConnection(id, data, { resetHealthState = tr
     }
     const normalized = resetHealthStateOnActivation(existing, patch, resetHealthState);
     const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+    if (data.exclusiveApiKeyIds !== undefined || data.exclusiveApiKeyId !== undefined) assertExclusiveApiKeyBindings(db, merged);
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;

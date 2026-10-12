@@ -12,6 +12,8 @@ import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/provid
 import { getAccountExpiry } from "@/lib/accountExpiry";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
+import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +56,7 @@ export async function GET() {
   try {
     const connections = await getProviderConnections();
     const overloadWarnings = await getAccountOverloadWarnings();
+    const keyNames = await getExclusiveApiKeyNames(connections);
 
     // Build nodeNameMap for compatible providers (id → name)
     let nodeNameMap = {};
@@ -73,6 +76,8 @@ export async function GET() {
       return {
         ...toProviderConnectionResponse(c),
         name,
+        exclusiveApiKeyIds: getExclusiveApiKeyIds(c),
+        exclusiveApiKeyNames: keyNames.get(c.id),
         accountExpiry: getAccountExpiry(c),
         overloadWarning: overloadWarnings[c.id] || null,
       };

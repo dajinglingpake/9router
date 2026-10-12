@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import AccountExpiry from "@/shared/components/AccountExpiry";
+import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
 import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
@@ -1157,6 +1158,7 @@ export default function ProviderLimits() {
                         </p>
                       ) : null}
                       <AccountExpiry connection={conn} />
+                      <AccountApiKeyBindings connection={conn} showShared />
                       <AccountOverloadWarning connection={conn} onUpdated={(overloadWarning) => setConnections(prev => prev.map(c =>
                         c.id === conn.id ? { ...c, overloadWarning } : c
                       ))} />

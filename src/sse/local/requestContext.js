@@ -11,6 +11,7 @@ import { resolveProviderId } from "@/shared/constants/providers.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { getConcurrencySnapshot } from "../services/concurrencyLimiter.js";
 import { extractClientIp } from "../utils/clientIp.js";
+import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
 import * as log from "../utils/logger.js";
 
 const requestIds = new WeakMap();
@@ -108,9 +109,11 @@ export async function resolveRequestProviderScope(request) {
   }
 }
 
-export async function getProviderCapacityState(provider) {
+export async function getProviderCapacityState(provider, request = null) {
   const providerId = resolveProviderId(provider);
-  const connections = await getProviderConnections({ provider: providerId, isActive: true });
+  const connections = (await filterAccountPoolForRequest(
+    await getProviderConnections({ provider: providerId }), request
+  )).filter(c => c.isActive !== false);
   const connectionIds = new Set(connections.map((connection) => connection.id));
   const accountLimits = connections.map((connection) => Number(connection.maxConcurrency) || 0);
   const totalLimit = accountLimits.reduce((sum, limit) => sum + limit, 0);

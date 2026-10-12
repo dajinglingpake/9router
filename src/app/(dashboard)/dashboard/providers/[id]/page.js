@@ -882,9 +882,13 @@ export default function ProviderDetailPage() {
       if (res.ok) {
         await fetchConnections();
         setShowEditModal(false);
+      } else {
+        const data = await res.json();
+        throw new Error(data.error || "保存账号失败，请重试。");
       }
     } catch (error) {
       console.log("Error updating connection:", error);
+      throw error;
     }
   };
 

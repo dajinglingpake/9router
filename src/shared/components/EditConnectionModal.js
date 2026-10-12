@@ -8,6 +8,8 @@ import Button from "@/shared/components/Button";
 import Badge from "@/shared/components/Badge";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import Select from "@/shared/components/Select";
+import AccountApiKeyBindingSelect from "./AccountApiKeyBindingSelect";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 function localDateInput(value) {
   if (!value) return "";
@@ -27,6 +29,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
     accountCooldownMaxSeconds: 30,
     apiKey: "",
     accountExpiresAt: "",
+    exclusiveApiKeyIds: [],
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -43,6 +46,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     if (connection) {
@@ -56,6 +60,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         accountCooldownMaxSeconds: (Number(connection.accountCooldownMaxMs) || 30000) / 1000,
         apiKey: "",
         accountExpiresAt: localDateInput(connection.accountExpiresAt),
+        exclusiveApiKeyIds: getExclusiveApiKeyIds(connection),
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
@@ -87,6 +92,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       }
       setTestResult(null);
       setValidationResult(null);
+      setSaveError("");
     }
   }, [connection, isOpen]);
 
@@ -158,6 +164,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const handleSubmit = async () => {
     if (!connection) return;
     setSaving(true);
+    setSaveError("");
     try {
       const updates = {
         name: formData.name,
@@ -168,6 +175,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         accountCooldownMinMs: Math.round(Math.max(1, Math.min(3600, Number(formData.accountCooldownMinSeconds) || 30)) * 1000),
         accountCooldownMaxMs: Math.round(Math.max(1, Math.min(3600, Number(formData.accountCooldownMaxSeconds) || 30)) * 1000),
         accountExpiresAt: formData.accountExpiresAt ? new Date(formData.accountExpiresAt).toISOString() : null,
+        exclusiveApiKeyIds: formData.exclusiveApiKeyIds,
       };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
@@ -225,6 +233,8 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
       }
       
       await onSave(updates);
+    } catch (error) {
+      setSaveError(error.message || "保存失败，请重试。");
     } finally {
       setSaving(false);
     }
@@ -241,6 +251,11 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder={isOAuth ? "Account name" : "Production Key"}
         />
+        {isOpen && <AccountApiKeyBindingSelect
+          value={formData.exclusiveApiKeyIds}
+          onChange={exclusiveApiKeyIds => setFormData({ ...formData, exclusiveApiKeyIds })}
+          disabled={saving}
+        />}
         <Input label="账号到期时间" type="datetime-local" value={formData.accountExpiresAt}
           onChange={e => setFormData({ ...formData, accountExpiresAt: e.target.value })}
           hint="可手动填写；留空使用上游订阅记录。不会修改登录凭证的有效期。" />
@@ -437,6 +452,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           </div>
         )}
 
+        {saveError && <p role="alert" className="text-sm text-red-500">{saveError}</p>}
         <div className="flex gap-2">
           <Button onClick={handleSubmit} fullWidth disabled={saving}>{saving ? "Saving..." : "Save"}</Button>
           <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>

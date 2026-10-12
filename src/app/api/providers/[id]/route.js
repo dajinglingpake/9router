@@ -9,6 +9,8 @@ import {
   deleteProviderConnection,
 } from "@/models";
 import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
+import { getApiKeyById } from "@/lib/db/repos/apiKeysRepo.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -123,6 +125,21 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (body.exclusiveApiKeyIds !== undefined) {
+      const value = body.exclusiveApiKeyIds;
+      if (!Array.isArray(value) || value.some(id => typeof id !== "string" || !id.trim())) {
+        return NextResponse.json({ error: "专用 API Key 必须是有效 ID 的数组" }, { status: 400 });
+      }
+      const ids = [...new Set(value.map(id => id.trim()))];
+      const existingIds = getExclusiveApiKeyIds(existing);
+      for (const keyId of ids.filter(id => !existingIds.includes(id))) {
+        const key = await getApiKeyById(keyId);
+        if (!key?.isActive) {
+          return NextResponse.json({ error: "请选择存在且已启用的 API Key" }, { status: 400 });
+        }
+      }
+      updateData.exclusiveApiKeyIds = ids;
+    }
     if (body.accountExpiresAt !== undefined) {
       if (body.accountExpiresAt !== null && (typeof body.accountExpiresAt !== "string" || !Number.isFinite(new Date(body.accountExpiresAt).getTime()))) {
         return NextResponse.json({ error: "账号到期时间无效" }, { status: 400 });
@@ -224,6 +241,9 @@ export async function PUT(request, { params }) {
 
     return NextResponse.json({ connection: result });
   } catch (error) {
+    if (error.code === "EXCLUSIVE_API_KEY_CONFLICT") {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.log("Error updating connection:", error);
     return NextResponse.json({ error: "Failed to update connection" }, { status: 500 });
   }

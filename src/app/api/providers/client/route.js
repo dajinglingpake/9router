@@ -4,6 +4,8 @@ import { backfillCodexEmails } from "@/lib/oauth/providers";
 import { getAccountExpiry } from "@/lib/accountExpiry";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 const SAFE_FIELDS = [
   "id", "provider", "authType", "name", "email", "displayName",
@@ -107,8 +109,12 @@ export async function GET(request) {
     const currentPage = Math.min(page, totalPages);
     const offset = (currentPage - 1) * pageSize;
     const warnings = await getAccountOverloadWarnings();
-    const pageConnections = sortedConnections.slice(offset, offset + pageSize).map(connection => ({
+    const visibleConnections = sortedConnections.slice(offset, offset + pageSize);
+    const keyNames = await getExclusiveApiKeyNames(visibleConnections);
+    const pageConnections = visibleConnections.map(connection => ({
       ...sanitize(connection), overloadWarning: warnings[connection.id] || null,
+      exclusiveApiKeyIds: getExclusiveApiKeyIds(connection),
+      exclusiveApiKeyNames: keyNames.get(connection.id),
     }));
 
     return NextResponse.json({

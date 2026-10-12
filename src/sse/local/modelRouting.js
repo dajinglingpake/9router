@@ -1,4 +1,4 @@
-import { getProviderConnectionById, getSettings } from "@/lib/localDb";
+import { getProviderConnectionById, getProviderConnections, getSettings } from "@/lib/localDb";
 import { trackModelRequest } from "@/lib/runtimeModelStats.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
@@ -27,6 +27,7 @@ import { handleLocalCombo } from "./comboRouting.js";
 import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from "../services/keyAccess.js";
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
+import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
 
 /**
  * Handle single model chat request
@@ -78,6 +79,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     ? " 当前 API Key 保持账号绑定；账号停用、删除或额度耗尽时自动迁移，繁忙或过载时请稍后重试。"
     : sessionKey ? ` ${quotaFailover ? "当前会话保持账号绑定；额度耗尽时按配置自动迁移，过载时请稍后重试。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
+    request,
     sessionKey, apiKeyRoutingKey, apiKeyRecordId: clientRawRequest?.apiKeyRecordId, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
     allowQuotaModelSwitch: !fallbackModels || fallbackModels.length > 0,
@@ -138,7 +140,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     // all occupied do we throttle the caller by API Key before it can queue for
     // an account.
     if (apiKeyRecordId && apiKeyLimit > 0) {
-      const providerCapacity = await getProviderCapacityState(provider);
+      const providerCapacity = await getProviderCapacityState(provider, request);
       if (providerCapacity.full) {
         try {
           apiKeyPermit = await acquireConcurrencySlot({
@@ -197,6 +199,13 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     if (!liveConnection || !liveConnection.isActive) {
       excludedAccounts.add(credentials.connectionId);
       return retry();
+    }
+    if (credentials.connectionId !== "noauth") {
+      const accessible = await filterAccountPoolForRequest(await getProviderConnections({ provider }), request);
+      if (!accessible.some(c => c.id === credentials.connectionId)) {
+        excludedAccounts.add(credentials.connectionId);
+        return retry();
+      }
     }
     const liveQuota = codexPolicy && liveConnection ? getAccountQuotaState(liveConnection, model, null, codexPolicy) : null;
     if (liveQuota?.exhausted) {

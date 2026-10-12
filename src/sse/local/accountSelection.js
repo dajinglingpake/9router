@@ -13,6 +13,7 @@ import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } fro
 import { isCodexPoolQuotaLow } from "./quotaModelSwitch.js";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo.js";
 import { getApiKeyBinding, bindApiKey, getApiKeyBindingCounts } from "./apiKeyRouting.js";
+import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
 
 // Share selection state across route bundles and development reloads.
 const selectionState = globalThis.__ninerouterAccountSelection ||= {
@@ -45,7 +46,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const providerId = resolveProviderId(provider);
   const routingSettings = providerId === "codex" ? await getSettings() : null;
   const codexPolicy = routingSettings ? getCodexRoutingPolicy(routingSettings) : null;
-  const quotaConnections = codexPolicy ? await getProviderConnections({ provider: providerId, isActive: true }) : [];
+  const quotaConnections = codexPolicy
+    ? (await filterAccountPoolForRequest(await getProviderConnections({ provider: providerId }), options.request)).filter(c => c.isActive !== false)
+    : [];
   const routingQuotas = codexPolicy
     ? await loadRoutingQuotas(quotaConnections, codexPolicy)
     : new Map();
@@ -103,7 +106,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    const connections = (await filterAccountPoolForRequest(
+      await getProviderConnections({ provider: providerId }), options.request
+    )).filter(c => c.isActive !== false);
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     // A deleted or replaced connection cannot serve the old sticky session.
@@ -115,7 +120,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     // A manually disabled account cannot serve its sessions. Persist the new
     // binding only after a replacement passes the usual availability filters.
-    if (binding && !boundConnection.isActive) binding = null;
+    if (binding && (!boundConnection.isActive || !connections.some(c => c.id === binding.connectionId))) {
+      if (!apiKeyKey) await clearSessionBinding(sessionKey);
+      binding = null;
+    }
 
     if (connections.length === 0) {
       if (binding) return { sessionUnavailable: true, lastErrorCode: 503, lastError: `${bindingSubject}绑定的账号已停用或删除。` };

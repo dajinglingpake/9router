@@ -10,6 +10,8 @@ import {
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { filterAccountPoolForRequest } from "@/sse/services/accountApiKeyAccess.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels, routableQoderModels } from "open-sse/services/qoderModels.js";
@@ -327,8 +329,15 @@ export async function buildModelsList(kindFilter, options = {}) {
   let connections = [];
   try {
     connections = await getProviderConnections();
+    if (connections.some(c => getExclusiveApiKeyIds(c).length)) {
+      const providers = [...new Set(connections.map(c => c.provider))];
+      connections = (await Promise.all(providers.map(provider =>
+        filterAccountPoolForRequest(connections.filter(c => c.provider === provider), options.request)
+      ))).flat();
+    }
     connections = connections.filter(c => c.isActive !== false);
   } catch (e) {
+    connections = [];
     console.log("Could not fetch providers, returning all models");
   }
 
@@ -664,7 +673,7 @@ export async function GET(request) {
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
     const data = await filterModelsListForKey(
       await getKeyAccessContext(request),
-      await buildModelsList([LLM_KIND], { skipDynamicFetch })
+      await buildModelsList([LLM_KIND], { skipDynamicFetch, request })
     );
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
