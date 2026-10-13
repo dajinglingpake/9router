@@ -1133,10 +1133,10 @@ export default function ProviderLimits() {
             <Card
               key={conn.id}
               padding="none"
-              className={`min-w-0 ${isInactive ? "opacity-60" : ""}`}
+              className="min-w-0"
             >
               <div className="px-3 py-2 border-b border-black/10 dark:border-white/10">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className={`flex flex-wrap items-center justify-between gap-2 ${isInactive ? "opacity-60" : ""}`}>
                   <div className="flex flex-1 basis-48 items-center gap-2 min-w-0">
                     <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
                       <ProviderIcon
@@ -1342,7 +1342,7 @@ export default function ProviderLimits() {
                   ))} />
               </div>
 
-              <div className="px-2 py-1.5">
+              <div className={`px-2 py-1.5 ${isInactive ? "opacity-60" : ""}`}>
                 {isLoading ? (
                   <div className="text-center py-5 text-text-muted">
                     <span className="material-symbols-outlined text-[28px] animate-spin">

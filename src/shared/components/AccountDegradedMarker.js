@@ -7,11 +7,6 @@ import Button from "./Button";
 import Input from "./Input";
 import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
 
-const styles = {
-  normal: "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
-  slow: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300",
-  degraded: "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300",
-};
 const icons = { normal: "verified", slow: "schedule", degraded: "flag" };
 
 export default function AccountDegradedMarker({ connection, disabled = false, onUpdated }) {
@@ -77,12 +72,12 @@ export default function AccountDegradedMarker({ connection, disabled = false, on
           aria-expanded={editing}
           aria-busy={saving}
           title={qualityLabel || "填写账号标记"}
-          className={`inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${styles[status] || "border-border-subtle text-text-muted"}`}
+          className={`inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${status ? "border-brand-700 bg-brand-700 text-white shadow-sm hover:border-brand-800 hover:bg-brand-800 dark:border-brand-300 dark:hover:border-brand-200" : "border-border text-text-muted hover:bg-surface-2 hover:text-text-main"}`}
         >
           <span aria-hidden="true" className={`shrink-0 material-symbols-outlined text-[16px] ${saving ? "animate-spin" : ""}`}>
             {saving ? "progress_activity" : icons[status] || "label"}
           </span>
-          <span className="min-w-0 break-all text-left font-medium">{qualityLabel || "标记账号"}</span>
+          <span className="min-w-0 break-all text-left font-semibold">{qualityLabel || "标记账号"}</span>
           <span aria-hidden="true" className="shrink-0 material-symbols-outlined text-[16px]">edit</span>
         </button>
         {status && <p className="text-xs text-text-muted">
