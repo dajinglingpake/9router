@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getAccountQualityStatus, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
 
 vi.mock("@/lib/oauth/providers", () => ({ backfillCodexEmails: vi.fn() }));
 
@@ -57,7 +58,7 @@ async function reopen() {
 }
 
 function withoutMarkerAndUpdateTime(connection) {
-  const { isDegraded, degradedMarkedAt, updatedAt, ...rest } = connection;
+  const { isDegraded, degradedMarkedAt, qualityStatus, qualityMarkedAt, updatedAt, ...rest } = connection;
   return rest;
 }
 
@@ -139,14 +140,87 @@ describe("manual account degradation marker", () => {
 
   it("preserves a marker supplied on creation and leaves other accounts unmarked", async () => {
     const degradedMarkedAt = "2026-10-13T07:00:00.000Z";
-    const marked = await db.createProviderConnection({ provider: "codex", authType: "oauth", name: "Marked", isDegraded: true, degradedMarkedAt });
+    const marked = await db.createProviderConnection({ provider: "codex", authType: "oauth", name: "Marked", isDegraded: true, degradedMarkedAt, qualityStatus: "degraded", qualityMarkedAt: degradedMarkedAt });
     await reopen();
-    expect(await db.getProviderConnectionById(marked.id)).toMatchObject({ isDegraded: true, degradedMarkedAt });
+    expect(await db.getProviderConnectionById(marked.id)).toMatchObject({ isDegraded: true, degradedMarkedAt, qualityStatus: "degraded", qualityMarkedAt: degradedMarkedAt });
     expect((await db.getProviderConnectionById(account.id)).isDegraded).toBeUndefined();
   });
 
   it("returns 404 for an unknown account", async () => {
     expect((await update({ isDegraded: true }, "missing-account")).status).toBe(404);
     expect(await db.getProviderConnections()).toHaveLength(1);
+  });
+
+  it.each(["normal", "slow", "degraded"])("persists %s on disabled accounts and returns it on quota refresh", async qualityStatus => {
+    const response = await update({ qualityStatus, qualityMarkedAt: "2000-01-01T00:00:00.000Z" });
+    expect(response.status).toBe(200);
+    const returned = (await response.json()).connection;
+    expect(returned.qualityStatus).toBe(qualityStatus);
+    expect(returned.qualityMarkedAt).toEqual(expect.any(String));
+    expect(returned.qualityMarkedAt).not.toBe("2000-01-01T00:00:00.000Z");
+    await reopen();
+    const saved = await db.getProviderConnectionById(account.id);
+    expect(saved).toMatchObject({ qualityStatus, qualityMarkedAt: returned.qualityMarkedAt, isActive: false, isDegraded: qualityStatus === "degraded" });
+    expect(saved.degradedMarkedAt).toBe(qualityStatus === "degraded" ? returned.qualityMarkedAt : null);
+    expect(withoutMarkerAndUpdateTime(saved)).toEqual(withoutMarkerAndUpdateTime(account));
+    const { GET } = await import("@/app/api/providers/client/route.js");
+    const data = await (await GET(new Request("http://localhost/api/providers/client?accountStatus=inactive"))).json();
+    expect(data.connections[0]).toMatchObject({ qualityStatus, qualityMarkedAt: returned.qualityMarkedAt });
+    for (const secret of ["saved-access", "saved-refresh", "saved-id"]) expect(JSON.stringify(data)).not.toContain(secret);
+  });
+
+  it("timestamps state changes, preserves repeat selections and clears all marker fields", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let previousTime = null;
+    for (const [index, qualityStatus] of ["normal", "slow", "degraded", null, "normal"].entries()) {
+      const now = new Date(Date.UTC(2026, 9, 13, 7 + index)).toISOString();
+      vi.setSystemTime(new Date(now));
+      expect((await update({ qualityStatus })).status).toBe(200);
+      const saved = await db.getProviderConnectionById(account.id);
+      expect(saved.qualityMarkedAt).toBe(qualityStatus ? now : null);
+      expect(saved.qualityStatus).toBe(qualityStatus);
+      if (qualityStatus) {
+        expect(saved.qualityMarkedAt).not.toBe(previousTime);
+        previousTime = saved.qualityMarkedAt;
+        vi.setSystemTime(new Date(Date.parse(now) + 10000));
+        await update({ qualityStatus, name: "Renamed account" });
+        expect((await db.getProviderConnectionById(account.id)).qualityMarkedAt).toBe(now);
+      } else {
+        expect(saved).toMatchObject({ isDegraded: false, degradedMarkedAt: null });
+      }
+    }
+  });
+
+  it("keeps the original timestamp when an existing degradation marker is first selected in the new UI", async () => {
+    const degradedMarkedAt = "2026-10-13T07:00:00.000Z";
+    await db.updateProviderConnection(account.id, { isDegraded: true, degradedMarkedAt });
+    const legacy = await db.getProviderConnectionById(account.id);
+    expect(getAccountQualityStatus(legacy)).toBe("degraded");
+    expect(getAccountQualityMarkedAt(legacy)).toBe(degradedMarkedAt);
+    await update({ qualityStatus: "degraded" });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: "degraded", qualityMarkedAt: degradedMarkedAt });
+    await update({ isDegraded: false });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: null, qualityMarkedAt: null });
+  });
+
+  it("keeps unmarked accounts distinct from accounts explicitly marked normal", () => {
+    expect(getAccountQualityStatus({})).toBeNull();
+    expect(getAccountQualityStatus({ isDegraded: false })).toBeNull();
+    expect(getAccountQualityStatus({ qualityStatus: null, isDegraded: true })).toBeNull();
+    expect(getAccountQualityStatus({ qualityStatus: "normal" })).toBe("normal");
+  });
+
+  it.each(["unknown", "", true, false, 1, {}, [], "toString"])("rejects invalid quality status (%j) without applying other edits", async qualityStatus => {
+    expect((await update({ qualityStatus, name: "Should not be saved" })).status).toBe(400);
+    expect(await db.getProviderConnectionById(account.id)).toEqual(account);
+  });
+
+  it.each([
+    { qualityStatus: "normal", isDegraded: true },
+    { qualityStatus: "slow", isDegraded: true },
+    { qualityStatus: "degraded", isDegraded: false },
+  ])("rejects conflicting old and new marker fields: %j", async patch => {
+    expect((await update(patch)).status).toBe(400);
+    expect(await db.getProviderConnectionById(account.id)).toEqual(account);
   });
 });

@@ -11,6 +11,7 @@ import {
 import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
 import { getApiKeyById } from "@/lib/db/repos/apiKeysRepo.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { ACCOUNT_QUALITY_LABELS, getAccountQualityStatus, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -125,14 +126,26 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
-    if (body.isDegraded !== undefined) {
-      if (typeof body.isDegraded !== "boolean") {
-        return NextResponse.json({ error: "降智标记必须为布尔值" }, { status: 400 });
+    if (body.isDegraded !== undefined && typeof body.isDegraded !== "boolean") {
+      return NextResponse.json({ error: "降智标记必须为布尔值" }, { status: 400 });
+    }
+    if (body.qualityStatus !== undefined || body.isDegraded !== undefined) {
+      const status = body.qualityStatus !== undefined ? body.qualityStatus : body.isDegraded ? "degraded" : null;
+      if (status !== null && (typeof status !== "string" || !Object.hasOwn(ACCOUNT_QUALITY_LABELS, status))) {
+        return NextResponse.json({ error: "账号标记必须为未降智、响应慢、已降智或取消标记" }, { status: 400 });
       }
-      updateData.isDegraded = body.isDegraded;
-      updateData.degradedMarkedAt = body.isDegraded
-        ? (existing.isDegraded === true && existing.degradedMarkedAt) || new Date().toISOString()
+      if (body.isDegraded !== undefined && body.isDegraded !== (status === "degraded")) {
+        return NextResponse.json({ error: "账号标记与降智状态不一致" }, { status: 400 });
+      }
+      const markedAt = status
+        ? (status === getAccountQualityStatus(existing) && getAccountQualityMarkedAt(existing)) || new Date().toISOString()
         : null;
+      Object.assign(updateData, {
+        qualityStatus: status,
+        qualityMarkedAt: markedAt,
+        isDegraded: status === "degraded",
+        degradedMarkedAt: status === "degraded" ? markedAt : null,
+      });
     }
     if (body.exclusiveApiKeyIds !== undefined) {
       const value = body.exclusiveApiKeyIds;
