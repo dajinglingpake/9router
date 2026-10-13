@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getAccountQualityStatus, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
+import { ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
 
 vi.mock("@/lib/oauth/providers", () => ({ backfillCodexEmails: vi.fn() }));
 
@@ -58,7 +58,7 @@ async function reopen() {
 }
 
 function withoutMarkerAndUpdateTime(connection) {
-  const { isDegraded, degradedMarkedAt, qualityStatus, qualityMarkedAt, updatedAt, ...rest } = connection;
+  const { isDegraded, degradedMarkedAt, qualityStatus, qualityLabel, qualityMarkedAt, updatedAt, ...rest } = connection;
   return rest;
 }
 
@@ -208,6 +208,70 @@ describe("manual account degradation marker", () => {
     expect(getAccountQualityStatus({ isDegraded: false })).toBeNull();
     expect(getAccountQualityStatus({ qualityStatus: null, isDegraded: true })).toBeNull();
     expect(getAccountQualityStatus({ qualityStatus: "normal" })).toBe("normal");
+  });
+
+  it("persists a custom label on a disabled account and returns the text on quota refresh", async () => {
+    const qualityLabel = "中午未降智，下午突然降智";
+    const response = await update({ qualityStatus: "custom", qualityLabel: `  ${qualityLabel}  ` });
+    expect(response.status).toBe(200);
+    const returned = (await response.json()).connection;
+    await reopen();
+    const saved = await db.getProviderConnectionById(account.id);
+    expect(saved).toMatchObject({ qualityStatus: "custom", qualityLabel, qualityMarkedAt: returned.qualityMarkedAt, isActive: false, isDegraded: false });
+    expect(withoutMarkerAndUpdateTime(saved)).toEqual(withoutMarkerAndUpdateTime(account));
+    expect(getAccountQualityStatus(saved)).toBe("custom");
+    expect(getAccountQualityLabel(saved)).toBe(qualityLabel);
+    expect(getAccountQualityMarkedAt(saved)).toBe(returned.qualityMarkedAt);
+    const { GET } = await import("@/app/api/providers/client/route.js");
+    const data = await (await GET(new Request("http://localhost/api/providers/client?accountStatus=inactive"))).json();
+    expect(data.connections[0]).toMatchObject({ qualityStatus: "custom", qualityLabel, qualityMarkedAt: returned.qualityMarkedAt });
+    for (const secret of ["saved-access", "saved-refresh", "saved-id"]) expect(JSON.stringify(data)).not.toContain(secret);
+  });
+
+  it("records a new time when custom text changes, preserves identical text and clears text when choosing a preset or clearing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const first = "2026-10-13T04:00:00.000Z", next = "2026-10-13T07:00:00.000Z";
+    vi.setSystemTime(new Date(first));
+    await update({ qualityStatus: "custom", qualityLabel: "中午正常" });
+    vi.setSystemTime(new Date(next));
+    await update({ qualityStatus: "custom", qualityLabel: " 中午正常 " });
+    expect((await db.getProviderConnectionById(account.id)).qualityMarkedAt).toBe(first);
+    await update({ qualityStatus: "custom", qualityLabel: "下午突然降智" });
+    expect((await db.getProviderConnectionById(account.id)).qualityMarkedAt).toBe(next);
+    await update({ qualityStatus: "degraded" });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: "degraded", qualityLabel: null, isDegraded: true });
+    await update({ qualityStatus: "custom", qualityLabel: "待观察" });
+    await update({ isDegraded: false });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: null, qualityLabel: null, qualityMarkedAt: null });
+  });
+
+  it("keeps custom text through unrelated edits and preserves labels supplied on creation", async () => {
+    await update({ qualityStatus: "custom", qualityLabel: "上午正常，下午待观察" });
+    const before = await db.getProviderConnectionById(account.id);
+    await update({ name: "Renamed" });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: "custom", qualityLabel: before.qualityLabel, qualityMarkedAt: before.qualityMarkedAt });
+    const created = await db.createProviderConnection({ provider: "codex", authType: "oauth", name: "Custom", qualityStatus: "custom", qualityLabel: "待观察", qualityMarkedAt: before.qualityMarkedAt });
+    await reopen();
+    expect(await db.getProviderConnectionById(created.id)).toMatchObject({ qualityStatus: "custom", qualityLabel: "待观察", qualityMarkedAt: before.qualityMarkedAt });
+  });
+
+  it.each([undefined, null, "", "   ", true, 1, {}, [], "字".repeat(ACCOUNT_QUALITY_MAX_LENGTH + 1)])("rejects invalid custom text (%j) without other edits", async qualityLabel => {
+    expect((await update({ qualityStatus: "custom", qualityLabel, name: "Should not save" })).status).toBe(400);
+    expect(await db.getProviderConnectionById(account.id)).toEqual(account);
+  });
+
+  it("accepts the maximum label length and keeps user text as plain text", async () => {
+    const qualityLabel = "字".repeat(ACCOUNT_QUALITY_MAX_LENGTH);
+    expect((await update({ qualityStatus: "custom", qualityLabel })).status).toBe(200);
+    expect(getAccountQualityLabel(await db.getProviderConnectionById(account.id))).toBe(qualityLabel);
+    const html = '<img src=x onerror="alert(1)">';
+    await update({ qualityStatus: "custom", qualityLabel: html });
+    expect(getAccountQualityLabel(await db.getProviderConnectionById(account.id))).toBe(html);
+  });
+
+  it.each([{ qualityLabel: "待观察" }, { qualityStatus: "normal", qualityLabel: "待观察" }])("rejects ambiguous custom labels: %j", async patch => {
+    expect((await update({ ...patch, name: "Should not save" })).status).toBe(400);
+    expect(await db.getProviderConnectionById(account.id)).toEqual(account);
   });
 
   it.each(["unknown", "", true, false, 1, {}, [], "toString"])("rejects invalid quality status (%j) without applying other edits", async qualityStatus => {

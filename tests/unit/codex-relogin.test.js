@@ -91,11 +91,12 @@ function expectPreserved(connection) {
 }
 
 describe("Codex account relogin", () => {
-  it.each(["normal", "slow", "degraded"])("preserves the %s quality marker and timestamp during relogin", async qualityStatus => {
+  it.each(["normal", "slow", "degraded", "custom"])("preserves the %s quality marker and timestamp during relogin", async qualityStatus => {
     const qualityMarkedAt = "2026-10-13T07:00:00.000Z";
-    await db.updateProviderConnection(account.id, { qualityStatus, qualityMarkedAt, isDegraded: qualityStatus === "degraded" });
+    const qualityLabel = qualityStatus === "custom" ? "中午正常，下午降智" : null;
+    await db.updateProviderConnection(account.id, { qualityStatus, qualityLabel, qualityMarkedAt, isDegraded: qualityStatus === "degraded" });
     expect((await exchangeCode()).status).toBe(200);
-    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus, qualityMarkedAt, isActive: false, exclusiveApiKeyIds: [key.id] });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus, qualityLabel, qualityMarkedAt, isActive: false, exclusiveApiKeyIds: [key.id] });
   });
 
   it("replaces credentials on the original disabled account without changing its configuration", async () => {

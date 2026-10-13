@@ -11,7 +11,7 @@ import {
 import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
 import { getApiKeyById } from "@/lib/db/repos/apiKeysRepo.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
-import { ACCOUNT_QUALITY_LABELS, getAccountQualityStatus, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
+import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -129,19 +129,31 @@ export async function PUT(request, { params }) {
     if (body.isDegraded !== undefined && typeof body.isDegraded !== "boolean") {
       return NextResponse.json({ error: "降智标记必须为布尔值" }, { status: 400 });
     }
+    if (body.qualityLabel !== undefined && body.qualityStatus === undefined) {
+      return NextResponse.json({ error: "填写自定义标签时需要指定账号标记类型" }, { status: 400 });
+    }
     if (body.qualityStatus !== undefined || body.isDegraded !== undefined) {
       const status = body.qualityStatus !== undefined ? body.qualityStatus : body.isDegraded ? "degraded" : null;
-      if (status !== null && (typeof status !== "string" || !Object.hasOwn(ACCOUNT_QUALITY_LABELS, status))) {
-        return NextResponse.json({ error: "账号标记必须为未降智、响应慢、已降智或取消标记" }, { status: 400 });
+      if (status !== null && (typeof status !== "string" || (status !== "custom" && !Object.hasOwn(ACCOUNT_QUALITY_LABELS, status)))) {
+        return NextResponse.json({ error: "账号标记类型无效" }, { status: 400 });
+      }
+      const qualityLabel = status === "custom" && typeof body.qualityLabel === "string" ? body.qualityLabel.trim() : null;
+      if (status === "custom" && (!qualityLabel || qualityLabel.length > ACCOUNT_QUALITY_MAX_LENGTH)) {
+        return NextResponse.json({ error: `自定义标签需填写 1 至 ${ACCOUNT_QUALITY_MAX_LENGTH} 个字符` }, { status: 400 });
+      }
+      if (status !== "custom" && body.qualityLabel !== undefined && body.qualityLabel !== null) {
+        return NextResponse.json({ error: "自定义标签需要使用自定义标记类型" }, { status: 400 });
       }
       if (body.isDegraded !== undefined && body.isDegraded !== (status === "degraded")) {
         return NextResponse.json({ error: "账号标记与降智状态不一致" }, { status: 400 });
       }
+      const unchanged = status === getAccountQualityStatus(existing) && (status !== "custom" || qualityLabel === getAccountQualityLabel(existing));
       const markedAt = status
-        ? (status === getAccountQualityStatus(existing) && getAccountQualityMarkedAt(existing)) || new Date().toISOString()
+        ? (unchanged && getAccountQualityMarkedAt(existing)) || new Date().toISOString()
         : null;
       Object.assign(updateData, {
         qualityStatus: status,
+        qualityLabel,
         qualityMarkedAt: markedAt,
         isDegraded: status === "degraded",
         degradedMarkedAt: status === "degraded" ? markedAt : null,
