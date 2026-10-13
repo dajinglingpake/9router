@@ -27,6 +27,9 @@ logs
 .env.production.local
 **/*.local.env
 .run
+src/app/(dashboard)/dashboard/diagnostics/demo.js
+scripts/export-diagnostics-snapshot.cjs
+diagnostics-remote-snapshot*.json
 
 # Debug logs
 npm-debug.log*

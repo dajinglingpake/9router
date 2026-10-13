@@ -24,7 +24,8 @@ beforeEach(async () => {
   account = await db.createProviderConnection({
     provider: "codex", authType: "oauth", name: "My account", email: "owner@example.com",
     accessToken: "old-access", refreshToken: "old-refresh", idToken: "old-id",
-    exclusiveApiKeyIds: [key.id], priority: 5, isActive: false,
+    exclusiveApiKeyIds: [key.id], priority: 5, isActive: false, isDegraded: true,
+    degradedMarkedAt: "2026-10-13T07:00:00.000Z",
     minRequestIntervalMs: 2000, accountCooldownMinMs: 40000,
     providerSpecificData: { chatgptAccountId: "workspace-1", proxyPoolId: "original-proxy", custom: "keep" },
   });
@@ -80,7 +81,8 @@ async function finishProxy() {
 
 function expectPreserved(connection) {
   expect(connection).toMatchObject({
-    id: account.id, name: "My account", provider: "codex", isActive: false,
+    id: account.id, name: "My account", provider: "codex", isActive: false, isDegraded: true,
+    degradedMarkedAt: "2026-10-13T07:00:00.000Z",
     priority: 5, exclusiveApiKeyIds: [key.id], maxConcurrency: 3,
     minRequestIntervalMs: 2000, accountCooldownMinMs: 40000,
     providerSpecificData: { proxyPoolId: "original-proxy", custom: "keep", chatgptAccountId: "workspace-1" },

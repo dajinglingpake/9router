@@ -125,6 +125,15 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (body.isDegraded !== undefined) {
+      if (typeof body.isDegraded !== "boolean") {
+        return NextResponse.json({ error: "降智标记必须为布尔值" }, { status: 400 });
+      }
+      updateData.isDegraded = body.isDegraded;
+      updateData.degradedMarkedAt = body.isDegraded
+        ? (existing.isDegraded === true && existing.degradedMarkedAt) || new Date().toISOString()
+        : null;
+    }
     if (body.exclusiveApiKeyIds !== undefined) {
       const value = body.exclusiveApiKeyIds;
       if (!Array.isArray(value) || value.some(id => typeof id !== "string" || !id.trim())) {

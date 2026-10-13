@@ -83,6 +83,13 @@ const getPageInfo = (pathname) => {
       icon: "layers",
       breadcrumbs: [],
     };
+  if (pathname.includes("/diagnostics"))
+    return {
+      title: "请求诊断",
+      description: "按时间段定位 API Key 与账号的失败和延迟",
+      icon: "query_stats",
+      breadcrumbs: [],
+    };
   if (pathname.includes("/usage"))
     return {
       title: "Usage & Analytics",

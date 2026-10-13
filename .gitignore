@@ -46,6 +46,10 @@ next-env.d.ts
 
 .bin/*
 .run/
+# Local diagnostics preview helpers; never publish preview datasets.
+/src/app/(dashboard)/dashboard/diagnostics/demo.js
+/scripts/export-diagnostics-snapshot.cjs
+/diagnostics-remote-snapshot*.json
 data/
 logs/*
 source/*
