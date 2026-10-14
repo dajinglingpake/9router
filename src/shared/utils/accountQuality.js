@@ -5,6 +5,14 @@ export const ACCOUNT_QUALITY_LABELS = {
 };
 export const ACCOUNT_QUALITY_MAX_LENGTH = 80;
 export const ACCOUNT_QUALITY_DEFAULT_COLOR = "#a64027";
+export const ACCOUNT_QUALITY_COLORS = [
+  { label: "橙色", value: ACCOUNT_QUALITY_DEFAULT_COLOR },
+  { label: "绿色", value: "#15803d" },
+  { label: "红色", value: "#b91c1c" },
+  { label: "黄色", value: "#facc15" },
+  { label: "蓝色", value: "#1d4ed8" },
+  { label: "紫色", value: "#7e22ce" },
+];
 
 export function isAccountQualityColor(color) {
   return typeof color === "string" && color.length === 7 && /^#[0-9a-f]{6}$/i.test(color);
@@ -42,4 +50,14 @@ export function getAccountQualityMarkedAt(connection) {
   if (!status) return null;
   const value = connection.qualityMarkedAt ?? (connection.qualityStatus === undefined ? connection.degradedMarkedAt : null);
   return typeof value === "string" && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+export function getAccountQualityMetadata(connection) {
+  const qualityStatus = getAccountQualityStatus(connection);
+  return qualityStatus ? {
+    qualityStatus,
+    qualityLabel: getAccountQualityLabel(connection),
+    qualityColor: getAccountQualityColor(connection),
+    qualityMarkedAt: getAccountQualityMarkedAt(connection),
+  } : {};
 }

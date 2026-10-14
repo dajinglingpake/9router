@@ -7,6 +7,7 @@ import { clock, duration, formatNumber, throughput, tokenCount, Icon } from "./f
 import { getOutputThroughput } from "@/shared/utils/outputThroughput.js";
 import { isReportedOverload } from "@/shared/utils/diagnosticStatistics";
 import { isSlowResponse } from "@/shared/utils/requestDiagnostics";
+import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
 
 export default function DiagnosticsDetailsModal({ isOpen, onClose, data, loading, error, selection, focusName, issue, onIssueChange, onPageChange, slowMs }) {
   const [expanded, setExpanded] = useState(null);
@@ -60,7 +61,7 @@ function RequestRow({ record, expanded, onToggle, slowMs }) {
   return <>
     <tr className="border-t border-border-subtle hover:bg-surface-2/40">
       <td className="whitespace-nowrap px-5 py-4 font-mono text-xs"><button onClick={onToggle} aria-expanded={expanded} aria-label={`查看 ${clock(record.timestamp)} 的请求详情`} className="flex min-h-9 cursor-pointer items-center gap-1.5 hover:text-primary"><Icon className={`text-[16px] ${expanded ? "rotate-90" : ""}`}>chevron_right</Icon>{clock(record.timestamp)}</button><span className="ml-5 text-[11px] text-text-muted">{new Date(record.timestamp).toLocaleDateString("zh-CN")}</span></td>
-      <td className="max-w-64 px-5 py-4"><p className="select-text font-medium">{record.apiKeyName}</p><p className="mt-1 select-text break-all text-xs text-text-muted">{record.accountName}</p></td>
+      <td className="max-w-64 px-5 py-4"><p className="select-text font-medium">{record.apiKeyName}</p><p className="mt-1 select-text break-all text-xs text-text-muted">{record.accountName}</p><AccountQualityBadge connection={record} /></td>
       <td className="px-5 py-4"><p className="whitespace-nowrap font-mono text-xs">{record.model}</p><p className="mt-1 text-xs text-text-muted">{record.provider}</p></td>
       <td className="px-5 py-4"><Status record={record} /></td>
       <td className="whitespace-nowrap px-5 py-4 font-mono text-xs"><span className="text-text-muted">{duration(record.ttftMs)}</span><span className="mx-1.5 text-text-muted">/</span><span className={slow ? "text-amber-700 dark:text-amber-300" : ""}>{duration(record.latencyMs)}</span>{slow && <span className="ml-2 rounded bg-warning/10 px-1.5 py-0.5 font-sans text-amber-700 dark:text-amber-300">长响应</span>}</td>

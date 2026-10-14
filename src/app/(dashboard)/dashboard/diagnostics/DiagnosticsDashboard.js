@@ -9,6 +9,8 @@ import DiagnosticsAccounts from "./DiagnosticsAccounts";
 import DiagnosticsIdentity from "./DiagnosticsIdentity";
 import DiagnosticsDetailsModal from "./DiagnosticsDetailsModal";
 import { clock, duration, formatNumber, percent, throughput, Icon } from "./format";
+import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
+import { ACCOUNT_QUALITY_COLORS, getAccountQualityLabel } from "@/shared/utils/accountQuality.js";
 
 const panel = "rounded-2xl border border-border bg-surface shadow-[var(--shadow-soft)]";
 const control = "min-h-11 rounded-lg border border-border bg-surface px-3 text-sm text-text-main outline-none focus-visible:ring-2 focus-visible:ring-primary";
@@ -28,7 +30,7 @@ function Metric({ label, value, hint, icon, color = "text-text-main", onClick })
   </button>;
 }
 
-export default function DiagnosticsDashboard({ initialFocus = null, initialModel = "all" }) {
+export default function DiagnosticsDashboard({ initialFocus = null, initialModel = "all", initialAccountLabel = "all", initialAccountColor = "all" }) {
   const [range, setRange] = useState(() => makeRange("6h"));
   const [customOpen, setCustomOpen] = useState(false);
   const [customStart, setCustomStart] = useState("");
@@ -36,6 +38,8 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
   const [rangeError, setRangeError] = useState("");
   const [provider, setProvider] = useState("all");
   const [model, setModel] = useState(initialModel);
+  const [accountLabel, setAccountLabel] = useState(initialAccountLabel);
+  const [accountColor, setAccountColor] = useState(initialAccountColor);
   const [slowMs, setSlowMs] = useState(60000);
   const [dimension, setDimension] = useState(initialFocus?.dimension === "byApiKey" ? "byAccount" : "byApiKey");
   const [showAllRows, setShowAllRows] = useState(false);
@@ -49,7 +53,7 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
   const [refreshTick, setRefreshTick] = useState(0);
   const [result, setResult] = useState({ key: "", data: null, error: "" });
   const rankingRef = useRef(null);
-  const options = { start: range.start, end: range.end, provider, model, slowMs, issue, page, pageSize: 20,
+  const options = { start: range.start, end: range.end, provider, model, accountLabel, accountColor, slowMs, issue, page, pageSize: 20,
     focusApiKeyId: focus?.dimension === "byApiKey" ? focus.id : null,
     focusConnectionId: focus?.dimension === "byAccount" ? focus.id : null,
     apiKeyId: selection?.dimension === "byApiKey" ? selection.id : null,
@@ -62,6 +66,8 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
     const load = async () => {
       const params = new URLSearchParams({ start: new Date(query.start).toISOString(), end: new Date(query.end).toISOString(),
         slowMs: String(query.slowMs), provider: query.provider, model: query.model, issue: query.issue, page: String(query.page) });
+      if (query.accountLabel !== "all") params.set("accountLabel", query.accountLabel);
+      if (query.accountColor !== "all") params.set("accountColor", query.accountColor);
       if (query.focusApiKeyId) params.set("focusApiKeyId", query.focusApiKeyId);
       if (query.focusConnectionId) params.set("focusConnectionId", query.focusConnectionId);
       if (query.apiKeyId) params.set("apiKeyId", query.apiKeyId);
@@ -82,9 +88,17 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
   const data = result.data;
   const error = result.key === requestKey ? result.error : "";
   const loading = result.key !== requestKey;
-  const rows = useMemo(() => (data?.[dimension] || []).filter(row => `${row.name} ${row.providers.join(" ")} ${row.related.map(r => r.name).join(" ")}`.toLowerCase().includes(search.toLowerCase()))
+  const rows = useMemo(() => (data?.[dimension] || []).filter(row => `${row.name} ${getAccountQualityLabel(row)} ${row.providers.join(" ")} ${row.related.map(r => `${r.name} ${getAccountQualityLabel(r)}`).join(" ")}`.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (b[sort] ?? -1) - (a[sort] ?? -1) || b.recordCount - a.recordCount), [data, dimension, search, sort]);
   const resetScope = () => { setSelection(null); setPage(1); };
+  const changeQualityFilters = (nextLabel, nextColor) => {
+    setAccountLabel(nextLabel); setAccountColor(nextColor); resetScope(); setSearch(""); setShowAllRows(false);
+    const url = new URL(window.location.href);
+    for (const [key, value] of [["accountLabel", nextLabel], ["accountColor", nextColor]]) {
+      if (value === "all") url.searchParams.delete(key); else url.searchParams.set(key, value);
+    }
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}`);
+  };
   const changeModel = value => {
     setModel(value); resetScope();
     const url = new URL(window.location.href);
@@ -114,7 +128,10 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
     changeRange({ preset: "custom", start, end });
   };
   const summary = data?.summary;
-  const focusName = focus ? (focus.dimension === "byApiKey" ? data?.subjects.apiKeys : data?.subjects.accounts)?.find(item => item.id === focus.id)?.name || focus.id : null;
+  const focusSubject = focus ? (focus.dimension === "byApiKey" ? data?.subjects.apiKeys : data?.subjects.accounts)?.find(item => item.id === focus.id) : null;
+  const focusName = focus ? focusSubject?.name || focus.id : null;
+  const accountLabels = [...new Set([...(data?.accountLabels || []), ...(accountLabel.startsWith("label:") ? [accountLabel.slice(6)] : [])])];
+  const accountColors = [...new Set([...(data?.accountColors || []), ...(accountColor === "all" ? [] : [accountColor])])];
 
 
   return <div data-i18n-skip className="flex min-w-0 flex-col gap-6 text-text-main">
@@ -138,6 +155,22 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
         <span className="ml-auto text-xs text-text-muted">总耗时包含生成时间；过载依据上游错误内容</span>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
+        <label className="flex min-w-0 items-center gap-2 text-xs text-text-muted">账号标签
+          <select aria-label="诊断账号标签" className={`${control} min-w-0 max-w-56 sm:max-w-72`} value={accountLabel} onChange={event => changeQualityFilters(event.target.value, accountColor)}>
+            <option value="all">全部标签</option><option value="marked">已标记账号</option><option value="unmarked">未标记账号</option>
+            {accountLabels.map(label => <option key={label} value={`label:${label}`}>{label}</option>)}
+          </select>
+        </label>
+        <label className="flex min-w-0 items-center gap-2 text-xs text-text-muted">标签颜色
+          {accountColor !== "all" && <span aria-hidden="true" className="size-4 shrink-0 rounded-full ring-1 ring-black/15 dark:ring-white/25" style={{ backgroundColor: accountColor }} />}
+          <select aria-label="诊断标签颜色" className={`${control} min-w-0 max-w-56`} value={accountColor} onChange={event => changeQualityFilters(accountLabel, event.target.value)}>
+            <option value="all">全部颜色</option>{accountColors.map(color => <option key={color} value={color}>{ACCOUNT_QUALITY_COLORS.find(preset => preset.value === color)?.label || "自选颜色"} {color}</option>)}
+          </select>
+        </label>
+        {(accountLabel !== "all" || accountColor !== "all") && <button type="button" className="min-h-11 cursor-pointer rounded-lg px-3 text-xs text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => changeQualityFilters("all", "all")}>清除标签筛选</button>}
+        <p className="basis-full text-xs leading-5 text-text-muted">标签使用账号当前配置；指标、趋势、排行与明细一起筛选，表现分类仍按所选时段日志计算。</p>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
         <label className="flex min-w-0 flex-1 flex-wrap items-center gap-3 text-sm font-medium">仅关注
           <select aria-label="仅关注某个账号或 API Key" className={`${control} min-w-0 max-w-full flex-1 sm:max-w-sm`} value={focus ? `${focus.dimension}:${focus.id}` : "all"} onChange={event => {
             if (event.target.value === "all") { focusGroup(null); return; }
@@ -145,12 +178,12 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
           }}>
             <option value="all">全部账号与 API Key</option>
             <optgroup label="API Key">{(data?.subjects.apiKeys || []).map(item => <option key={item.id} value={`byApiKey:${item.id}`}>{item.name}</option>)}</optgroup>
-            <optgroup label="账号">{(data?.subjects.accounts || []).map(item => <option key={item.id} value={`byAccount:${item.id}`}>{item.name}</option>)}</optgroup>
+            <optgroup label="账号">{(data?.subjects.accounts || []).map(item => <option key={item.id} value={`byAccount:${item.id}`}>{item.name}{getAccountQualityLabel(item) ? ` · ${getAccountQualityLabel(item)}` : ""}</option>)}</optgroup>
           </select>
         </label>
         <span className="text-xs text-text-muted">关注后，指标、趋势与排行一起筛选</span>
       </div>
-      {focus && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-sm"><Icon className="text-primary">filter_center_focus</Icon><span className="min-w-0 flex-1 break-all">仅关注{focus.dimension === "byApiKey" ? " API Key" : "账号"}：<strong>{focusName}</strong></span><button className="min-h-9 cursor-pointer rounded-md px-2 text-xs text-primary hover:bg-primary/10" onClick={() => focusGroup(null)}>返回全部</button></div>}
+      {focus && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-sm"><Icon className="text-primary">filter_center_focus</Icon><span className="min-w-0 flex-1 break-all">仅关注{focus.dimension === "byApiKey" ? " API Key" : "账号"}：<strong>{focusName}</strong></span><button className="min-h-9 cursor-pointer rounded-md px-2 text-xs text-primary hover:bg-primary/10" onClick={() => focusGroup(null)}>返回全部</button>{focus.dimension === "byAccount" && <div className="basis-full"><AccountQualityBadge connection={focusSubject} /></div>}</div>}
       {customOpen && <form onSubmit={applyCustom} className="mt-4 flex flex-wrap items-end gap-3 border-t border-border-subtle pt-4">
         <label className="flex flex-col gap-1.5 text-xs text-text-muted">开始时间<input className={control} type="datetime-local" required value={customStart} onChange={e => setCustomStart(e.target.value)} /></label>
         <label className="flex flex-col gap-1.5 text-xs text-text-muted">结束时间<input className={control} type="datetime-local" required value={customEnd} onChange={e => setCustomEnd(e.target.value)} /></label>
@@ -190,7 +223,7 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
             <button className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusIssue("slow")}>查看长响应 {formatNumber(summary.slowCount)} 条</button>
-            <label className="relative"><span className="sr-only">搜索 API Key 或账号</span><Icon className="pointer-events-none absolute left-3 top-3 text-text-muted">search</Icon><input value={search} onChange={e => setSearch(e.target.value)} className={`${control} w-full pl-10 sm:w-72`} placeholder={dimension === "byApiKey" ? "搜索 Key 名称或关联账号" : "搜索账号或调用人"} /></label>
+            <label className="relative"><span className="sr-only">搜索排行名称或标签</span><Icon className="pointer-events-none absolute left-3 top-3 text-text-muted">search</Icon><input value={search} onChange={e => setSearch(e.target.value)} className={`${control} w-full pl-10 sm:w-72`} placeholder={dimension === "byApiKey" ? "搜索 Key、关联账号或标签" : "搜索账号、调用人或标签"} /></label>
             <label className="flex items-center gap-2 text-xs text-text-muted">排序<select className={control} value={sort} onChange={e => setSort(e.target.value)}>{[{ value: "throughputMeanTps", label: "全程吞吐最高" }, { value: "overloadCount", label: "过载报告优先" }, { value: "failureCount", label: "失败次数优先" }, { value: "errorRate", label: "异常占比优先" }, { value: "slowCount", label: "长响应次数优先" }, { value: "ttftP95Ms", label: "开始响应 P95 优先" }, { value: "p95Ms", label: "总耗时 P95 优先" }, { value: "recordCount", label: "请求数优先" }].map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           </div>
           <div className="overflow-x-auto">
@@ -198,7 +231,8 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
               <thead className="bg-surface-2/60 text-xs text-text-muted"><tr>{[dimension === "byApiKey" ? "API Key / 关联账号" : "账号 / 调用人", "请求记录", "失败 / 异常占比", "上游过载", "长响应", "开始响应 P95", "全程吞吐 / 总耗时 P95", "主要问题"].map(label => <th key={label} className="whitespace-nowrap px-4 py-3 font-medium first:pl-5">{label}</th>)}</tr></thead>
               <tbody>{(showAllRows ? rows : rows.slice(0, 8)).map((row, index) => <tr key={row.id} className={`border-t border-border-subtle transition-colors hover:bg-surface-2/50 ${focus?.dimension === dimension && focus.id === row.id ? "bg-primary/5" : ""}`}>
                 <td className="max-w-72 py-4 pl-5 pr-4"><div className="flex items-start gap-3"><span className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-medium tabular-nums ${index < 3 && (row.failureCount || row.slowCount) ? "bg-primary/10 text-primary" : "bg-surface-2 text-text-muted"}`}>{index + 1}</span><div className="min-w-0">
-                  <DiagnosticsIdentity name={row.name} label={dimension === "byAccount" ? "账号" : "API Key 名称"} onFocus={() => focusGroup(row)} />
+                  <DiagnosticsIdentity name={row.name} connection={dimension === "byAccount" ? row : undefined} label={dimension === "byAccount" ? "账号" : "API Key 名称"} onFocus={() => focusGroup(row)} />
+                  {dimension === "byApiKey" && <div className="space-y-1">{row.related.filter(account => getAccountQualityLabel(account)).slice(0, 3).map(account => <div key={account.id} className="min-w-0"><p className="select-text break-all text-xs text-text-muted">{account.name}</p><AccountQualityBadge connection={account} /></div>)}{row.related.filter(account => getAccountQualityLabel(account)).length > 3 && <button type="button" className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusGroup(row)}>查看全部关联账号标签</button>}</div>}
                   <p className="mt-1 truncate text-xs text-text-muted" title={row.related.map(r => r.name).join("、")}>{row.related.length} 个{dimension === "byApiKey" ? "账号" : "API Key"} · {row.providers.join(" / ")}</p>
                   {row.bindings.length > 0 && <p className="mt-1.5 max-w-64 truncate text-xs text-primary" title={row.bindings.join("、")}>专用：{row.bindings.join("、")}</p>}
                 </div></div></td>

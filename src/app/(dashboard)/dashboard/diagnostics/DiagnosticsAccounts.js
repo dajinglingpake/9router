@@ -70,7 +70,7 @@ export default function DiagnosticsAccounts({ performance, loading, onFocusAccou
     <ul className="divide-y divide-border-subtle border-t border-border-subtle">
       {rows.map(account => <li key={account.id} className={`grid min-w-0 grid-cols-3 items-center gap-x-4 gap-y-3 px-5 py-4 transition-colors hover:bg-surface-2/40 ${columns}`}>
         <div className="col-span-3 min-w-0 lg:col-span-1">
-          <DiagnosticsIdentity name={account.name} onFocus={() => onFocusAccount(account, "byAccount")} />
+          <DiagnosticsIdentity name={account.name} connection={account} onFocus={() => onFocusAccount(account, "byAccount")} />
           <div className="flex flex-wrap items-center gap-1.5">
             {account.speedCandidate && <Badge tone="fast">{account.recentSuccess ? "吞吐较高" : "历史吞吐较高"}{account.speedLimitedSample ? " · 样本少" : ""}</Badge>}
             <Badge tone={account.stability === "stable" ? "stable" : account.stability === "errors" ? "overload" : "muted"}>{stabilityLabels[account.stability]}</Badge>

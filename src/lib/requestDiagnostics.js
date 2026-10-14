@@ -6,6 +6,7 @@ import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { buildDiagnosticsReport } from "@/shared/utils/requestDiagnostics.js";
 import { getRequestPressureSignal } from "./requestPressureSignals.cjs";
 import { DIAGNOSTIC_TOKEN_COLUMNS, extractDiagnosticTokenUsage } from "./diagnosticTokenUsage.cjs";
+import { ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityMetadata, isAccountQualityColor } from "@/shared/utils/accountQuality.js";
 
 const MAX_ROWS = 20000;
 const valueOrNull = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
@@ -16,13 +17,18 @@ export function parseDiagnosticsQuery(params, now = Date.now()) {
   const slowMs = params.has("slowMs") ? Number(params.get("slowMs")) : 60000;
   const page = params.has("page") ? Number(params.get("page")) : 1;
   const issue = params.get("issue") || "all";
+  const accountLabel = params.get("accountLabel") || "all";
+  const accountColor = params.get("accountColor") || "all";
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) throw new Error("请选择有效的起止时间，结束时间须晚于开始时间。");
   if (end - start > 31 * 86400000) throw new Error("单次最多查询 31 天，请缩短时间范围。");
   if (!Number.isFinite(slowMs) || slowMs < 1000 || slowMs > 3600000) throw new Error("慢响应阈值须在 1–3600 秒之间。");
   if (!Number.isSafeInteger(page) || page < 1) throw new Error("页码无效。");
   if (!["all", "error", "slow", "overload", "success", "cancelled"].includes(issue)) throw new Error("请求状态无效。");
   if (params.get("focusApiKeyId") && params.get("focusConnectionId")) throw new Error("一次只能关注一个账号或 API Key。");
+  if (!["all", "marked", "unmarked"].includes(accountLabel) && !(accountLabel.startsWith("label:") && accountLabel.slice(6).trim() && accountLabel.slice(6).length <= ACCOUNT_QUALITY_MAX_LENGTH)) throw new Error("账号标签筛选无效。");
+  if (accountColor !== "all" && !isAccountQualityColor(accountColor)) throw new Error("标签颜色筛选无效。");
   return { start, end, slowMs, page, pageSize: 20, issue,
+    accountLabel: accountLabel.startsWith("label:") ? `label:${accountLabel.slice(6).trim()}` : accountLabel, accountColor: accountColor.toLowerCase(),
     focusApiKeyId: params.get("focusApiKeyId") || null, focusConnectionId: params.get("focusConnectionId") || null,
     provider: params.get("provider") || "all", model: params.get("model") || "all",
     apiKeyId: params.get("apiKeyId") || null, connectionId: params.get("connectionId") || null };
@@ -34,11 +40,20 @@ export async function getRequestDiagnostics(options) {
   const keyByValue = new Map(keys.map(k => [k.key, k]));
   const keyById = new Map(keys.map(k => [k.id, k]));
   const connections = db.all(`SELECT id, provider, name, email,
+    CASE WHEN json_valid(data) THEN data -> '$.qualityStatus' END AS qualityStatus,
+    CASE WHEN json_valid(data) THEN data -> '$.qualityLabel' END AS qualityLabel,
+    CASE WHEN json_valid(data) THEN data -> '$.qualityColor' END AS qualityColor,
+    CASE WHEN json_valid(data) THEN data -> '$.qualityMarkedAt' END AS qualityMarkedAt,
+    CASE WHEN json_valid(data) THEN data -> '$.isDegraded' END AS isDegraded,
+    CASE WHEN json_valid(data) THEN data -> '$.degradedMarkedAt' END AS degradedMarkedAt,
     CASE WHEN json_valid(data) THEN json_extract(data, '$.exclusiveApiKeyIds') END AS bindings,
     CASE WHEN json_valid(data) THEN json_extract(data, '$.exclusiveApiKeyId') END AS binding
     FROM providerConnections`).map(c => {
     const ids = getExclusiveApiKeyIds({ exclusiveApiKeyIds: parseJson(c.bindings), exclusiveApiKeyId: c.binding });
     return { id: c.id, provider: c.provider, name: c.name || c.email || c.id.slice(0, 8), exclusiveApiKeyIds: ids,
+      ...getAccountQualityMetadata({ qualityStatus: c.qualityStatus === null ? undefined : parseJson(c.qualityStatus),
+        qualityLabel: parseJson(c.qualityLabel), qualityColor: parseJson(c.qualityColor), qualityMarkedAt: parseJson(c.qualityMarkedAt),
+        isDegraded: parseJson(c.isDegraded) === true, degradedMarkedAt: parseJson(c.degradedMarkedAt) }),
       exclusiveApiKeyNames: ids.map(id => keyById.get(id)?.name || "已删除 Key") };
   });
   const accountMap = new Map(connections.map(c => [c.id, c]));

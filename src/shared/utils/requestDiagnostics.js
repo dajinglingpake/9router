@@ -2,6 +2,7 @@ import { nonNegativeNumber as number, percentile, isReportedOverload } from "./d
 import { buildRequestPressure } from "./requestPressure.js";
 import { buildAccountPerformance } from "./accountPerformance.js";
 import { summarizeOutputThroughput } from "./outputThroughput.js";
+import { getAccountQualityMetadata, getAccountQualityLabel, getAccountQualityColor } from "./accountQuality.js";
 export { percentile } from "./diagnosticStatistics.js";
 
 export function isSlowResponse(record, slowMs) {
@@ -67,13 +68,23 @@ function groupRecords(records, field, nameField, slowMs, connections) {
 }
 
 export function buildDiagnosticsReport(samples, options, connections = [], keys = []) {
-  const { start, end, slowMs = 60000, provider = "all", model = "all", focusApiKeyId, focusConnectionId, apiKeyId, connectionId, issue = "all", page = 1, pageSize = 20 } = options;
-  const comparisonRecords = samples.filter(r => r.timestamp >= start && r.timestamp < end && (provider === "all" || r.provider === provider)
+  const { start, end, slowMs = 60000, provider = "all", model = "all", accountLabel = "all", accountColor = "all", focusApiKeyId, focusConnectionId, apiKeyId, connectionId, issue = "all", page = 1, pageSize = 20 } = options;
+  const qualityById = new Map(connections.map(connection => [connection.id, getAccountQualityMetadata(connection)]));
+  const matchesQuality = connection => {
+    const label = getAccountQualityLabel(connection);
+    return (accountLabel === "all" || (accountLabel === "marked" ? !!label : accountLabel === "unmarked" ? !label : label === accountLabel.slice(6)))
+      && (accountColor === "all" || (!!label && getAccountQualityColor(connection) === accountColor.toLowerCase()));
+  };
+  const labelledSamples = samples.map(record => ({ ...record, ...qualityById.get(record.connectionId) }));
+  const scopedSamples = labelledSamples.filter(record => matchesQuality(qualityById.get(record.connectionId)));
+  const scopedConnections = connections.filter(matchesQuality);
+  const comparisonRecords = scopedSamples.filter(r => r.timestamp >= start && r.timestamp < end && (provider === "all" || r.provider === provider)
     && (model === "all" || r.model === model));
   const records = comparisonRecords.filter(r => (!focusApiKeyId || r.apiKeyId === focusApiKeyId) && (!focusConnectionId || r.connectionId === focusConnectionId));
   const subjects = (configured, field, nameField) => {
     const values = new Map(samples.map(r => [r[field], { id: r[field], name: r[nameField] }]));
-    configured.forEach(item => values.set(item.id, { id: item.id, name: item.name || values.get(item.id)?.name || item.id }));
+    configured.forEach(item => values.set(item.id, { id: item.id, name: item.name || values.get(item.id)?.name || item.id,
+      ...(field === "connectionId" ? qualityById.get(item.id) : {}) }));
     return [...values.values()].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
   };
   const bucketCount = end - start <= 6 * 3600000 ? 12 : 24;
@@ -89,18 +100,24 @@ export function buildDiagnosticsReport(samples, options, connections = [], keys 
     .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const byAccount = groupRecords(records, "connectionId", "accountName", slowMs, connections);
+  const byAccount = groupRecords(records, "connectionId", "accountName", slowMs, connections).map(account => ({ ...account, ...qualityById.get(account.id) }));
   const comparisonAccounts = focusApiKeyId || focusConnectionId ? groupRecords(comparisonRecords, "connectionId", "accountName", slowMs, connections) : byAccount;
+  const accountPerformance = buildAccountPerformance(byAccount, options, scopedConnections, comparisonAccounts);
+  const pressure = buildRequestPressure(scopedSamples, options);
+  const availableConnections = connections.filter(connection => provider === "all" || connection.provider === provider);
   return {
-    range: { start, end, slowMs, model },
+    range: { start, end, slowMs, model, accountLabel, accountColor },
+    accountLabels: [...new Set(availableConnections.map(getAccountQualityLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN")),
+    accountColors: [...new Set(availableConnections.filter(connection => getAccountQualityLabel(connection)).map(getAccountQualityColor))].sort(),
     providers: [...new Set(samples.map(r => r.provider))].sort(),
     models: [...new Set(samples.map(r => r.model))].sort(),
     subjects: { apiKeys: subjects(keys, "apiKeyId", "apiKeyName"), accounts: subjects(connections, "connectionId", "accountName") },
     summary: summarize(records, slowMs), timeline,
-    pressure: buildRequestPressure(samples, options),
-    byApiKey: groupRecords(records, "apiKeyId", "apiKeyName", slowMs, connections),
+    pressure: { ...pressure, windows: pressure.windows.map(window => ({ ...window, ...qualityById.get(window.connectionId) })) },
+    byApiKey: groupRecords(records, "apiKeyId", "apiKeyName", slowMs, connections).map(key => ({ ...key,
+      related: key.related.map(account => ({ ...account, ...qualityById.get(account.id) })) })),
     byAccount,
-    accountPerformance: buildAccountPerformance(byAccount, options, connections, comparisonAccounts),
+    accountPerformance: { ...accountPerformance, accounts: accountPerformance.accounts.map(account => ({ ...account, ...qualityById.get(account.id) })) },
     details: filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     pagination: { page: currentPage, pageSize, total: filtered.length, totalPages },
   };

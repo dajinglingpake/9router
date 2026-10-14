@@ -5,17 +5,9 @@ import { createPortal } from "react-dom";
 import Modal from "./Modal";
 import Button from "./Button";
 import Input from "./Input";
-import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, ACCOUNT_QUALITY_DEFAULT_COLOR, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt, getAccountQualityColor, getAccountQualityTextColor } from "@/shared/utils/accountQuality.js";
+import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, ACCOUNT_QUALITY_DEFAULT_COLOR, ACCOUNT_QUALITY_COLORS, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt, getAccountQualityColor, getAccountQualityTextColor } from "@/shared/utils/accountQuality.js";
 
 const icons = { normal: "verified", slow: "schedule", degraded: "flag" };
-const colorPresets = [
-  { label: "橙色", value: ACCOUNT_QUALITY_DEFAULT_COLOR },
-  { label: "绿色", value: "#15803d" },
-  { label: "红色", value: "#b91c1c" },
-  { label: "黄色", value: "#facc15" },
-  { label: "蓝色", value: "#1d4ed8" },
-  { label: "紫色", value: "#7e22ce" },
-];
 
 export default function AccountDegradedMarker({ connection, disabled = false, onUpdated }) {
   const [saving, setSaving] = useState(false);
@@ -145,7 +137,7 @@ export default function AccountDegradedMarker({ connection, disabled = false, on
             <fieldset className="space-y-3" disabled={saving}>
               <legend className="mb-2 text-sm font-medium text-text-main">标签颜色</legend>
               <div className="grid grid-cols-3 gap-2">
-                {colorPresets.map(color => (
+                {ACCOUNT_QUALITY_COLORS.map(color => (
                   <button
                     key={color.value}
                     type="button"

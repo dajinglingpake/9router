@@ -138,6 +138,74 @@ describe("evidence-based pressure analysis", () => {
   });
 });
 
+describe("current account labels in diagnostics", () => {
+  const markedAt = "2026-10-14T02:00:00.000Z";
+  const green = { qualityStatus: "custom", qualityLabel: "申诉后已恢复", qualityColor: "#15803d", qualityMarkedAt: markedAt };
+  const connections = [
+    { id: "account-a", name: "recovered", provider: "codex", exclusiveApiKeyIds: [], ...green },
+    { id: "account-b", name: "under review", provider: "codex", exclusiveApiKeyIds: [], qualityStatus: "custom", qualityLabel: "申诉中", qualityColor: "#facc15", qualityMarkedAt: markedAt },
+    { id: "account-empty", name: "disabled without logs", provider: "codex", isActive: false, exclusiveApiKeyIds: [], ...green },
+    { id: "account-unmarked", name: "unmarked", provider: "codex", exclusiveApiKeyIds: [] },
+  ];
+  const records = [sample({ id: "green-success", latencyMs: 1000 }),
+    sample({ id: "green-error", kind: "error", source: "upstream", pressureSignal: "overload" }),
+    sample({ id: "yellow-error", connectionId: "account-b", kind: "error", source: "upstream", pressureSignal: "overload", apiKeyId: "key-b" }),
+    sample({ id: "unmarked", connectionId: "account-unmarked" }), sample({ id: "deleted", connectionId: "deleted-account" }), sample({ id: "unrouted", connectionId: "unrouted" })];
+
+  it("shows the same safe label metadata in every account view, including accounts with no records", () => {
+    const report = buildDiagnosticsReport(records, options, connections);
+    expect(report.byAccount.find(a => a.id === "account-a")).toMatchObject(green);
+    expect(report.accountPerformance.accounts.find(a => a.id === "account-empty")).toMatchObject({ ...green, recordCount: 0 });
+    expect(report.byApiKey.find(k => k.id === "key-a").related.find(a => a.id === "account-a")).toMatchObject(green);
+    expect(report.subjects.accounts.find(a => a.id === "account-a")).toMatchObject(green);
+    expect(report.details.find(r => r.id === "green-error")).toMatchObject(green);
+    expect(report.pressure.windows.find(w => w.connectionId === "account-a")).toMatchObject(green);
+  });
+
+  it.each([{ accountColor: "#15803D" }, { accountLabel: "label:申诉后已恢复" }])("filters all metrics, charts, rankings and details together: %j", filter => {
+    const report = buildDiagnosticsReport(records, { ...options, ...filter }, connections);
+    expect(report.summary).toMatchObject({ recordCount: 2, failureCount: 1, overloadCount: 1 });
+    expect(report.timeline.reduce((total, bucket) => total + bucket.recordCount, 0)).toBe(2);
+    expect(report.byAccount.map(a => a.id)).toEqual(["account-a"]);
+    expect(report.byApiKey.map(k => k.id)).toEqual(["key-a"]);
+    expect(report.details.map(r => r.id).sort()).toEqual(["green-error", "green-success"]);
+    expect(report.pressure).toMatchObject({ overloadCount: 1, affectedAccounts: 1, affectedApiKeys: 1 });
+    expect(report.accountPerformance.accounts.map(a => a.id).sort()).toEqual(["account-a", "account-empty"]);
+    expect(report.accountLabels).toEqual(expect.arrayContaining(["申诉后已恢复", "申诉中"]));
+    expect(report.accountColors).toEqual(["#15803d", "#facc15"]);
+  });
+
+  it("combines labels, colors, focus and detail pagination without falling back on other accounts", () => {
+    const many = Array.from({ length: 25 }, (_, i) => sample({ id: `green-${i}`, timestamp: start + i, kind: "error" }));
+    const report = buildDiagnosticsReport([...records, ...many], { ...options, accountColor: "#15803d", accountLabel: "marked", focusApiKeyId: "key-a", issue: "error", page: 2 }, connections);
+    expect(report.summary.recordCount).toBe(27);
+    expect(report.pagination).toMatchObject({ page: 2, total: 26, totalPages: 2 });
+    expect(report.details).toHaveLength(6);
+    expect(report.details.every(r => r.connectionId === "account-a")).toBe(true);
+    const empty = buildDiagnosticsReport(records, { ...options, accountColor: "#15803d", accountLabel: "label:申诉中", focusConnectionId: "account-b" }, connections);
+    expect(empty.summary.recordCount).toBe(0);
+    expect(empty.accountPerformance.accounts).toEqual([]);
+    expect(empty.byApiKey).toEqual([]);
+    expect(empty.details).toEqual([]);
+    expect(empty.accountColors).toEqual(report.accountColors);
+  });
+
+  it("includes deleted and unrouted records only in the unmarked or all-label scope", () => {
+    const unmarked = buildDiagnosticsReport(records, { ...options, accountLabel: "unmarked" }, connections);
+    expect(unmarked.details.map(r => r.id).sort()).toEqual(["deleted", "unmarked", "unrouted"]);
+    expect(buildDiagnosticsReport(records, { ...options, accountLabel: "marked" }, connections).summary.recordCount).toBe(3);
+  });
+
+  it("preserves history needed for waiting baselines while applying a color and key filter", () => {
+    const history = Array.from({ length: 20 }, (_, i) => sample({ id: `history-${i}`, timestamp: start - i - 1, ttftMs: 1000, apiKeyId: "history-key" }));
+    const current = Array.from({ length: 5 }, (_, i) => sample({ id: `current-${i}`, ttftMs: 20000 }));
+    const report = buildDiagnosticsReport([...history, ...current, ...records], { ...options, accountColor: "#15803d", focusApiKeyId: "key-a" }, connections);
+    expect(report.pressure.windows[0]).toMatchObject({ ...green, waitIncrease: true, baselineSamples: 20 });
+    expect(report.pressure.windows.every(w => w.connectionId === "account-a")).toBe(true);
+    expect(report.pressure.windows[0].callers.map(k => k.id)).toEqual(["key-a"]);
+  });
+});
+
 describe("request diagnostics API", () => {
   const originalDataDir = process.env.DATA_DIR;
   const originalSnapshotFile = process.env.DIAGNOSTICS_SNAPSHOT_FILE;
@@ -206,6 +274,37 @@ describe("request diagnostics API", () => {
     expect(account.summary.p95Ms).toBe(2000);
     expect(account.byApiKey.map(r => r.id)).toEqual([other.id]);
   });
+  it("reads current custom labels and colors from the database without exposing credentials", async () => {
+    const quality = { qualityStatus: "custom", qualityLabel: "风控已结束，恢复正常", qualityColor: "#15803d", qualityMarkedAt: "2026-10-14T02:00:00.000Z" };
+    await db.updateProviderConnection(privateAccount.id, { ...quality, isActive: false });
+    const report = await (await api.GET(request({ accountColor: "#15803D" }))).json();
+    expect(report.range.accountColor).toBe("#15803d");
+    expect(report.summary.recordCount).toBe(1);
+    expect(report.byAccount[0]).toMatchObject(quality);
+    expect(report.details[0]).toMatchObject(quality);
+    expect(report.accountPerformance.accounts[0]).toMatchObject(quality);
+    expect(report.subjects.accounts.find(a => a.id === privateAccount.id)).toMatchObject(quality);
+    for (const secret of [owner.key, other.key, "private-access-token", "private-refresh-token"]) expect(JSON.stringify(report)).not.toContain(secret);
+    expect((await db.getProviderConnectionById(privateAccount.id)).isActive).toBe(false);
+    await db.updateProviderConnection(privateAccount.id, { qualityLabel: "再次观察", qualityColor: "#123456" });
+    const refreshed = await (await api.GET(request({ accountLabel: "label:再次观察", accountColor: "#123456" }))).json();
+    expect(refreshed.summary.recordCount).toBe(1);
+    expect(refreshed.details[0]).toMatchObject({ qualityLabel: "再次观察", qualityColor: "#123456" });
+    expect((await (await api.GET(request({ accountLabel: `label:${quality.qualityLabel}` }))).json()).summary.recordCount).toBe(0);
+  });
+  it("keeps legacy labels orange and respects explicitly cleared or malformed label data", async () => {
+    await db.updateProviderConnection(privateAccount.id, { isDegraded: true, degradedMarkedAt: "2026-10-13T07:00:00.000Z" });
+    const legacy = await (await api.GET(request({ accountColor: "#a64027" }))).json();
+    expect(legacy.byAccount[0]).toMatchObject({ qualityStatus: "degraded", qualityLabel: "已降智", qualityColor: "#a64027", qualityMarkedAt: "2026-10-13T07:00:00.000Z" });
+    await db.updateProviderConnection(privateAccount.id, { qualityStatus: null });
+    expect((await (await api.GET(request({ accountLabel: "marked" }))).json()).summary.recordCount).toBe(0);
+    await db.updateProviderConnection(privateAccount.id, { qualityStatus: "custom", qualityLabel: { text: "not a string" }, qualityColor: "#15803d" });
+    expect((await (await api.GET(request({ accountLabel: "marked" }))).json()).summary.recordCount).toBe(0);
+    adapter.run("UPDATE providerConnections SET data = ? WHERE id = ?", ["invalid JSON", privateAccount.id]);
+    const invalid = await (await api.GET(request({ accountLabel: "unmarked" }))).json();
+    expect(invalid.summary.recordCount).toBe(2);
+    expect(invalid.accountLabels).toEqual([]);
+  });
   it("applies model selection from the API query and keeps model options available", async () => {
     const report = await (await api.GET(request({ model: "test-model" }))).json();
     expect(report.range.model).toBe("test-model");
@@ -271,6 +370,8 @@ describe("request diagnostics API", () => {
   it.each([
     { start: "not-a-date" }, { end: new Date(start).toISOString() }, { end: new Date(start + 32 * 86400000).toISOString() },
     { slowMs: "NaN" }, { slowMs: "0" }, { page: "0" }, { page: "1.5" }, { issue: "invalid" }, { focusApiKeyId: "key", focusConnectionId: "account" },
+    { accountLabel: "invalid" }, { accountLabel: "label:" }, { accountLabel: "label:   " }, { accountLabel: `label:${"字".repeat(81)}` },
+    { accountColor: "green" }, { accountColor: "#fff" }, { accountColor: "#15803d\n" },
   ])("rejects invalid query parameters: %j", async query => {
     expect((await api.GET(request(query))).status).toBe(400);
   });
