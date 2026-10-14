@@ -4,6 +4,24 @@ export const ACCOUNT_QUALITY_LABELS = {
   degraded: "已降智",
 };
 export const ACCOUNT_QUALITY_MAX_LENGTH = 80;
+export const ACCOUNT_QUALITY_DEFAULT_COLOR = "#a64027";
+
+export function isAccountQualityColor(color) {
+  return typeof color === "string" && color.length === 7 && /^#[0-9a-f]{6}$/i.test(color);
+}
+
+export function getAccountQualityColor(connection) {
+  return isAccountQualityColor(connection?.qualityColor) ? connection.qualityColor.toLowerCase() : ACCOUNT_QUALITY_DEFAULT_COLOR;
+}
+
+export function getAccountQualityTextColor(color) {
+  const channels = getAccountQualityColor({ qualityColor: color }).slice(1).match(/../g).map(hex => {
+    const value = parseInt(hex, 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#ffffff";
+}
 
 export function getAccountQualityStatus(connection) {
   if (connection?.qualityStatus === undefined) return connection?.isDegraded === true ? "degraded" : null;

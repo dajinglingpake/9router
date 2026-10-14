@@ -12,7 +12,7 @@ const OPTIONAL_FIELDS = [
   "consecutiveUseCount", "idToken", "lastRefreshAt", "minRequestIntervalMs", "maxRequestIntervalMs",
   "accountCooldownMinMs", "accountCooldownMaxMs", "exclusiveApiKeyId", "exclusiveApiKeyIds",
   "isDegraded", "degradedMarkedAt",
-  "qualityStatus", "qualityLabel", "qualityMarkedAt",
+  "qualityStatus", "qualityLabel", "qualityColor", "qualityMarkedAt",
 ];
 
 const MODEL_LOCK_PREFIX = "modelLock_";

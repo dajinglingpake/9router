@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
+import { ACCOUNT_QUALITY_MAX_LENGTH, ACCOUNT_QUALITY_DEFAULT_COLOR, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt, getAccountQualityColor, getAccountQualityTextColor } from "@/shared/utils/accountQuality.js";
 
 vi.mock("@/lib/oauth/providers", () => ({ backfillCodexEmails: vi.fn() }));
 
@@ -58,7 +58,7 @@ async function reopen() {
 }
 
 function withoutMarkerAndUpdateTime(connection) {
-  const { isDegraded, degradedMarkedAt, qualityStatus, qualityLabel, qualityMarkedAt, updatedAt, ...rest } = connection;
+  const { isDegraded, degradedMarkedAt, qualityStatus, qualityLabel, qualityColor, qualityMarkedAt, updatedAt, ...rest } = connection;
   return rest;
 }
 
@@ -253,6 +253,71 @@ describe("manual account degradation marker", () => {
     const created = await db.createProviderConnection({ provider: "codex", authType: "oauth", name: "Custom", qualityStatus: "custom", qualityLabel: "待观察", qualityMarkedAt: before.qualityMarkedAt });
     await reopen();
     expect(await db.getProviderConnectionById(created.id)).toMatchObject({ qualityStatus: "custom", qualityLabel: "待观察", qualityMarkedAt: before.qualityMarkedAt });
+  });
+
+  it("saves a recovery description and green color together on a disabled account and returns both after refresh", async () => {
+    const qualityLabel = "风控已结束，恢复正常";
+    const response = await update({ qualityStatus: "custom", qualityLabel, qualityColor: "#15803D" });
+    expect(response.status).toBe(200);
+    const { connection } = await response.json();
+    await reopen();
+    const saved = await db.getProviderConnectionById(account.id);
+    expect(saved).toMatchObject({ qualityStatus: "custom", qualityLabel, qualityColor: "#15803d", qualityMarkedAt: connection.qualityMarkedAt, isActive: false });
+    expect(withoutMarkerAndUpdateTime(saved)).toEqual(withoutMarkerAndUpdateTime(account));
+    const { GET } = await import("@/app/api/providers/client/route.js");
+    const data = await (await GET(new Request("http://localhost/api/providers/client?accountStatus=inactive"))).json();
+    expect(data.connections[0]).toMatchObject({ qualityLabel, qualityColor: "#15803d", qualityMarkedAt: connection.qualityMarkedAt });
+    for (const secret of ["saved-access", "saved-refresh", "saved-id"]) expect(JSON.stringify(data)).not.toContain(secret);
+    await update({ name: "Renamed" });
+    expect((await db.getProviderConnectionById(account.id)).qualityColor).toBe("#15803d");
+    const created = await db.createProviderConnection({ provider: "codex", authType: "oauth", name: "Colored", qualityStatus: "custom", qualityLabel, qualityColor: "#15803d" });
+    await reopen();
+    expect((await db.getProviderConnectionById(created.id)).qualityColor).toBe("#15803d");
+  });
+
+  it("can change only color, preserves unchanged selections and keeps color when only text changes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const first = "2026-10-14T02:00:00.000Z", next = "2026-10-14T03:00:00.000Z";
+    vi.setSystemTime(new Date(first));
+    await update({ qualityStatus: "custom", qualityLabel: "风控中", qualityColor: "#b91c1c" });
+    vi.setSystemTime(new Date(next));
+    expect((await update({ qualityColor: "#15803d" })).status).toBe(200);
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityLabel: "风控中", qualityColor: "#15803d", qualityMarkedAt: next });
+    vi.setSystemTime(new Date("2026-10-14T04:00:00.000Z"));
+    await update({ qualityColor: "#15803D" });
+    expect((await db.getProviderConnectionById(account.id)).qualityMarkedAt).toBe(next);
+    await update({ qualityStatus: "custom", qualityLabel: "风控已结束" });
+    expect((await db.getProviderConnectionById(account.id)).qualityColor).toBe("#15803d");
+    await update({ qualityColor: null });
+    expect((await db.getProviderConnectionById(account.id)).qualityColor).toBe(ACCOUNT_QUALITY_DEFAULT_COLOR);
+    await update({ qualityStatus: null });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: null, qualityLabel: null, qualityColor: null, qualityMarkedAt: null });
+  });
+
+  it("keeps legacy markers orange and their original timestamp when the default color is first saved", async () => {
+    const degradedMarkedAt = "2026-10-13T07:00:00.000Z";
+    await db.updateProviderConnection(account.id, { isDegraded: true, degradedMarkedAt });
+    expect(getAccountQualityColor(await db.getProviderConnectionById(account.id))).toBe(ACCOUNT_QUALITY_DEFAULT_COLOR);
+    await update({ qualityColor: ACCOUNT_QUALITY_DEFAULT_COLOR });
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ qualityStatus: "degraded", qualityColor: ACCOUNT_QUALITY_DEFAULT_COLOR, qualityMarkedAt: degradedMarkedAt, degradedMarkedAt });
+    expect(getAccountQualityColor({ qualityColor: "invalid" })).toBe(ACCOUNT_QUALITY_DEFAULT_COLOR);
+  });
+
+  it.each(["green", "#fff", "#15803g", "#15803d00", "#15803d\n", " #15803d", "red;background:url(x)", true, 123, [], {}])("rejects invalid colors (%j) without changing the label or other fields", async qualityColor => {
+    expect((await update({ qualityStatus: "custom", qualityLabel: "Should not save", qualityColor, name: "Should not save" })).status).toBe(400);
+    expect(await db.getProviderConnectionById(account.id)).toEqual(account);
+  });
+
+  it("does not create a label from a color alone", async () => {
+    expect((await update({ qualityColor: "#15803d" })).status).toBe(400);
+    expect(await db.getProviderConnectionById(account.id)).toEqual(account);
+  });
+
+  it.each([
+    ["#ffffff", "#000000"], ["#000000", "#ffffff"], ["#facc15", "#000000"],
+    ["#15803d", "#ffffff"], ["#757575", "#ffffff"], ["#767676", "#000000"],
+  ])("keeps text readable on %s", (background, foreground) => {
+    expect(getAccountQualityTextColor(background)).toBe(foreground);
   });
 
   it.each([undefined, null, "", "   ", true, 1, {}, [], "字".repeat(ACCOUNT_QUALITY_MAX_LENGTH + 1)])("rejects invalid custom text (%j) without other edits", async qualityLabel => {

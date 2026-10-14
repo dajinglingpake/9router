@@ -11,7 +11,7 @@ import {
 import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
 import { getApiKeyById } from "@/lib/db/repos/apiKeysRepo.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
-import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt } from "@/shared/utils/accountQuality.js";
+import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt, getAccountQualityColor, isAccountQualityColor } from "@/shared/utils/accountQuality.js";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -132,12 +132,17 @@ export async function PUT(request, { params }) {
     if (body.qualityLabel !== undefined && body.qualityStatus === undefined) {
       return NextResponse.json({ error: "填写自定义标签时需要指定账号标记类型" }, { status: 400 });
     }
-    if (body.qualityStatus !== undefined || body.isDegraded !== undefined) {
-      const status = body.qualityStatus !== undefined ? body.qualityStatus : body.isDegraded ? "degraded" : null;
+    if (body.qualityColor !== undefined && body.qualityColor !== null && !isAccountQualityColor(body.qualityColor)) {
+      return NextResponse.json({ error: "标签颜色必须是 #RRGGBB 格式的颜色值" }, { status: 400 });
+    }
+    if (body.qualityStatus !== undefined || body.isDegraded !== undefined || body.qualityColor !== undefined) {
+      const colorOnly = body.qualityStatus === undefined && body.isDegraded === undefined;
+      const status = colorOnly ? getAccountQualityStatus(existing) : body.qualityStatus !== undefined ? body.qualityStatus : body.isDegraded ? "degraded" : null;
       if (status !== null && (typeof status !== "string" || (status !== "custom" && !Object.hasOwn(ACCOUNT_QUALITY_LABELS, status)))) {
         return NextResponse.json({ error: "账号标记类型无效" }, { status: 400 });
       }
-      const qualityLabel = status === "custom" && typeof body.qualityLabel === "string" ? body.qualityLabel.trim() : null;
+      const label = colorOnly ? getAccountQualityLabel(existing) : body.qualityLabel;
+      const qualityLabel = status === "custom" && typeof label === "string" ? label.trim() : null;
       if (status === "custom" && (!qualityLabel || qualityLabel.length > ACCOUNT_QUALITY_MAX_LENGTH)) {
         return NextResponse.json({ error: `自定义标签需填写 1 至 ${ACCOUNT_QUALITY_MAX_LENGTH} 个字符` }, { status: 400 });
       }
@@ -147,13 +152,18 @@ export async function PUT(request, { params }) {
       if (body.isDegraded !== undefined && body.isDegraded !== (status === "degraded")) {
         return NextResponse.json({ error: "账号标记与降智状态不一致" }, { status: 400 });
       }
-      const unchanged = status === getAccountQualityStatus(existing) && (status !== "custom" || qualityLabel === getAccountQualityLabel(existing));
+      if (!status && body.qualityColor != null) {
+        return NextResponse.json({ error: "请先填写标签再选择颜色" }, { status: 400 });
+      }
+      const qualityColor = status ? getAccountQualityColor(body.qualityColor === undefined ? existing : body) : null;
+      const unchanged = status === getAccountQualityStatus(existing) && (status !== "custom" || qualityLabel === getAccountQualityLabel(existing)) && qualityColor === getAccountQualityColor(existing);
       const markedAt = status
         ? (unchanged && getAccountQualityMarkedAt(existing)) || new Date().toISOString()
         : null;
       Object.assign(updateData, {
         qualityStatus: status,
         qualityLabel,
+        qualityColor,
         qualityMarkedAt: markedAt,
         isDegraded: status === "degraded",
         degradedMarkedAt: status === "degraded" ? markedAt : null,
