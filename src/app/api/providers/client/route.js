@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/localDb";
 import { backfillCodexEmails } from "@/lib/oauth/providers";
 import { getAccountExpiry } from "@/lib/accountExpiry";
+import { getAccountPlan } from "@/lib/accountPlan.js";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
@@ -38,6 +39,8 @@ function maskName(name) {
 
 function sanitize(c) {
   const safe = { accountExpiry: getAccountExpiry(c) };
+  const accountPlan = getAccountPlan(c);
+  if (accountPlan) safe.accountPlan = accountPlan;
   for (const f of SAFE_FIELDS) if (c[f] !== undefined) safe[f] = c[f];
   if (safe.name) safe.name = maskName(safe.name);
   if (c.providerSpecificData) {

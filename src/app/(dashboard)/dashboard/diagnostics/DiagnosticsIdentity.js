@@ -4,12 +4,14 @@ import { useState } from "react";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { Icon } from "./format";
 import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
+import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 
 export default function DiagnosticsIdentity({ name, onFocus, label = "账号", connection }) {
   const { copied, copy } = useCopyToClipboard();
   const [copyError, setCopyError] = useState(false);
   return <div className="min-w-0"><div className="flex min-w-0 flex-wrap items-center gap-x-1">
     <span className="min-w-0 max-w-full cursor-text select-text break-all text-sm font-semibold">{name}</span>
+    <AccountPlanBadge connection={connection} />
     <button type="button" aria-label={`复制${label} ${name}`} title={copied ? "已复制" : `复制完整${label}`} onClick={async event => {
       const button = event.currentTarget;
       setCopyError(false);

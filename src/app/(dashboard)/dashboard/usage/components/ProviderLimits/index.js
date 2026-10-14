@@ -8,6 +8,7 @@ import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
 import CodexReloginButton from "@/shared/components/CodexReloginButton";
 import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
+import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
@@ -324,6 +325,7 @@ export default function ProviderLimits() {
       const quotaEntry = {
         quotas: parsedQuotas,
         plan: data.plan || null,
+        cachedAt: new Date().toISOString(),
         message: data.message || null,
         raw: data,
       };
@@ -1163,6 +1165,7 @@ export default function ProviderLimits() {
                           {getConnectionSecondaryLabel(conn)}
                         </p>
                       ) : null}
+                      <AccountPlanBadge connection={conn} usage={quota} />
                       <AccountExpiry connection={conn} />
                       <AccountApiKeyBindings connection={conn} showShared />
                       <AccountOverloadWarning connection={conn} onUpdated={(overloadWarning) => setConnections(prev => prev.map(c =>

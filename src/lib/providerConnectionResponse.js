@@ -1,4 +1,5 @@
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { getAccountPlan } from "@/lib/accountPlan.js";
 
 export function usesAwsCredentialForm(provider) {
   return AI_PROVIDERS[provider]?.credentialForm === "aws";
@@ -6,6 +7,8 @@ export function usesAwsCredentialForm(provider) {
 
 export function toProviderConnectionResponse(connection) {
   const { apiKey, accessToken, refreshToken, idToken, ...safe } = connection;
+  const accountPlan = getAccountPlan(connection);
+  if (accountPlan) safe.accountPlan = accountPlan;
 
   if (!usesAwsCredentialForm(connection.provider) || !connection.providerSpecificData) {
     return safe;

@@ -91,6 +91,15 @@ function expectPreserved(connection) {
 }
 
 describe("Codex account relogin", () => {
+  it("shows the newly authorized plan after relogin instead of the old stored plan", async () => {
+    const { getAccountPlan } = await import("@/lib/accountPlan.js");
+    await db.updateProviderConnection(account.id, { providerSpecificData: { ...account.providerSpecificData, chatgptPlanType: "plus" } });
+    expect(getAccountPlan(await db.getProviderConnectionById(account.id)).type).toBe("plus");
+    expect((await exchangeCode()).status).toBe(200);
+    expect(getAccountPlan(await db.getProviderConnectionById(account.id))).toMatchObject({ type: "pro", label: "Pro", source: "account" });
+    expect((await db.getProviderConnectionById(account.id)).isActive).toBe(false);
+  });
+
   it.each(["normal", "slow", "degraded", "custom"])("preserves the %s quality marker and timestamp during relogin", async qualityStatus => {
     const qualityMarkedAt = "2026-10-13T07:00:00.000Z";
     const qualityLabel = qualityStatus === "custom" ? "中午正常，下午降智" : null;

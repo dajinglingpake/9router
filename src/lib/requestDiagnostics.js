@@ -7,6 +7,7 @@ import { buildDiagnosticsReport } from "@/shared/utils/requestDiagnostics.js";
 import { getRequestPressureSignal } from "./requestPressureSignals.cjs";
 import { DIAGNOSTIC_TOKEN_COLUMNS, extractDiagnosticTokenUsage } from "./diagnosticTokenUsage.cjs";
 import { ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityMetadata, isAccountQualityColor } from "@/shared/utils/accountQuality.js";
+import { getAccountPlan } from "./accountPlan.js";
 
 const MAX_ROWS = 20000;
 const valueOrNull = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
@@ -40,6 +41,9 @@ export async function getRequestDiagnostics(options) {
   const keyByValue = new Map(keys.map(k => [k.key, k]));
   const keyById = new Map(keys.map(k => [k.id, k]));
   const connections = db.all(`SELECT id, provider, name, email,
+    CASE WHEN json_valid(data) THEN json_extract(data, '$.idToken') END AS idToken,
+    CASE WHEN json_valid(data) THEN json_extract(data, '$.accessToken') END AS accessToken,
+    CASE WHEN json_valid(data) THEN data -> '$.providerSpecificData.chatgptPlanType' END AS chatgptPlanType,
     CASE WHEN json_valid(data) THEN data -> '$.qualityStatus' END AS qualityStatus,
     CASE WHEN json_valid(data) THEN data -> '$.qualityLabel' END AS qualityLabel,
     CASE WHEN json_valid(data) THEN data -> '$.qualityColor' END AS qualityColor,
@@ -50,7 +54,10 @@ export async function getRequestDiagnostics(options) {
     CASE WHEN json_valid(data) THEN json_extract(data, '$.exclusiveApiKeyId') END AS binding
     FROM providerConnections`).map(c => {
     const ids = getExclusiveApiKeyIds({ exclusiveApiKeyIds: parseJson(c.bindings), exclusiveApiKeyId: c.binding });
+    const accountPlan = getAccountPlan({ provider: c.provider, idToken: c.idToken, accessToken: c.accessToken,
+      providerSpecificData: { chatgptPlanType: parseJson(c.chatgptPlanType) } });
     return { id: c.id, provider: c.provider, name: c.name || c.email || c.id.slice(0, 8), exclusiveApiKeyIds: ids,
+      ...(accountPlan ? { accountPlan } : {}),
       ...getAccountQualityMetadata({ qualityStatus: c.qualityStatus === null ? undefined : parseJson(c.qualityStatus),
         qualityLabel: parseJson(c.qualityLabel), qualityColor: parseJson(c.qualityColor), qualityMarkedAt: parseJson(c.qualityMarkedAt),
         isDegraded: parseJson(c.isDegraded) === true, degradedMarkedAt: parseJson(c.degradedMarkedAt) }),

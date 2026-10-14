@@ -10,6 +10,7 @@ import DiagnosticsIdentity from "./DiagnosticsIdentity";
 import DiagnosticsDetailsModal from "./DiagnosticsDetailsModal";
 import { clock, duration, formatNumber, percent, throughput, Icon } from "./format";
 import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
+import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 import { ACCOUNT_QUALITY_COLORS, getAccountQualityLabel } from "@/shared/utils/accountQuality.js";
 
 const panel = "rounded-2xl border border-border bg-surface shadow-[var(--shadow-soft)]";
@@ -178,12 +179,12 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
           }}>
             <option value="all">全部账号与 API Key</option>
             <optgroup label="API Key">{(data?.subjects.apiKeys || []).map(item => <option key={item.id} value={`byApiKey:${item.id}`}>{item.name}</option>)}</optgroup>
-            <optgroup label="账号">{(data?.subjects.accounts || []).map(item => <option key={item.id} value={`byAccount:${item.id}`}>{item.name}{getAccountQualityLabel(item) ? ` · ${getAccountQualityLabel(item)}` : ""}</option>)}</optgroup>
+            <optgroup label="账号">{(data?.subjects.accounts || []).map(item => <option key={item.id} value={`byAccount:${item.id}`}>{item.name}{item.accountPlan ? ` · ${item.accountPlan.label}` : ""}{getAccountQualityLabel(item) ? ` · ${getAccountQualityLabel(item)}` : ""}</option>)}</optgroup>
           </select>
         </label>
         <span className="text-xs text-text-muted">关注后，指标、趋势与排行一起筛选</span>
       </div>
-      {focus && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-sm"><Icon className="text-primary">filter_center_focus</Icon><span className="min-w-0 flex-1 break-all">仅关注{focus.dimension === "byApiKey" ? " API Key" : "账号"}：<strong>{focusName}</strong></span><button className="min-h-9 cursor-pointer rounded-md px-2 text-xs text-primary hover:bg-primary/10" onClick={() => focusGroup(null)}>返回全部</button>{focus.dimension === "byAccount" && <div className="basis-full"><AccountQualityBadge connection={focusSubject} /></div>}</div>}
+      {focus && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-sm"><Icon className="text-primary">filter_center_focus</Icon><span className="min-w-0 flex-1 break-all">仅关注{focus.dimension === "byApiKey" ? " API Key" : "账号"}：<strong>{focusName}</strong></span><button className="min-h-9 cursor-pointer rounded-md px-2 text-xs text-primary hover:bg-primary/10" onClick={() => focusGroup(null)}>返回全部</button>{focus.dimension === "byAccount" && <div className="flex basis-full flex-wrap items-center gap-2"><AccountPlanBadge connection={focusSubject} /><AccountQualityBadge connection={focusSubject} /></div>}</div>}
       {customOpen && <form onSubmit={applyCustom} className="mt-4 flex flex-wrap items-end gap-3 border-t border-border-subtle pt-4">
         <label className="flex flex-col gap-1.5 text-xs text-text-muted">开始时间<input className={control} type="datetime-local" required value={customStart} onChange={e => setCustomStart(e.target.value)} /></label>
         <label className="flex flex-col gap-1.5 text-xs text-text-muted">结束时间<input className={control} type="datetime-local" required value={customEnd} onChange={e => setCustomEnd(e.target.value)} /></label>
@@ -232,7 +233,7 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
               <tbody>{(showAllRows ? rows : rows.slice(0, 8)).map((row, index) => <tr key={row.id} className={`border-t border-border-subtle transition-colors hover:bg-surface-2/50 ${focus?.dimension === dimension && focus.id === row.id ? "bg-primary/5" : ""}`}>
                 <td className="max-w-72 py-4 pl-5 pr-4"><div className="flex items-start gap-3"><span className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-medium tabular-nums ${index < 3 && (row.failureCount || row.slowCount) ? "bg-primary/10 text-primary" : "bg-surface-2 text-text-muted"}`}>{index + 1}</span><div className="min-w-0">
                   <DiagnosticsIdentity name={row.name} connection={dimension === "byAccount" ? row : undefined} label={dimension === "byAccount" ? "账号" : "API Key 名称"} onFocus={() => focusGroup(row)} />
-                  {dimension === "byApiKey" && <div className="space-y-1">{row.related.filter(account => getAccountQualityLabel(account)).slice(0, 3).map(account => <div key={account.id} className="min-w-0"><p className="select-text break-all text-xs text-text-muted">{account.name}</p><AccountQualityBadge connection={account} /></div>)}{row.related.filter(account => getAccountQualityLabel(account)).length > 3 && <button type="button" className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusGroup(row)}>查看全部关联账号标签</button>}</div>}
+                  {dimension === "byApiKey" && <div className="space-y-1">{row.related.filter(account => getAccountQualityLabel(account) || account.accountPlan).slice(0, 3).map(account => <div key={account.id} className="min-w-0"><p className="select-text break-all text-xs text-text-muted">{account.name}</p><div className="flex flex-wrap items-center gap-x-2"><AccountPlanBadge connection={account} /><AccountQualityBadge connection={account} /></div></div>)}{row.related.filter(account => getAccountQualityLabel(account) || account.accountPlan).length > 3 && <button type="button" className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusGroup(row)}>查看全部关联账号</button>}</div>}
                   <p className="mt-1 truncate text-xs text-text-muted" title={row.related.map(r => r.name).join("、")}>{row.related.length} 个{dimension === "byApiKey" ? "账号" : "API Key"} · {row.providers.join(" / ")}</p>
                   {row.bindings.length > 0 && <p className="mt-1.5 max-w-64 truncate text-xs text-primary" title={row.bindings.join("、")}>专用：{row.bindings.join("、")}</p>}
                 </div></div></td>

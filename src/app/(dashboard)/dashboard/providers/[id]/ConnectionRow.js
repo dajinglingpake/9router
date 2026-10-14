@@ -6,6 +6,7 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 import AccountExpiry from "@/shared/components/AccountExpiry";
+import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
 import CodexReloginButton from "@/shared/components/CodexReloginButton";
 
@@ -163,6 +164,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{displayName}</p>
+          <AccountPlanBadge connection={connection} />
           <AccountExpiry connection={connection} />
           {secondaryDisplayName && (
             <p className="text-xs text-text-muted truncate">{secondaryDisplayName}</p>
