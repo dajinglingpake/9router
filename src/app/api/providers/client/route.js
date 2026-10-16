@@ -7,6 +7,7 @@ import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarnin
 import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { getRecentAccountApiKeyUsers } from "@/lib/recentAccountApiKeyUsers.js";
 
 const SAFE_FIELDS = [
   "id", "provider", "authType", "name", "email", "displayName",
@@ -116,11 +117,14 @@ export async function GET(request) {
     const offset = (currentPage - 1) * pageSize;
     const warnings = await getAccountOverloadWarnings();
     const visibleConnections = sortedConnections.slice(offset, offset + pageSize);
-    const keyNames = await getExclusiveApiKeyNames(visibleConnections);
+    const [keyNames, recentUsers] = await Promise.all([
+      getExclusiveApiKeyNames(visibleConnections), getRecentAccountApiKeyUsers(visibleConnections),
+    ]);
     const pageConnections = visibleConnections.map(connection => ({
       ...sanitize(connection), overloadWarning: warnings[connection.id] || null,
       exclusiveApiKeyIds: getExclusiveApiKeyIds(connection),
       exclusiveApiKeyNames: keyNames.get(connection.id),
+      recentApiKeyUsers: recentUsers.get(connection.id),
     }));
 
     return NextResponse.json({
@@ -136,7 +140,7 @@ export async function GET(request) {
         eligibleConnections: eligibleConnections.length,
         providerFilteredConnections: providerFilteredConnections.length,
       },
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error fetching providers for client:", error);
     return NextResponse.json({ error: "Failed to fetch providers" }, { status: 500 });

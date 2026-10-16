@@ -14,6 +14,7 @@ import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarnin
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
 import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { getRecentAccountApiKeyUsers } from "@/lib/recentAccountApiKeyUsers.js";
 
 export const dynamic = "force-dynamic";
 
@@ -56,7 +57,9 @@ export async function GET() {
   try {
     const connections = await getProviderConnections();
     const overloadWarnings = await getAccountOverloadWarnings();
-    const keyNames = await getExclusiveApiKeyNames(connections);
+    const [keyNames, recentUsers] = await Promise.all([
+      getExclusiveApiKeyNames(connections), getRecentAccountApiKeyUsers(connections),
+    ]);
 
     // Build nodeNameMap for compatible providers (id → name)
     let nodeNameMap = {};
@@ -78,12 +81,13 @@ export async function GET() {
         name,
         exclusiveApiKeyIds: getExclusiveApiKeyIds(c),
         exclusiveApiKeyNames: keyNames.get(c.id),
+        recentApiKeyUsers: recentUsers.get(c.id),
         accountExpiry: getAccountExpiry(c),
         overloadWarning: overloadWarnings[c.id] || null,
       };
     });
 
-    return NextResponse.json({ connections: safeConnections });
+    return NextResponse.json({ connections: safeConnections }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error fetching providers:", error);
     return NextResponse.json({ error: "Failed to fetch providers" }, { status: 500 });
