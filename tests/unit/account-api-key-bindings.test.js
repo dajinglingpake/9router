@@ -77,6 +77,23 @@ function send(key) {
 }
 
 describe("exclusive account isolation", () => {
+  it.each(["local", "legacy"])("preserves resolved proxy policy through %s account selection", async kind => {
+    const selector = kind === "local" ? local : legacy;
+    const pool = await db.createProxyPool({ name: "strict", proxyUrl: "http://127.0.0.1:9", strictProxy: true });
+    await db.updateProviderConnection(privateA.id, { providerSpecificData: { proxyPoolId: pool.id } });
+    expect((await pick(selector, owner.key)).providerSpecificData).toMatchObject({
+      connectionProxyPoolId: pool.id, strictProxy: true,
+    });
+    await db.updateProxyPool(pool.id, { strictProxy: false });
+    expect((await pick(selector, owner.key)).providerSpecificData.strictProxy).toBe(false);
+  });
+  it.each(["local", "legacy"])("preserves strict proxy policy for no-auth providers through %s", async kind => {
+    const selector = kind === "local" ? local : legacy;
+    const pool = await db.createProxyPool({ name: "strict-free", proxyUrl: "http://127.0.0.1:9", strictProxy: true });
+    await db.updateSettings({ providerStrategies: { opencode: { proxyPoolId: pool.id } } });
+    const credentials = await selector("opencode", null, "test-model");
+    expect(credentials.providerSpecificData).toMatchObject({ connectionProxyPoolId: pool.id, strictProxy: true });
+  });
   it.each(["local", "legacy"])("isolates all callers through %s", async kind => {
     const selector = kind === "local" ? local : legacy;
     const unbound = await db.createApiKey("unbound", "test-machine");
