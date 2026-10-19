@@ -4,7 +4,7 @@ import { parseJson } from "./db/helpers/jsonCol.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { getCodexTrialIdentity } from "@/shared/utils/codexTrialIdentity.js";
 
-export const RECENT_ACCOUNT_USAGE_MS = 6 * 3600000;
+export const RECENT_ACCOUNT_USAGE_MS = 3600000;
 
 export async function getRecentAccountApiKeyUsers(connections, now = Date.now()) {
   const result = new Map(connections.map(connection => [connection.id, []]));

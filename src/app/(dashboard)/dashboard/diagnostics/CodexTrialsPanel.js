@@ -11,7 +11,7 @@ import CodexTrialModels from "./CodexTrialModels";
 import CodexTrialAccountActions from "./CodexTrialAccountActions";
 import { formatTrialErrorLog, formatTrialLog } from "@/shared/utils/codexTrialOutput";
 import { CODEX_TRIAL_PROMPT, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_MODEL, CODEX_TRIAL_EFFORT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL } from "@/shared/utils/codexTrial";
-import { CODEX_TRIAL_DEGRADATION_LIMITS, matchesTrialDegradationRule } from "@/shared/utils/codexTrialQuality";
+import { CODEX_TRIAL_DEGRADATION_LIMITS, getTrialDegradationMetrics, matchesTrialDegradationRule } from "@/shared/utils/codexTrialQuality";
 
 const panel = "rounded-2xl border border-border bg-surface shadow-[var(--shadow-soft)]";
 const control = "min-h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text-main outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50";
@@ -31,7 +31,8 @@ function Metric({ label, children, danger }) {
 
 function AccountCard({ account, busy, models, now, onRun, onInspect, onUpdated }) {
   const result = account.result;
-  const degraded = matchesTrialDegradationRule(result);
+  const lowMetrics = getTrialDegradationMetrics(result);
+  const degraded = lowMetrics.length > 0;
   const active = result => ["queued", "running"].includes(result?.status);
   const selectedActive = account.results?.some(result => active(result) && models.some(item => item.model === result.model));
   const [status, color] = states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
@@ -49,7 +50,7 @@ function AccountCard({ account, busy, models, now, onRun, onInspect, onUpdated }
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">
         <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>{status}</span>
-        {degraded && <span data-trial-degradation className="rounded-md bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-300" title="同时满足本页自定规则的三个阈值">降智表现 · 规则命中</span>}
+        {degraded && <span data-trial-degradation className="rounded-md bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-300" title="任意一项低于本页自定规则的阈值">降智表现 · 规则命中</span>}
       </div>
     </div>
     <div className="relative h-80 border-y border-border bg-surface-2">
@@ -67,14 +68,14 @@ function AccountCard({ account, busy, models, now, onRun, onInspect, onUpdated }
     </div>
     <div className="p-4">
       <dl className="grid grid-cols-3 gap-3 sm:grid-cols-5 sm:gap-2">
-        <Metric label="输出 tok/s" danger={degraded}>{typeof result?.tokensPerSecond === "number" ? result.tokensPerSecond.toFixed(1) : "—"}</Metric>
+        <Metric label="输出 tok/s" danger={lowMetrics.includes("tokensPerSecond")}>{typeof result?.tokensPerSecond === "number" ? result.tokensPerSecond.toFixed(1) : "—"}</Metric>
         <Metric label="中转错误" danger={result?.routerStatsVersion === 3 && result.routerErrors > 0}>
           {result ? <button type="button" className="cursor-pointer rounded underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             aria-label={`查看 ${account.name} 本次测试的中转错误`} onClick={() => onInspect(account, "errors")}>{number(result.routerStatsVersion === 3 ? result.routerErrors : null)}</button> : "—"}
         </Metric>
-        <Metric label="输出 tokens" danger={degraded}>{number(result?.usage?.output_tokens)}</Metric>
+        <Metric label="输出 tokens" danger={lowMetrics.includes("outputTokens")}>{number(result?.usage?.output_tokens)}</Metric>
         <Metric label="总耗时">{elapsed(duration)}</Metric>
-        <Metric label="HTML 行数" danger={degraded}>{result?.hasHtml ? number(result.htmlLines) : "—"}</Metric>
+        <Metric label="HTML 行数" danger={lowMetrics.includes("htmlLines")}>{result?.hasHtml ? number(result.htmlLines) : "—"}</Metric>
       </dl>
       <div className="mt-4 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted">
         {!result && <span>使用上方所选模型</span>}
@@ -206,7 +207,7 @@ export default function CodexTrialsPanel() {
       <div className="flex flex-wrap gap-2"><input aria-label="搜索账号" className={`${control} sm:!w-52`} placeholder="搜索账号…" value={search} onChange={event => setSearch(event.target.value)} /><select aria-label="筛选测试结果" className={`${control} sm:!w-40`} value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部账号</option><option value="disabled">禁用账号</option><option value="success">已生成</option><option value="degraded">降智表现（规则命中）</option><option value="error">失败 / 中断</option></select></div>
     </div>
     <div className="-mt-3 space-y-1 text-xs leading-5 text-text-muted">
-      <p>自定标记规则：已生成样本同时满足 HTML ≤ {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率 ≤ {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s、输出 ≤ {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens 时，标记为“降智表现”。每个账号、模型分别判断，已有结果自动适用。</p>
+      <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
       <p>速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。</p>
     </div>
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} models={models} now={now} onRun={run} onInspect={inspect} onUpdated={() => load()} />)}</div>

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/oauth/providers", () => ({ backfillCodexEmails: vi.fn() }));
-const now = Date.parse("2026-10-16T04:00:00.000Z"), sixHours = 6 * 3600000;
+const now = Date.parse("2026-10-16T04:00:00.000Z"), oneHour = 3600000;
 const originalDataDir = process.env.DATA_DIR;
 let tempDir, db, adapter, getUsers, shared, bound, alice, bob, listeners;
 
@@ -57,15 +57,17 @@ describe("recent callers of shared accounts", () => {
     expect((await db.getProviderConnectionById(shared.id)).isActive).toBe(false);
   });
 
-  it("uses exactly the last six hours, includes the start and excludes now or future timestamps", async () => {
-    usage(alice.key, now - sixHours);
-    error(alice, now - sixHours - 1);
-    usage(bob.key, now - sixHours - 1);
+  it("uses exactly the last hour, includes the start and excludes older, current or future timestamps", async () => {
+    usage(alice.key, now - oneHour);
+    error(alice, now - oneHour - 1);
+    usage(bob.key, now - oneHour - 1);
+    error(bob, now - oneHour - 1);
+    usage(bob.key, now - 2 * oneHour);
     usage(bob.key, now);
     error(bob, now);
     error(bob, now + 1000);
-    expect((await getUsers([shared], now)).get(shared.id)).toEqual([{ id: alice.id, name: "Alice", lastUsedAt: new Date(now - sixHours).toISOString() }]);
-    expect((await getUsers([shared], now + sixHours + 1001)).get(shared.id)).toEqual([]);
+    expect((await getUsers([shared], now)).get(shared.id)).toEqual([{ id: alice.id, name: "Alice", lastUsedAt: new Date(now - oneHour).toISOString() }]);
+    expect((await getUsers([shared], now + oneHour + 1001)).get(shared.id)).toEqual([]);
   });
 
   it("uses current names and disabled status while keeping equal-name keys distinct", async () => {
@@ -114,6 +116,9 @@ describe("recent callers of shared accounts", () => {
     vi.spyOn(Date, "now").mockReturnValue(now);
     usage(alice.key, now - 1000);
     error(bob, now - 2000);
+    const pastCaller = await db.createApiKey("Past caller", "test-machine");
+    usage(pastCaller.key, now - 2 * oneHour);
+    error(pastCaller, now - 2 * oneHour);
     const before = await db.getProviderConnectionById(shared.id);
     const quota = await import("@/app/api/providers/client/route.js");
     const providers = await import("@/app/api/providers/route.js");
