@@ -7,7 +7,7 @@ vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: 
 vi.mock("@/lib/network/initOutboundProxy", () => ({ ensureOutboundProxyInitialized: vi.fn() }));
 vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: mocks.fetch }));
 vi.mock("@/lib/accountAppeals/browser.mjs", () => ({ launchAppealBrowser: mocks.launch, VIEWPORT: { width: 1280, height: 900 } }));
-vi.mock("@/lib/auth/dashboardSession", () => ({ verifyDashboardAuthToken: mocks.auth }));
+vi.mock("@/lib/auth/dashboardSession", () => ({ verifyDashboardAuthToken: mocks.auth, shouldUseSecureCookie: request => request.headers.get("x-forwarded-proto") === "https" }));
 
 let api, browser, connection, exitListeners;
 const owner = "operator-one", otherOwner = "operator-two";
@@ -137,12 +137,35 @@ describe("isolated account appeals", () => {
 });
 
 describe("appeal request authorization", () => {
-  const request = (token, origin = "http://router.test", host = "router.test", contentType = "application/json") => ({ cookies: { get: () => token ? { value: token } : undefined }, headers: new Headers({ ...(origin ? { origin } : {}), host, "content-type": contentType }) });
-  it("always requires a valid dashboard login", async () => {
+  const request = (token, origin = "http://router.test", host = "router.test", contentType = "application/json", guest) => ({ cookies: { get: name => { const value = name === "auth_token" ? token : guest; return value ? { value } : undefined; } }, headers: new Headers({ ...(origin ? { origin } : {}), host, "content-type": contentType }) });
+  it("requires a valid dashboard login when login is enabled", async () => {
     const { appealOwner } = await import("@/lib/accountAppeals/request.js");
     await expect(appealOwner(request(null))).rejects.toMatchObject({ status: 401 });
     await expect(appealOwner(request("invalid"))).rejects.toMatchObject({ status: 401 });
-    expect(await appealOwner(request("valid-dashboard-session"))).toBe(api.ownerFor("valid-dashboard-session"));
+    expect(await appealOwner(request("valid-dashboard-session"))).toEqual({ owner: api.ownerFor("valid-dashboard-session") });
+  });
+  it("isolates visitors in configured no-login mode using a private session cookie", async () => {
+    mocks.settings.mockResolvedValue({ requireLogin: false });
+    const { appealOwner, appealResponse } = await import("@/lib/accountAppeals/request.js");
+    const first = await appealOwner(request(null), true, true);
+    const second = await appealOwner(request(null), true, true);
+    expect(first.owner).not.toBe(second.owner);
+    expect(first.cookie).toMatch(/; Path=\/api\/account-appeals; HttpOnly; SameSite=Strict$/);
+    const cookie = first.cookie.split(";")[0].split("=")[1];
+    const existing = request(null, undefined, undefined, undefined, cookie);
+    expect(await appealOwner(existing)).toEqual({ owner: first.owner });
+    expect(appealResponse({}, 202, first.cookie).headers.get("set-cookie")).toBe(first.cookie);
+    await expect(appealOwner(request(null))).rejects.toMatchObject({ status: 401 });
+    await expect(appealOwner(request(null), true)).rejects.toMatchObject({ status: 401 });
+    mocks.settings.mockResolvedValue({ requireLogin: true });
+    await expect(appealOwner(existing)).rejects.toMatchObject({ status: 401 });
+  });
+  it("uses a secure visitor cookie for HTTPS", async () => {
+    mocks.settings.mockResolvedValue({ requireLogin: false });
+    const { appealOwner } = await import("@/lib/accountAppeals/request.js");
+    const secure = request(null);
+    secure.headers.set("x-forwarded-proto", "https");
+    expect((await appealOwner(secure, true, true)).cookie).toContain("; Secure");
   });
   it.each([["http://other.test", "application/json", 403], [null, "application/json", 403], ["http://router.test", "text/plain", 415]])("rejects cross-site or non-JSON mutations", async (origin, contentType, status) => {
     const { appealOwner } = await import("@/lib/accountAppeals/request.js");

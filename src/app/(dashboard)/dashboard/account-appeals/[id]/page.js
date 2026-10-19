@@ -52,7 +52,7 @@ function AppealWorkspace({ connectionId }) {
       }
       timer = setTimeout(() => poll(current), document.hidden ? 10000 : 1200);
     }
-    startupRef.current ||= request("/api/account-appeals", post({ connectionId, requestId: crypto.randomUUID() }));
+    startupRef.current ||= request("/api/account-appeals", post({ connectionId, requestId: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("") }));
     startupRef.current.then(current => {
       sessionRef.current = current;
       if (!mounted.current) { release(); return; }

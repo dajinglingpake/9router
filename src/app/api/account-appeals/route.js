@@ -5,8 +5,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function POST(request) {
   try {
-    const owner = await appealOwner(request, true);
+    const { owner, cookie } = await appealOwner(request, true, true);
     const input = await request.json();
-    return appealResponse(await startAppeal(input.connectionId, owner, input.requestId), 202);
+    return appealResponse(await startAppeal(input.connectionId, owner, input.requestId), 202, cookie);
   } catch (error) { return appealFailure(error); }
 }
