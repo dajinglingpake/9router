@@ -89,15 +89,22 @@ export async function startAppeal(connectionId, owner, requestId) {
 }
 
 async function authenticate(session) {
-  if (session.authenticating || !session.user || !session.browser || ["closed", "error"].includes(session.status)) return;
+  if (session.authenticating || !session.user || !session.browser || ["closed", "error"].includes(session.status) || Date.now() < (session.nextAuthAt || 0)) return;
   session.authenticating = true;
   try {
     const result = await session.browser.authenticate(session.user);
     if (["closed", "error"].includes(session.status)) return;
     if (result?.error) {
+      if (result.retryable && (session.authFailures || 0) < 2) {
+        session.authFailures = (session.authFailures || 0) + 1;
+        const delay = session.authFailures * 5;
+        session.nextAuthAt = Date.now() + delay * 1000;
+        session.message = `${result.error} ${delay} 秒后自动重试（${session.authFailures}/2）。`;
+        return;
+      }
       await session.browser.close(); session.browser = null; session.user = null;
       session.status = "error"; session.message = result.error;
-    } else if (result?.ready) { session.status = "ready"; session.message = "账号已就绪，可在客服对话中自行填写并发送申诉。"; }
+    } else if (result?.ready) { session.authFailures = 0; session.nextAuthAt = 0; session.status = "ready"; session.message = "账号已就绪，可在客服对话中自行填写并发送申诉。"; }
   } catch { /* A document can be replaced while navigating; retry on the next frame. */ }
   finally { session.authenticating = false; }
 }

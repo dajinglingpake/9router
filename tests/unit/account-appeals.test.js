@@ -127,6 +127,35 @@ describe("isolated account appeals", () => {
     expect(saved(id).user).toBeNull();
   });
 
+  it("keeps the browser open and backs off when the support service temporarily fails", async () => {
+    browser.authenticate.mockResolvedValueOnce({ error: "客服身份验证失败（HTTP 500）", retryable: true }).mockResolvedValue({ ready: true });
+    const { id } = await start();
+    await api.appealFrame(id, owner);
+    await vi.waitFor(() => expect(saved(id).authFailures).toBe(1));
+    expect(saved(id).nextAuthAt).toBeGreaterThan(Date.now());
+    await api.appealFrame(id, owner);
+    expect(browser.authenticate).toHaveBeenCalledTimes(1);
+    expect(browser.close).not.toHaveBeenCalled();
+    saved(id).nextAuthAt = 0;
+    await api.appealFrame(id, owner);
+    await vi.waitFor(() => expect(saved(id).status).toBe("ready"));
+    expect(saved(id).authFailures).toBe(0);
+  });
+
+  it("limits retries and releases resources after repeated support service failures", async () => {
+    browser.authenticate.mockResolvedValue({ error: "客服身份验证失败（HTTP 500）", retryable: true });
+    const { id } = await start();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      saved(id).nextAuthAt = 0;
+      await api.appealFrame(id, owner);
+      await vi.waitFor(() => expect(saved(id).authenticating).toBe(false));
+    }
+    expect(browser.authenticate).toHaveBeenCalledTimes(3);
+    expect(saved(id).status).toBe("error");
+    expect(saved(id).user).toBeNull();
+    expect(browser.close).toHaveBeenCalled();
+  });
+
   it("keeps strict proxy failures from falling back to a direct browser connection", async () => {
     mocks.proxy.mockResolvedValue({ strictProxy: true, connectionProxyEnabled: false });
     const { id } = await start();

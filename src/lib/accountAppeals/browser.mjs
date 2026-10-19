@@ -29,10 +29,13 @@ export async function applyHelpIdentity(user) {
     if (context) break;
   }
   if (!context) return { ready: false };
-  const response = await fetch("https://support.api.openai.com/api/v1/me", {
-    headers: { Authorization: `Bearer ${user.accessToken}` }, signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) return { error: response.status === 401 ? "账号授权已失效，请重新授权后再打开申诉。" : `客服身份验证失败（HTTP ${response.status}），请重试。` };
+  let response;
+  try {
+    response = await fetch("https://support.api.openai.com/api/v1/me", {
+      headers: { Authorization: `Bearer ${user.accessToken}` }, signal: AbortSignal.timeout(15000),
+    });
+  } catch { return { error: "客服身份验证连接失败，请检查账号代理后重试。", retryable: true }; }
+  if (!response.ok) return { error: response.status === 401 ? "账号授权已失效，请重新授权后再打开申诉。" : `客服身份验证失败（HTTP ${response.status}），请重试。`, retryable: response.status >= 500 };
   const me = await response.json();
   if (!me.user_id || me.email?.toLowerCase() !== expectedEmail) return { error: "客服身份与所选账号不一致，已停止登录。" };
   // Fresh profiles are used for every session; no daily-browser storage is touched.
