@@ -307,6 +307,23 @@ describe("request diagnostics API", () => {
     const incompatible = await (await api.GET(request({ ...scope, detailsOnly: "1", connectionId: sharedAccount.id }))).json();
     expect(incompatible.details).toEqual([]);
   });
+  it.each([false, true])("bounds database scans by time even with provider/account/model filters (detailsOnly=%s)", async detailsOnly => {
+    const read = vi.spyOn(adapter, "all");
+    let queries;
+    try {
+      await diagnostics.getRequestDiagnostics({ ...options, provider: "codex", model: "test-model",
+        focusConnectionId: privateAccount.id, detailsOnly, includeAnalysis: false });
+      queries = read.mock.calls.filter(([sql]) => /FROM (usageHistory|requestErrors)\b/.test(sql));
+    } finally { read.mockRestore(); }
+    expect(queries).toHaveLength(2);
+    // A fast warm query can hide a scan of every historical row for the account.
+    // Assert SQLite actually restricts index traversal to the requested time range.
+    for (const [sql, params] of queries) {
+      const plan = adapter.all(`EXPLAIN QUERY PLAN ${sql}`, params).map(row => row.detail).join("\n");
+      expect(plan).toMatch(/SEARCH .*timestamp>\? AND timestamp<\?/);
+      expect(plan).not.toMatch(/SCAN (usageHistory|requestErrors)/);
+    }
+  });
   it("separates trial requests from normal traffic on the same account and model", async () => {
     const errors = await import("@/lib/db/repos/requestErrorsRepo.js");
     await db.saveRequestUsage({ timestamp: new Date(start + 3000).toISOString(), provider: "codex", model: "test-model",

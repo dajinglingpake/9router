@@ -78,13 +78,15 @@ export async function getRequestDiagnostics(options) {
   ].filter(([, value]) => value) : [];
   const detailClause = detailFilters.map(([column]) => ` AND ${column} = ?`).join("");
   const detailParams = detailFilters.map(([, value]) => value);
+  // Keep disk reads inside the selected time window. SQLite otherwise prefers the
+  // account/provider index and reads its entire history before filtering and sorting.
   const usage = db.all(`SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, status, promptTokens, completionTokens,
     CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.total') END AS latencyMs,
     CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.ttft') END AS ttftMs,
     ${DIAGNOSTIC_TOKEN_COLUMNS}
-    FROM usageHistory WHERE timestamp >= ? AND timestamp < ?${providerClause}${detailClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [start, end, ...providerParams, ...detailParams, MAX_ROWS + 1]);
+    FROM usageHistory INDEXED BY idx_uh_ts WHERE timestamp >= ? AND timestamp < ?${providerClause}${detailClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [start, end, ...providerParams, ...detailParams, MAX_ROWS + 1]);
   const errors = db.all(`SELECT id, timestamp, connectionId, provider, model, requestId, retryCount, recovered, data
-    FROM requestErrors WHERE timestamp >= ? AND timestamp < ?${providerClause}${detailClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [options.start, options.end, ...providerParams, ...detailParams, MAX_ROWS + 1]);
+    FROM requestErrors INDEXED BY idx_re_ts WHERE timestamp >= ? AND timestamp < ?${providerClause}${detailClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [options.start, options.end, ...providerParams, ...detailParams, MAX_ROWS + 1]);
 
   function identity(connectionId, key) {
     return { connectionId: connectionId || "unrouted", accountName: accountMap.get(connectionId)?.name || (connectionId ? "已删除账号" : "未路由到账号"),
