@@ -351,6 +351,59 @@ describe("stable account bindings during overload", () => {
     expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
   });
 
+  it.each([
+    [400, '[400]: {"error":{"message":"Missing required parameter: \'input[37].status\'.","code":"missing_required_parameter"}}', "请求参数或协议格式错误。"],
+    [429, "rate_limit_exceeded", "请求频率受限。"],
+    [429, "usage_limit_reached", "账号额度或余额不足。"],
+  ])("appends only the matching hint to a bound session's %i error", async (status, message, hint) => {
+    const a = await account("a");
+    await sessions.bindSession(sessionKey(), "codex", a.id);
+    upstream.mockResolvedValue({ success: false, status, error: message, response: Response.json({}, { status }) });
+
+    const response = await send();
+    expect(response.status).toBe(status);
+    expect((await response.json()).error.message).toBe(`${message}\n提示：${hint}`);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+  });
+
+  it.each([
+    [OVERLOAD, "上游服务过载。"],
+    ["[503]: upstream connect error or disconnect/reset before headers. reset reason: connection timeout", "连接或响应超时。"],
+  ])("preserves the raw error through cooldown and keeps hints out of logs: %s", async (message, hint) => {
+    const a = await account("a");
+    await db.updateProviderConnection(a.id, { accountCooldownMinMs: 30_000, accountCooldownMaxMs: 30_000 });
+    await sessions.bindSession(sessionKey(), "codex", a.id);
+    upstream.mockResolvedValue({ success: false, status: 503, error: message, response: Response.json({}, { status: 503 }) });
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await send();
+      expect(response.status).toBe(503);
+      const seconds = Number(response.headers.get("Retry-After"));
+      expect(seconds).toBeGreaterThan(0);
+      expect((await response.json()).error.message).toBe(`${message}\n提示：${hint} 请在 ${seconds} 秒后重试。`);
+    }
+    expect(upstream).toHaveBeenCalledOnce();
+    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    const { getRequestErrors } = await import("@/lib/db/repos/requestErrorsRepo.js");
+    const { items } = await getRequestErrors();
+    expect(items).toHaveLength(1);
+    expect(items[0].message).toBe(message);
+  });
+
+  it("uses the thrown network cause without rewriting the error message", async () => {
+    await account("a");
+    upstream.mockRejectedValue(new Error("fetch failed", { cause: { code: "ETIMEDOUT" } }));
+
+    const response = await send();
+    expect(response.status).toBe(502);
+    expect((await response.json()).error.message).toBe("fetch failed\n提示：连接或响应超时。");
+    const { getRequestErrors } = await import("@/lib/db/repos/requestErrorsRepo.js");
+    const { items } = await getRequestErrors();
+    expect(items).toHaveLength(1);
+    expect(items[0].message).toBe("fetch failed");
+  });
+
   it("preserves automatic migration on quota exhaustion when it is enabled", async () => {
     const a = await account("a"), b = await account("b");
     await db.updateSettings({ localCodexRouting: { accountStrategy: "least-loaded", quotaFailover: true } });

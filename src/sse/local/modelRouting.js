@@ -12,7 +12,7 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { isModelLockActive, getModelLockUntil } from "open-sse/services/accountFallback.js";
 import { getProviderCredentials, markAccountUnavailable, clearAccountError } from "./auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
-import { getSessionRoutingKey, NEW_SESSION_HINT } from "../services/sessionRouting.js";
+import { getSessionRoutingKey } from "../services/sessionRouting.js";
 import { getModelInfo, getComboModels, getComboAccountModels } from "../services/model.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import {
@@ -28,6 +28,7 @@ import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from ".
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
 import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
+import { appendChatErrorHint } from "../utils/errorHints.js";
 
 /**
  * Handle single model chat request
@@ -75,9 +76,6 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const fallbackModels = codexPolicy?.quotaModelSwitch
     ? await filterAdapterModels(await getKeyAccessContext(request), [`${provider}/${codexPolicy.quotaFallbackModel}`], [])
     : null;
-  const sessionHint = apiKeyRoutingKey
-    ? " 当前 API Key 保持账号绑定；账号停用、删除或额度耗尽时自动迁移，繁忙或过载时请稍后重试。"
-    : sessionKey ? ` ${quotaFailover ? "当前会话保持账号绑定；额度耗尽时按配置自动迁移，过载时请稍后重试。" : NEW_SESSION_HINT}` : "";
   const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
     request,
     sessionKey, apiKeyRoutingKey, apiKeyRecordId: clientRawRequest?.apiKeyRecordId, fillFirst: true, modelByConnection,
@@ -86,8 +84,8 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-    if (!stickyBinding && excludedAccounts.size > 0) return errorResponse(status, credentials?.lastError || "暂无可用账号。", clientRawRequest?.upstreamErrorHeaders);
-    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, sessionHint, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
+    if (!stickyBinding && excludedAccounts.size > 0) return errorResponse(status, appendChatErrorHint(status, credentials?.lastError || "暂无可用账号。", { source: "router" }), clientRawRequest?.upstreamErrorHeaders);
+    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
   }
 
   model = credentials.routingModel || modelByConnection[credentials.connectionId] || model;
@@ -213,14 +211,14 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
         excludedAccounts.add(credentials.connectionId);
         return retry();
       }
-      return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, sessionHint, clientRawRequest);
+      return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, clientRawRequest);
     }
     if (isModelLockActive(liveConnection, model)) {
       if (!stickyBinding && Number(liveConnection?.errorCode) !== HTTP_STATUS.SERVICE_UNAVAILABLE) {
         excludedAccounts.add(credentials.connectionId);
         return retry();
       }
-      return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), sessionHint, clientRawRequest);
+      return rejectAccountCooldown(Number(liveConnection?.errorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE, liveConnection?.lastError || "绑定的账号暂不可用。", getModelLockUntil(liveConnection, model), clientRawRequest);
     }
 
     const attemptTimeout = new AbortController();
@@ -343,7 +341,10 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       return retry(result.response);
     }
     await result.response?.body?.cancel().catch(() => {});
-    const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, `${result.error || "账号请求失败。"}${sessionHint}`, clientRawRequest.upstreamErrorHeaders);
+    const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY,
+      appendChatErrorHint(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "账号请求失败。", {
+        source: "upstream", retryAfterSeconds: result.status === HTTP_STATUS.SERVICE_UNAVAILABLE ? cooldownMs / 1000 : 0,
+      }), clientRawRequest.upstreamErrorHeaders);
     if (result.status === HTTP_STATUS.SERVICE_UNAVAILABLE && cooldownMs > 0) {
       response.headers.set("Retry-After", String(Math.ceil(cooldownMs / 1000)));
     }
@@ -360,7 +361,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     const networkCode = error?.cause?.code || error?.code || null;
     return rejectChatRequest(
       cancelled ? 499 : HTTP_STATUS.BAD_GATEWAY,
-      cancelled ? "请求已取消。" : `${error.message || "账号请求失败。"}${sessionHint}`,
+      cancelled ? "请求已取消。" : error.message || "账号请求失败。",
       { ...clientRawRequest, networkCode },
       "router",
     );
@@ -373,11 +374,9 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   }
 }
 
-function rejectAccountCooldown(status, message, retryAfter, sessionHint, clientRawRequest, extraHeaders = null) {
+function rejectAccountCooldown(status, message, retryAfter, clientRawRequest, extraHeaders = null) {
   const seconds = Math.max(0, Math.ceil((new Date(retryAfter).getTime() - Date.now()) / 1000)) || 0;
-  const reason = seconds && /overloaded/i.test(message) ? "当前账号暂时过载。" : message;
-  const waitHint = seconds ? ` 请在 ${seconds} 秒后重试。` : "";
-  const response = rejectChatRequest(status, `${reason}${waitHint}${sessionHint}`, clientRawRequest, "router", extraHeaders);
+  const response = rejectChatRequest(status, message, clientRawRequest, "router", extraHeaders, { retryAfterSeconds: seconds });
   if (seconds) response.headers.set("Retry-After", String(seconds));
   return response;
 }
