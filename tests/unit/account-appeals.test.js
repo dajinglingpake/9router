@@ -31,11 +31,32 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   const state = globalThis.__nineRouterAccountAppeals;
   clearInterval(state?.timer);
   if (state) for (const session of state.sessions.values()) await api.appealAction(session.id, session.owner, { type: "close" });
   delete globalThis.__nineRouterAccountAppeals;
   for (const listener of process.rawListeners("exit")) if (!exitListeners.has(listener)) process.removeListener("exit", listener);
+});
+
+describe("Help Center readiness", () => {
+  it("does not report an error page as ready after identity was applied", async () => {
+    const { applyHelpIdentity } = await vi.importActual("@/lib/accountAppeals/browser.mjs");
+    vi.stubGlobal("location", { hostname: "help.openai.com" });
+    vi.stubGlobal("window", { __nineRouterAppealAccount: "user-one" });
+    vi.stubGlobal("document", { body: { textContent: "UH OH, SOMETHING WENT WRONG." } });
+    expect(await applyHelpIdentity({ id: "user-one" })).toHaveProperty("error");
+  });
+  it("waits for the support chat to mount before reporting ready", async () => {
+    const { applyHelpIdentity } = await vi.importActual("@/lib/accountAppeals/browser.mjs");
+    const chat = vi.fn().mockReturnValue(null);
+    vi.stubGlobal("location", { hostname: "help.openai.com" });
+    vi.stubGlobal("window", { __nineRouterAppealAccount: "user-one" });
+    vi.stubGlobal("document", { body: { textContent: "OpenAI" }, querySelector: chat });
+    expect(await applyHelpIdentity({ id: "user-one" })).toEqual({ ready: false });
+    chat.mockReturnValue({});
+    expect(await applyHelpIdentity({ id: "user-one" })).toEqual({ ready: true });
+  });
 });
 
 async function start(requestId = "request-one", currentOwner = owner) {

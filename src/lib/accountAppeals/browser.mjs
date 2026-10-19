@@ -3,14 +3,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const HELP_URL = "https://help.openai.com/zh-hans-cn/collections/3742473-chatgpt?chat=true";
+export const HELP_URL = "https://help.openai.com/zh-hans-cn/?chat=true";
 export const VIEWPORT = { width: 1280, height: 900 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // This function runs only inside the isolated Help Center page. Keep it self-contained.
 export async function applyHelpIdentity(user) {
   if (location.hostname !== "help.openai.com") return { ready: false };
-  if (window.__nineRouterAppealAccount === user.id) return { ready: true };
+  if (document.body?.textContent?.includes("UH OH, SOMETHING WENT WRONG.")) return { error: "帮助中心页面加载失败，请重新打开申诉窗口。" };
+  if (window.__nineRouterAppealAccount === user.id) return { ready: !!document.querySelector("openai-chatkit") };
   let context;
   for (const node of [document.body, ...document.querySelectorAll("body > *")].filter(Boolean)) {
     const key = Object.keys(node).find(name => name.startsWith("__reactFiber"));
@@ -32,7 +33,7 @@ export async function applyHelpIdentity(user) {
   sessionStorage.removeItem("oaisae-active-thread-id");
   context.setGlobalContextOverride({ user: { id: me.user_id, email: me.email, name: me.name, accessToken: user.accessToken } });
   window.__nineRouterAppealAccount = user.id;
-  return { ready: true };
+  return { ready: !!document.querySelector("openai-chatkit") };
 }
 
 export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) {
@@ -75,7 +76,7 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) 
     await fs.rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
   try {
-    const launchArgs = displayRunner ? ["--auto-servernum", `--server-args=-screen 0 ${VIEWPORT.width}x${VIEWPORT.height}x24 -nolisten tcp`, binary, ...args] : args;
+    const launchArgs = displayRunner ? ["--auto-servernum", `--auth-file=${directory}/Xauthority`, `--server-args=-screen 0 ${VIEWPORT.width}x${VIEWPORT.height}x24 -nolisten tcp`, binary, ...args] : args;
     child = spawn(displayRunner || binary, launchArgs, { detached: true, stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: directory, LANG: "zh_CN.UTF-8" } });
     child.stdio[3].on("error", failPending);
     child.once("error", failPending);
