@@ -1,11 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ connection: vi.fn(), settings: vi.fn(), refresh: vi.fn(), proxy: vi.fn(), fetch: vi.fn(), launch: vi.fn(), auth: vi.fn() }));
+const mocks = vi.hoisted(() => ({ connection: vi.fn(), settings: vi.fn(), refresh: vi.fn(), proxy: vi.fn(), launch: vi.fn(), auth: vi.fn() }));
 vi.mock("@/lib/localDb", () => ({ getProviderConnectionById: mocks.connection, getSettings: mocks.settings }));
 vi.mock("@/lib/providerUsage", () => ({ refreshAndUpdateCredentials: mocks.refresh }));
 vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: mocks.proxy }));
 vi.mock("@/lib/network/initOutboundProxy", () => ({ ensureOutboundProxyInitialized: vi.fn() }));
-vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: mocks.fetch }));
 vi.mock("@/lib/accountAppeals/browser.mjs", () => ({ launchAppealBrowser: mocks.launch, VIEWPORT: { width: 1280, height: 900 } }));
 vi.mock("@/lib/auth/dashboardSession", () => ({ verifyDashboardAuthToken: mocks.auth, shouldUseSecureCookie: request => request.headers.get("x-forwarded-proto") === "https" }));
 
@@ -24,7 +23,6 @@ beforeEach(async () => {
   mocks.settings.mockResolvedValue({});
   mocks.refresh.mockResolvedValue({ connection });
   mocks.proxy.mockResolvedValue({ connectionProxyEnabled: true, connectionProxyUrl: "http://proxy.test:8080", strictProxy: true });
-  mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ user_id: "user-one", email: connection.email, name: "One" }) });
   mocks.launch.mockResolvedValue(browser);
   mocks.auth.mockImplementation(async token => token === "valid-dashboard-session");
   api = await import("@/lib/accountAppeals/sessions.js");
@@ -40,22 +38,44 @@ afterEach(async () => {
 });
 
 describe("Help Center readiness", () => {
-  it("does not report an error page as ready after identity was applied", async () => {
+  it.each(["UH OH. SOMETHING WENT WRONG.", "UH OH, SOMETHING WENT WRONG.", "糟糕，出现问题。"])("does not report an error page as ready: %s", async message => {
     const { applyHelpIdentity } = await vi.importActual("@/lib/accountAppeals/browser.mjs");
     vi.stubGlobal("location", { hostname: "help.openai.com" });
-    vi.stubGlobal("window", { __nineRouterAppealAccount: "user-one" });
-    vi.stubGlobal("document", { body: { textContent: "UH OH, SOMETHING WENT WRONG." } });
-    expect(await applyHelpIdentity({ id: "user-one" })).toHaveProperty("error");
+    vi.stubGlobal("window", { __nineRouterAppealAccount: "one@example.com" });
+    vi.stubGlobal("document", { body: { innerText: message } });
+    expect(await applyHelpIdentity({ email: "one@example.com" })).toHaveProperty("error");
   });
   it("waits for the support chat to mount before reporting ready", async () => {
     const { applyHelpIdentity } = await vi.importActual("@/lib/accountAppeals/browser.mjs");
     const chat = vi.fn().mockReturnValue(null);
     vi.stubGlobal("location", { hostname: "help.openai.com" });
-    vi.stubGlobal("window", { __nineRouterAppealAccount: "user-one" });
-    vi.stubGlobal("document", { body: { textContent: "OpenAI" }, querySelector: chat });
-    expect(await applyHelpIdentity({ id: "user-one" })).toEqual({ ready: false });
+    vi.stubGlobal("window", { __nineRouterAppealAccount: "one@example.com" });
+    vi.stubGlobal("document", { body: { innerText: "OpenAI" }, querySelector: selector => selector === "openai-chatkit" ? chat() : null });
+    expect(await applyHelpIdentity({ email: "one@example.com" })).toEqual({ ready: false });
     chat.mockReturnValue({});
-    expect(await applyHelpIdentity({ id: "user-one" })).toEqual({ ready: true });
+    expect(await applyHelpIdentity({ email: "one@example.com" })).toEqual({ ready: true });
+  });
+  it.each([true, false])("verifies the official support identity before applying credentials (matching=%s)", async matching => {
+    const { applyHelpIdentity } = await vi.importActual("@/lib/accountAppeals/browser.mjs");
+    const override = vi.fn();
+    const body = { innerText: "OpenAI", __reactFiberTest: { memoizedProps: { value: { setGlobalContextOverride: override } } } };
+    vi.stubGlobal("location", { hostname: "help.openai.com" });
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("document", { body, querySelectorAll: () => [], querySelector: () => ({}) });
+    vi.stubGlobal("localStorage", { removeItem: vi.fn() });
+    vi.stubGlobal("sessionStorage", { removeItem: vi.fn() });
+    const identity = { user_id: "user-one", email: matching ? "one@example.com" : "other@example.com", name: "One" };
+    const fetchIdentity = vi.fn().mockResolvedValue({ ok: true, json: async () => identity });
+    vi.stubGlobal("fetch", fetchIdentity);
+    const result = await applyHelpIdentity({ email: "one@example.com", accessToken: "private-access" });
+    expect(fetchIdentity).toHaveBeenCalledWith("https://support.api.openai.com/api/v1/me", expect.objectContaining({ headers: { Authorization: "Bearer private-access" } }));
+    if (matching) {
+      expect(result).toEqual({ ready: false });
+      expect(override).toHaveBeenCalledWith({ user: { id: identity.user_id, email: identity.email, name: identity.name, accessToken: "private-access" } });
+    } else {
+      expect(result).toHaveProperty("error");
+      expect(override).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -69,8 +89,8 @@ describe("isolated account appeals", () => {
   it("uses a disabled account through its configured proxy without returning credentials", async () => {
     const result = await start();
     expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ proxyUrl: "http://proxy.test:8080" }));
-    expect(mocks.fetch).toHaveBeenCalledWith("https://support.api.openai.com/api/v1/me", expect.objectContaining({ headers: { Authorization: "Bearer private-access" } }), expect.objectContaining({ strictProxy: true }));
     const frame = await api.appealFrame(result.id, owner);
+    expect(browser.authenticate).toHaveBeenCalledWith({ email: connection.email, accessToken: "private-access" });
     expect(JSON.stringify({ result, frame })).not.toMatch(/private-access|private-refresh/);
     expect(browser.navigate).toHaveBeenCalledTimes(1);
   });
@@ -90,12 +110,21 @@ describe("isolated account appeals", () => {
     expect(browser.close).not.toHaveBeenCalled();
   });
 
-  it("rejects a different identity before launching the browser", async () => {
-    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ user_id: "other", email: "other@example.com" }) });
+  it("requires a known account email before launching the browser", async () => {
+    connection.email = null;
     const { id } = await start();
     expect(saved(id).status).toBe("error");
     expect(saved(id).user).toBeNull();
     expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("closes the isolated browser when its support identity does not match", async () => {
+    browser.authenticate.mockResolvedValue({ error: "客服身份与所选账号不一致，已停止登录。" });
+    const { id } = await start();
+    await api.appealFrame(id, owner);
+    await vi.waitFor(() => expect(saved(id).status).toBe("error"));
+    expect(browser.close).toHaveBeenCalled();
+    expect(saved(id).user).toBeNull();
   });
 
   it("keeps strict proxy failures from falling back to a direct browser connection", async () => {
@@ -103,7 +132,6 @@ describe("isolated account appeals", () => {
     const { id } = await start();
     expect(saved(id).status).toBe("error");
     expect(mocks.launch).not.toHaveBeenCalled();
-    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it("releases a browser that finishes launching after its window was closed", async () => {

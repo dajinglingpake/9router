@@ -3,7 +3,6 @@ import { getProviderConnectionById, getSettings } from "@/lib/localDb";
 import { refreshAndUpdateCredentials } from "@/lib/providerUsage";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
-import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { launchAppealBrowser, VIEWPORT } from "./browser.mjs";
 
 export const IDLE_MS = 15 * 60_000;
@@ -51,14 +50,10 @@ async function prepare(session, connection) {
     const proxyOptions = { ...config, ...(proxyUrl ? { connectionProxyEnabled: true, connectionProxyUrl: proxyUrl } : {}), strictProxy: !!proxyUrl || config.strictProxy, signal: AbortSignal.timeout(20000) };
     const refreshed = await refreshAndUpdateCredentials(connection, false, proxyOptions);
     const token = refreshed.connection.accessToken;
-    const response = await proxyAwareFetch("https://support.api.openai.com/api/v1/me", {
-      headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000),
-    }, proxyOptions);
-    if (!response.ok) { await response.body?.cancel(); throw appealError(response.status === 401 ? "账号授权已失效，请重新授权后再申诉。" : "暂时无法验证客服账号，请稍后重试。", 502); }
-    const me = await response.json();
-    if (!me.user_id || !me.email || !connection.email || me.email.toLowerCase() !== connection.email.toLowerCase()) throw appealError("客服身份与所选账号不一致，已停止登录。", 409);
+    if (!connection.email) throw appealError("此账号未记录登录邮箱，请重新授权后再申诉。", 409);
     if (session.status === "closed") return;
-    session.user = { id: me.user_id, email: me.email, name: me.name, accessToken: token };
+    // Verify identity once, inside the isolated browser using the same account proxy.
+    session.user = { email: connection.email, accessToken: token };
     const browser = await launchAppealBrowser({ proxyUrl, onExit: () => {
       if (session.status !== "closed" && session.status !== "error") {
         session.status = "error"; session.message = "申诉浏览器已退出，请重新打开。"; session.user = null;

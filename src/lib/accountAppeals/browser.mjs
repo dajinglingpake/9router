@@ -3,15 +3,22 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const HELP_URL = "https://help.openai.com/zh-hans-cn/?chat=true";
+export const HELP_URL = "https://help.openai.com/zh-hans-cn";
 export const VIEWPORT = { width: 1280, height: 900 };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // This function runs only inside the isolated Help Center page. Keep it self-contained.
 export async function applyHelpIdentity(user) {
   if (location.hostname !== "help.openai.com") return { ready: false };
-  if (document.body?.textContent?.includes("UH OH, SOMETHING WENT WRONG.")) return { error: "帮助中心页面加载失败，请重新打开申诉窗口。" };
-  if (window.__nineRouterAppealAccount === user.id) return { ready: !!document.querySelector("openai-chatkit") };
+  if (/UH OH[.,]\s*SOMETHING WENT WRONG|糟糕[，,]\s*出现问题/i.test(document.body?.innerText?.slice(0, 300) || "")) return { error: "帮助中心页面加载失败，请重新打开申诉窗口。" };
+  const expectedEmail = user.email.toLowerCase();
+  if (window.__nineRouterAppealAccount === expectedEmail) {
+    if (!window.__nineRouterAppealChatOpened) {
+      const trigger = document.querySelector('button[aria-label="打开对话"], button[aria-label="Open chat"]');
+      if (trigger) { trigger.click(); window.__nineRouterAppealChatOpened = true; }
+    }
+    return { ready: !!document.querySelector("openai-chatkit") };
+  }
   let context;
   for (const node of [document.body, ...document.querySelectorAll("body > *")].filter(Boolean)) {
     const key = Object.keys(node).find(name => name.startsWith("__reactFiber"));
@@ -25,15 +32,16 @@ export async function applyHelpIdentity(user) {
   const response = await fetch("https://support.api.openai.com/api/v1/me", {
     headers: { Authorization: `Bearer ${user.accessToken}` }, signal: AbortSignal.timeout(15000),
   });
-  if (!response.ok) return { error: response.status === 401 ? "账号授权已失效，请重新授权后再打开申诉。" : "客服身份验证失败，请重试。" };
+  if (!response.ok) return { error: response.status === 401 ? "账号授权已失效，请重新授权后再打开申诉。" : `客服身份验证失败（HTTP ${response.status}），请重试。` };
   const me = await response.json();
-  if (me.user_id !== user.id || me.email?.toLowerCase() !== user.email.toLowerCase()) return { error: "客服身份与所选账号不一致，已停止登录。" };
+  if (!me.user_id || me.email?.toLowerCase() !== expectedEmail) return { error: "客服身份与所选账号不一致，已停止登录。" };
   // Fresh profiles are used for every session; no daily-browser storage is touched.
   localStorage.removeItem("oaisae-active-thread-id");
   sessionStorage.removeItem("oaisae-active-thread-id");
   context.setGlobalContextOverride({ user: { id: me.user_id, email: me.email, name: me.name, accessToken: user.accessToken } });
-  window.__nineRouterAppealAccount = user.id;
-  return { ready: !!document.querySelector("openai-chatkit") };
+  window.__nineRouterAppealAccount = expectedEmail;
+  // Wait for React to apply this identity before opening the native support widget.
+  return { ready: false };
 }
 
 export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) {
@@ -119,7 +127,14 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) 
     };
     return {
       pid: child.pid, close, send, evaluate,
-      navigate: () => send("Page.navigate", { url: HELP_URL }),
+      navigate: async () => {
+        const result = await send("Page.navigate", { url: HELP_URL });
+        if (result.errorText) {
+          const code = result.errorText.match(/ERR_[A-Z0-9_]+/)?.[0];
+          throw new Error(`帮助中心连接失败${code ? `（${code}）` : ""}，请检查账号代理后重试。`);
+        }
+        return result;
+      },
       screenshot: async () => (await send("Page.captureScreenshot", { format: "jpeg", quality: 65, captureBeyondViewport: false })).data,
       authenticate: user => evaluate(`(${applyHelpIdentity.toString()})(${JSON.stringify(user)})`),
     };
