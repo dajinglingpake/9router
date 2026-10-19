@@ -69,14 +69,15 @@ export default function AlertSettings() {
         </div>
       </div>
       <Select label="Codex 额度告警口径" aria-label="Codex 额度告警口径" value={config.codexQuotaMode} disabled={loading || busy}
-        options={[{ value: "account", label: "单个账号额度" }, { value: "total", label: "全部启用账号总额度（同套餐汇总）" }]}
+        options={[{ value: "account", label: "单个账号额度" }, { value: "total", label: "共享额度汇总 + 专用账号独立告警" }]}
         onChange={event => setConfig({ ...config, codexQuotaMode: event.target.value })} />
       <div className="grid grid-cols-2 gap-3">
         {[["quotaPercent", "额度剩余 ≤ (%)", 1, 99], ["balanceThreshold", "余额 ≤（账户币种）", 0, 10000], ["expiryDays", "到期前提醒（天）", 1, 90], ["cooldownMinutes", "重复告警间隔（分钟）", 1, 1440]].map(([key, label, min, max]) =>
           <Input key={key} label={label} type="number" min={min} max={max} step={key === "balanceThreshold" ? "0.01" : "1"} value={config[key]} disabled={loading || busy}
             onChange={e => setConfig({ ...config, [key]: Number(e.target.value) })} />)}
       </div>
-      <p className="text-xs text-text-muted">Codex 总额度模式每 5 分钟检查一次，按同套餐分别汇总 5 小时与每周额度；任一周期达到上面的阈值时提醒，两项同时触发合并成一条通知。没有独立 5 小时额度的账号只检查周额度；某周期数据不完整时，该周期等待下次检查。单个账号额度不足不发额度告警，其他提供商及单账号模式每 24 小时查询一次。凭证异常与账号到期仍提醒，额度按周期和状态每天最多一次，余额阈值适用于 DeepSeek。</p>
+      <p className="text-xs text-text-muted">Codex 汇总模式每 5 分钟检查一次：共享账号按同套餐汇总，专用账号独立判断，不计入共享额度。5 小时与每周额度分别判断，两个周期同时触发时合并通知；共用周额度只提醒一次。数据不完整的周期等待下次检查，其他账号不受影响。其他提供商及单账号模式每 24 小时查询一次，额度按状态每天最多提醒一次，汇总模式按周期分别去重。余额阈值适用于 DeepSeek。</p>
+      <p className="text-xs text-text-muted">专用账号额度告警会 @ 全部绑定人员，API Key 名称须与企业微信 UserID 一致。共享额度告警不 @ 专用账号绑定人员。</p>
       <div className="flex items-center gap-2">
         <Button disabled={loading || busy} onClick={() => submit(false)}>保存</Button>
         <Button variant="secondary" disabled={loading || busy || !config.configured} onClick={() => submit(true)}>测试推送</Button>

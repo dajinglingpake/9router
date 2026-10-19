@@ -4,6 +4,8 @@ import { getAdapter } from "../db/driver.js";
 import { getProviderConnectionById } from "../db/repos/connectionsRepo.js";
 import { getConcurrencySnapshot } from "../../sse/services/concurrencyLimiter.js";
 import { ALERT_DEFAULTS, ALERT_SEND_TIMEOUT_MS, validateWebhook } from "./config.js";
+import { getApiKeys } from "../db/repos/apiKeysRepo.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 const state = globalThis._wecomAlerts ||= { pending: Promise.resolve(), queued: new Set() };
 const STATUS_KEY = "wecomAlertStatus";
@@ -19,19 +21,22 @@ async function saveState(key, value) {
 }
 export const getAlertStatus = () => readState(STATUS_KEY);
 
-export async function sendWecomMessage(webhookUrl, content) {
+export async function sendWecomMessage(webhookUrl, content, mentionedList = []) {
   // Direct transport keeps the robot URL out of provider proxy logs and follows no redirects.
   const response = await directFetch(validateWebhook(webhookUrl), {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(ALERT_SEND_TIMEOUT_MS),
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ msgtype: "text", text: { content: content.slice(0, 650) } }),
+    body: JSON.stringify({ msgtype: "text", text: {
+      content: content.slice(0, 650),
+      ...(mentionedList.length ? { mentioned_list: mentionedList } : {}),
+    } }),
   });
   if (!response.ok) throw new Error(`企业微信 HTTP ${response.status}`);
   const result = await response.json();
   if (result.errcode !== 0) throw new Error(`企业微信错误码 ${Number(result.errcode) || "未知"}`);
 }
 
-export function queueAlert({ key, content, cooldownMs, test = false }) {
+export function queueAlert({ key, content, connectionId, cooldownMs, test = false }) {
   if (state.queued.has(key)) return Promise.resolve(false);
   state.queued.add(key);
   const task = state.pending.then(async () => {
@@ -48,7 +53,22 @@ export function queueAlert({ key, content, cooldownMs, test = false }) {
     if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
     const lastAttemptAt = Date.now();
     try {
-      await sendWecomMessage(config.webhookUrl, content);
+      let mentionedList = [];
+      if (connectionId) {
+        const connection = await getProviderConnectionById(connectionId);
+        if (!connection || connection.isActive === false) return false;
+        const ids = getExclusiveApiKeyIds(connection);
+        if (ids.length) {
+          const keys = await getApiKeys();
+          // API Key names are WeCom UserIDs. Deleted keys never become @all.
+          mentionedList = [...new Set(keys.filter(item => ids.includes(item.id))
+            .map(item => item.name?.trim()).filter(name => name && name.toLowerCase() !== "@all"))];
+          content = content.replace("\n", `\n额度归属：专用${mentionedList.length ? `（${mentionedList.join("、")}）` : "（绑定人员不存在）"}\n`);
+        } else {
+          content = content.replace("\n", "\n额度归属：共享\n");
+        }
+      }
+      await sendWecomMessage(config.webhookUrl, content, mentionedList);
       await saveState(recordKey, { sentAt: lastAttemptAt });
       await saveState(STATUS_KEY, { lastAttemptAt, lastSentAt: lastAttemptAt, lastError: null });
       return true;
@@ -79,7 +99,7 @@ export async function notifyRequestError(entry) {
   const connection = await getProviderConnectionById(entry.connectionId);
   if (!connection || connection.isActive === false) return;
   const kind = networkFailure ? "network" : overloadTimeout ? "overload" : statusCode === 402 ? "quota" : "auth";
-  if (connection.provider === "codex" && kind === "quota" && config.codexQuotaMode === "total") return;
+  if (connection.provider === "codex" && kind === "quota" && config.codexQuotaMode === "total" && !getExclusiveApiKeyIds(connection).length) return;
   const label = {
     network: "上游网络连接失败",
     overload: "账号繁忙或等待超时",
@@ -96,6 +116,7 @@ export async function notifyRequestError(entry) {
     : entry.proxyConfigured === true ? "已配置" : "未知";
   return queueAlert({
     key: `${connection.id}:${kind}`,
+    ...(kind === "quota" ? { connectionId: connection.id } : {}),
     content: [
       `9router 告警｜${label}`,
       `账号：${connection.name || connection.email || connection.id}`,

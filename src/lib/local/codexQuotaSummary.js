@@ -1,4 +1,5 @@
 import { CODEX_QUOTA_WINDOW_SECONDS } from "open-sse/config/local/codexQuotaWindows.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 function remainingFraction(quota, now) {
   if (!quota || quota.unlimited || !Number.isFinite(quota.used) || quota.used < 0 || !Number.isFinite(quota.total) || quota.total <= 0) return null;
@@ -36,20 +37,33 @@ export function buildCodexQuotaSummary(connections, snapshots, now = Date.now())
     }
     if (periods.some(name => row[name].applicable && row[name].remaining === null)) unknownAccounts++;
     const plan = typeof usage?.plan === "string" ? usage.plan.trim().toLowerCase() || "unknown" : "unknown";
-    if (!groups.has(plan)) groups.set(plan, []);
-    groups.get(plan).push(row);
+    const ids = getExclusiveApiKeyIds(connection);
+    const scope = ids.length ? "dedicated" : "shared";
+    const key = scope === "dedicated" ? `dedicated:${connection.id}` : `shared:${plan}`;
+    if (!groups.has(key)) groups.set(key, {
+      key, scope, plan, rows: [],
+      ...(ids.length ? {
+        connectionId: connection.id,
+        name: connection.name || connection.email || connection.id,
+        exclusiveApiKeyIds: ids,
+        exclusiveApiKeyNames: connection.exclusiveApiKeyNames || [],
+      } : {}),
+    });
+    groups.get(key).rows.push(row);
   }
   return {
     accountCount: accounts.length,
+    sharedAccountCount: accounts.filter(connection => !getExclusiveApiKeyIds(connection).length).length,
+    dedicatedAccountCount: accounts.filter(connection => getExclusiveApiKeyIds(connection).length).length,
     unknownAccounts,
     generatedAt: new Date(now).toISOString(),
-    groups: [...groups].map(([plan, rows]) => ({
-      plan,
+    groups: [...groups.values()].map(({ rows, ...group }) => ({
+      ...group,
       accountCount: rows.length,
       depletedAccounts: rows.filter(row => row.session.remaining === 0 || row.weekly.remaining === 0).length,
       sharedWeeklyAccounts: rows.filter(row => row.sharedWeekly).length,
       session: metric(rows.filter(row => row.session.applicable).map(row => row.session.remaining)),
       weekly: metric(rows.filter(row => row.weekly.applicable).map(row => row.weekly.remaining)),
-    })).sort((a, b) => a.plan.localeCompare(b.plan)),
+    })).sort((a, b) => b.scope.localeCompare(a.scope) || a.plan.localeCompare(b.plan) || a.key.localeCompare(b.key)),
   };
 }

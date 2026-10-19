@@ -4,6 +4,9 @@ import { getAdapter } from "../db/driver.js";
 import { getAccountExpiry } from "../accountExpiry.js";
 import { queueAlert } from "./wecom.js";
 import { ALERT_DEFAULTS, ALERT_DAILY_MS, ALERT_POLL_MS, ALERT_USAGE_TIMEOUT_MS } from "./config.js";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { buildCodexQuotaSummary } from "../local/codexQuotaSummary.js";
+import { notifyCodexQuotaSummary } from "./codexQuota.js";
 
 const state = globalThis._wecomAlertMonitor ||= { timer: null, running: false };
 const dateText = value => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
@@ -46,6 +49,7 @@ export function getAccountAlerts(connection, usage, config, now = Date.now()) {
   }
   if (low.length || empty.length) alerts.push({
     key: `${connection.id}:quota-${empty.length ? "empty" : "low"}`,
+    connectionId: connection.id,
     cooldownMs: ALERT_DAILY_MS,
     content: `9router 告警｜${empty.length ? "额度已用尽" : "额度即将用尽"}\n${account}\n${[...empty, ...low].join("\n")}`,
   });
@@ -66,6 +70,10 @@ export async function notifyAccountUsage(connection, usage) {
   if (connection.isActive === false) return;
   const config = { ...ALERT_DEFAULTS, ...(await getSettings()).wecomAlerts };
   if (!config.enabled || !config.webhookUrl) return;
+  if (connection.provider === "codex" && config.codexQuotaMode === "total" && getExclusiveApiKeyIds(connection).length) {
+    void notifyCodexQuotaSummary(buildCodexQuotaSummary([connection], new Map([[connection.id, usage]])), config)
+      .catch(() => console.warn("[Alerts] Unable to queue dedicated quota alert"));
+  }
   for (const alert of getAccountAlerts(connection, usage, config)) {
     void queueAlert(alert).catch(() => console.warn("[Alerts] Unable to queue account alert"));
   }
@@ -110,7 +118,6 @@ export async function checkAccountAlerts() {
     }
     if (config.codexQuotaMode === "total") {
       const { loadCodexQuotaSummary } = await import("../local/loadCodexQuotaSummary.js");
-      const { notifyCodexQuotaSummary } = await import("./codexQuota.js");
       await notifyCodexQuotaSummary(await loadCodexQuotaSummary(), config);
     }
   } catch {

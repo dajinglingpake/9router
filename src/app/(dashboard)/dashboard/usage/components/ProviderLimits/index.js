@@ -5,6 +5,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import AccountExpiry from "@/shared/components/AccountExpiry";
 import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
+import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import CodexReloginButton from "@/shared/components/CodexReloginButton";
 import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
@@ -201,6 +202,7 @@ export default function ProviderLimits() {
   }, [pathname, router, searchParams]);
   const [providerOptions, setProviderOptions] = useState([]);
   const [accountFilter, setAccountFilter] = useState("all");
+  const [quotaScope, setQuotaScope] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
   const [quotaVisibility, setQuotaVisibility] = useState({});
   const [expiringFirst, setExpiringFirst] = useState(false);
@@ -233,6 +235,7 @@ export default function ProviderLimits() {
           page: String(targetPage),
           pageSize: String(pageSize),
           accountStatus: accountFilter,
+          quotaScope,
           sort: "priority",
         });
 
@@ -265,7 +268,7 @@ export default function ProviderLimits() {
         return [];
       }
     },
-    [accountFilter, expiringFirst, page, pageSize, providerFilter],
+    [accountFilter, expiringFirst, page, pageSize, providerFilter, quotaScope],
   );
 
   // Fetch quota for a specific connection
@@ -877,24 +880,6 @@ export default function ProviderLimits() {
     );
   }
 
-  if (!connectionsLoading && !hasVisibleConnections) {
-    return (
-      <Card padding="lg">
-        <div className="text-center py-12">
-          <span className="material-symbols-outlined text-[64px] text-text-muted opacity-20">
-            {emptyState.icon}
-          </span>
-          <h3 className="mt-4 text-lg font-semibold text-text-primary">
-            {emptyState.title}
-          </h3>
-          <p className="mt-2 text-sm text-text-muted max-w-md mx-auto">
-            {emptyState.description}
-          </p>
-        </div>
-      </Card>
-    );
-  }
-
   return (
     <div className="space-y-6">
       {/* Header Controls */}
@@ -1018,6 +1003,14 @@ export default function ProviderLimits() {
             ))}
           </select>
 
+          <select value={quotaScope} onChange={event => { setQuotaScope(event.target.value); setPage(1); }}
+            className="h-8 rounded-lg border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
+            aria-label="按额度归属筛选">
+            <option value="all">全部额度</option>
+            <option value="shared">共享额度</option>
+            <option value="dedicated">专用额度</option>
+          </select>
+
           {providerFilter === "codex" && (
             <select
               value={quotaSortMode}
@@ -1113,6 +1106,13 @@ export default function ProviderLimits() {
         </div>
       </div>
 
+      {!connectionsLoading && !hasVisibleConnections && <Card padding="lg">
+        <div className="text-center py-12">
+          <h3 className="text-lg font-semibold text-text-primary">{quotaScope === "all" ? emptyState.title : `暂无${quotaScope === "dedicated" ? "专用" : "共享"}账号`}</h3>
+          <p className="mt-2 text-sm text-text-muted">请调整额度归属、提供商或账号状态筛选。</p>
+        </div>
+      </Card>}
+
       {/* Provider cards: 2 columns, compact */}
       {expiringFirst && (
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -1173,6 +1173,9 @@ export default function ProviderLimits() {
                           {getConnectionSecondaryLabel(conn)}
                         </p>
                       ) : null}
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-xs ${getExclusiveApiKeyIds(conn).length ? "bg-primary/10 text-primary" : "bg-surface-3 text-text-muted"}`}>
+                        {getExclusiveApiKeyIds(conn).length ? "专用额度" : "共享额度"}
+                      </span>
                       <AccountPlanBadge connection={conn} usage={quota} />
                       <AccountExpiry connection={conn} />
                       <AccountApiKeyBindings connection={conn} showShared />

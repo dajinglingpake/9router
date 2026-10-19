@@ -92,6 +92,7 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const provider = searchParams.get("provider") || "all";
     const accountStatus = searchParams.get("accountStatus") || "all";
+    const quotaScope = searchParams.get("quotaScope") || "all";
     const sort = searchParams.get("sort") || "priority";
     const page = parsePositiveInt(searchParams.get("page"), 1);
     const pageSize = Math.min(parsePositiveInt(searchParams.get("pageSize"), DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
@@ -105,6 +106,8 @@ export async function GET(request) {
     ));
 
     const accountFilteredConnections = providerFilteredConnections.filter((conn) => {
+      const dedicated = getExclusiveApiKeyIds(conn).length > 0;
+      if (quotaScope === "shared" && dedicated || quotaScope === "dedicated" && !dedicated) return false;
       if (accountStatus === "active") return conn.isActive ?? true;
       if (accountStatus === "inactive") return !(conn.isActive ?? true);
       return true;
