@@ -6,6 +6,7 @@ import { getProviderConnections } from "@/lib/localDb";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { CODEX_TRIAL_MODELS, CODEX_TRIAL_PROMPT_LIMIT, countTrialHtmlLines } from "@/shared/utils/codexTrial";
 import { getOutputThroughput } from "@/shared/utils/outputThroughput";
+import { getAccountQualityMetadata } from "@/shared/utils/accountQuality.js";
 import { createTrialSession } from "@/sse/local/codexTrialSession";
 import { getCliVersion, runCodexCli } from "./cli";
 
@@ -65,6 +66,7 @@ export async function listTrials() {
       return {
         id: connection.id, name: connection.displayName || connection.name || connection.email || connection.id,
         email: connection.email || "", enabled: connection.isActive !== false,
+        ...getAccountQualityMetadata(connection),
         results, result: results[0] || null,
       };
     }),

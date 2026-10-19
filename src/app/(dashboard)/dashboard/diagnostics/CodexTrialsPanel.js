@@ -8,6 +8,7 @@ import CodexTrialOutput from "./CodexTrialOutput";
 import CodexTrialPreview from "./CodexTrialPreview";
 import CodexTrialErrors from "./CodexTrialErrors";
 import CodexTrialModels from "./CodexTrialModels";
+import CodexTrialAccountActions from "./CodexTrialAccountActions";
 import { formatTrialLog } from "@/shared/utils/codexTrialOutput";
 import { CODEX_TRIAL_PROMPT, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_MODEL, CODEX_TRIAL_EFFORT } from "@/shared/utils/codexTrial";
 
@@ -27,7 +28,7 @@ function Metric({ label, children, danger }) {
   return <div><dt className="text-[11px] text-text-muted">{label}</dt><dd className={`mt-1 text-base font-semibold tabular-nums ${danger ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>{children}</dd></div>;
 }
 
-function AccountCard({ account, busy, now, onRun, onInspect }) {
+function AccountCard({ account, busy, now, onRun, onInspect, onUpdated }) {
   const result = account.result;
   const [status, color] = states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
   const duration = result?.status === "running" && result.startedAt ? now - new Date(result.startedAt).getTime() : result?.elapsedMs;
@@ -40,6 +41,7 @@ function AccountCard({ account, busy, now, onRun, onInspect }) {
           <span className={account.enabled ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>{account.enabled ? "已启用" : "已禁用 · 仍可测试"}</span>
           <span className="truncate" title={account.id}>{account.email !== account.name ? account.email : account.id.slice(0, 8)}</span>
         </div>
+        <CodexTrialAccountActions account={account} onUpdated={onUpdated} />
       </div>
       <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>{status}</span>
     </div>
@@ -149,7 +151,7 @@ export default function CodexTrialsPanel() {
   const success = cards.filter(account => account.result?.status === "success").length;
   const failures = cards.filter(account => ["error", "interrupted"].includes(account.result?.status)).length;
   const inProgress = cards.filter(account => ["queued", "running"].includes(account.result?.status)).length;
-  const visible = cards.filter(account => `${account.name} ${account.email} ${account.id} ${account.result?.model || ""}`.toLowerCase().includes(search.toLowerCase()))
+  const visible = cards.filter(account => `${account.name} ${account.email} ${account.id} ${account.qualityLabel || ""} ${account.result?.model || ""}`.toLowerCase().includes(search.toLowerCase()))
     .filter(account => filter === "all" || (filter === "disabled" ? !account.enabled : filter === "error" ? ["error", "interrupted"].includes(account.result?.status) : account.result?.status === filter));
   return <div data-i18n-skip className="flex min-w-0 flex-col gap-6 text-text-main">
     <div className="flex flex-wrap items-start justify-between gap-4">
@@ -176,7 +178,7 @@ export default function CodexTrialsPanel() {
       <div className="flex flex-wrap gap-2"><input aria-label="搜索账号" className={`${control} sm:!w-52`} placeholder="搜索账号…" value={search} onChange={event => setSearch(event.target.value)} /><select aria-label="筛选测试结果" className={`${control} sm:!w-40`} value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部账号</option><option value="disabled">禁用账号</option><option value="success">已生成</option><option value="error">失败 / 中断</option></select></div>
     </div>
     <p className="-mt-3 text-xs leading-5 text-text-muted">速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。作品用于人工比较，不自动判定账号质量。</p>
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} now={now} onRun={run} onInspect={inspect} />)}</div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} now={now} onRun={run} onInspect={inspect} onUpdated={() => load()} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加 Codex 账号。"}</div>}
     {inspector?.mode === "errors" && <CodexTrialErrors key={inspector.account.result.runId}
       account={cards.find(account => account.result?.id === inspector.account.result.id) || inspector.account} onClose={() => setInspector(null)} />}
