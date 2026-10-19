@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import EditConnectionModal from "@/shared/components/EditConnectionModal";
 import Button from "@/shared/components/Button";
+import AccountAppealLink from "@/shared/components/AccountAppealLink";
 
 async function requestJson(url, options) {
   const response = await fetch(url, options);
@@ -40,6 +41,7 @@ export default function CodexTrialAccountActions({ account, onUpdated }) {
       <AccountDegradedMarker connection={account} onUpdated={onUpdated} />
       <Button size="sm" variant="ghost" icon="edit" loading={loading} onClick={edit}
         aria-label={`编辑账号：${account.name}`}>编辑账号</Button>
+      <AccountAppealLink account={account} />
     </div>
     {error && <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
     {connection && createPortal(<EditConnectionModal isOpen connection={connection}
