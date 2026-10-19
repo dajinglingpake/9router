@@ -8,6 +8,7 @@ import { getRequestPressureSignal } from "./requestPressureSignals.cjs";
 import { DIAGNOSTIC_TOKEN_COLUMNS, extractDiagnosticTokenUsage } from "./diagnosticTokenUsage.cjs";
 import { ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityMetadata, isAccountQualityColor } from "@/shared/utils/accountQuality.js";
 import { getAccountPlan } from "./accountPlan.js";
+import { getCodexTrialIdentity } from "@/shared/utils/codexTrialIdentity.js";
 
 const MAX_ROWS = 20000;
 const valueOrNull = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
@@ -81,7 +82,7 @@ export async function getRequestDiagnostics(options) {
       apiKeyId: key?.id || "unattributed", apiKeyName: key?.name || "未记录 API Key" };
   }
   const samples = usage.slice(0, MAX_ROWS).map(r => {
-    const key = keyByValue.get(r.apiKey) || (r.apiKey ? { id: "deleted-" + createHash("sha256").update(r.apiKey).digest("hex").slice(0, 16), name: "已删除 API Key" } : null);
+    const key = getCodexTrialIdentity(r.apiKey) || keyByValue.get(r.apiKey) || (r.apiKey ? { id: "deleted-" + createHash("sha256").update(r.apiKey).digest("hex").slice(0, 16), name: "已删除 API Key" } : null);
     const info = getRequestErrorInfo(r);
     const latencyMs = valueOrNull(r.latencyMs), rawTtft = valueOrNull(r.ttftMs);
     // Legacy full-response and missing-first-chunk timings equal total; exclude them from first-packet statistics.
@@ -96,7 +97,7 @@ export async function getRequestDiagnostics(options) {
   for (const r of errors.slice(0, MAX_ROWS)) {
     const data = parseJson(r.data, {}) || {};
     const info = getRequestErrorInfo(data) || { summary: "请求处理失败", statusCode: null };
-    const key = keyById.get(data.apiKeyId) || (data.apiKeyId ? { id: data.apiKeyId, name: data.apiKeyName || "已删除 API Key" } : null);
+    const key = getCodexTrialIdentity(data.apiKeyId, data.apiKeyName) || keyById.get(data.apiKeyId) || (data.apiKeyId ? { id: data.apiKeyId, name: data.apiKeyName || "已删除 API Key" } : null);
     const signal = getRequestPressureSignal(data);
     const attemptId = r.requestId ? JSON.stringify([r.requestId, r.connectionId, r.model, r.retryCount, data.sseAttempt || 1, data.attempt || 1, data.source, info.statusCode]) : `error-${r.id}`;
     const previous = attempts.get(attemptId);

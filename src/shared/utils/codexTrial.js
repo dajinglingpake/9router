@@ -5,7 +5,7 @@ export const CODEX_TRIAL_PROMPT_LIMIT = 20000;
 export const CODEX_TRIAL_MODEL = "gpt-6.1-sol";
 export const CODEX_TRIAL_EFFORT = "xhigh";
 export const CODEX_TRIAL_MODELS = getModelsByProviderId("codex").filter(model =>
-  (!model.kind || model.kind === "llm") && model.quotaFamily !== "review" && !model.id.endsWith("-review")
+  (!model.kind || model.kind === "llm") && model.quotaFamily !== "review" && !model.id.endsWith("-review") && !model.id.endsWith("[1m]")
 );
 export const CODEX_TRIAL_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 

@@ -4,6 +4,7 @@ import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 export default function AccountApiKeyBindings({ connection, showShared = false }) {
   const ids = getExclusiveApiKeyIds(connection);
   const recentUsers = Array.isArray(connection.recentApiKeyUsers) ? connection.recentApiKeyUsers : null;
+  if (!ids.length && recentUsers?.length === 0) return null;
   if (!ids.length && !showShared && !recentUsers?.length) return null;
   const users = ids.length ? ids.map((id, index) => ({ id, name: connection.exclusiveApiKeyNames?.[index] || id.slice(0, 8) })) : recentUsers || [];
   return (

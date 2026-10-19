@@ -15,6 +15,7 @@ import { handleSingleModelChat } from "./modelRouting.js";
 import { getModelInfo } from "../services/model.js";
 import { extractClientApiKey as extractApiKey, getKeyAccessContext, enforceKeyAccess } from "../services/keyAccess.js";
 import { getTrialSession, isTrialToken, trackTrialResponse } from "./codexTrialSession.js";
+import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
 
 /**
  * Handle chat completion request
@@ -42,9 +43,9 @@ export async function handleChat(request, clientRawRequest = null) {
     requestBytes: requestBody ? Buffer.byteLength(JSON.stringify(requestBody), "utf8") : null,
     ...(requestBody ? estimateInputTokenBreakdown(requestBody) : getRequestTokenEstimates()),
     stream: requestBody ? requestBody.stream !== false : null,
-    apiKeyName: callerApiKey ? "未命名 API Key" : "未使用 API Key",
-    apiKeyRecordId: null,
-    apiKeyMasked: callerApiKey ? log.maskKey(callerApiKey) : null,
+    apiKeyName: trial ? CODEX_TRIAL_IDENTITY.name : callerApiKey ? "未命名 API Key" : "未使用 API Key",
+    apiKeyRecordId: trial ? CODEX_TRIAL_IDENTITY.id : null,
+    apiKeyMasked: trial ? null : callerApiKey ? log.maskKey(callerApiKey) : null,
     headers: clientRawRequest?.headers || Object.fromEntries(request.headers.entries()),
     clientIp: clientRawRequest?.clientIp || extractClientIp(request),
   };
@@ -75,10 +76,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
     try {
       const apiKey = callerApiKey;
-      if (trial) {
-        requestContext.apiKeyName = "Codex 账号对比";
-        requestContext.apiKeyMasked = null;
-      } else if (apiKey) {
+      if (apiKey && !trial) {
         const record = await getApiKeyByValue(apiKey);
         requestContext.apiKeyName = record?.name || "未命名 API Key";
         requestContext.apiKeyMasked = log.maskKey(apiKey);

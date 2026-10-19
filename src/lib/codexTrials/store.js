@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { DATA_DIR } from "@/lib/dataDir";
 import { getProviderConnections } from "@/lib/localDb";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
@@ -14,7 +14,7 @@ const state = globalThis.__ninerouterCodexTrials ||= { records: new Map(), loade
 const active = record => ["queued", "running"].includes(record?.status);
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const fileFor = id => {
-  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw fail("账号 ID 无效。");
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw fail("测试记录 ID 无效。");
   return path.join(ROOT, `${id}.json`);
 };
 
@@ -31,6 +31,7 @@ function initialize() {
   fs.mkdirSync(ROOT, { recursive: true, mode: 0o700 });
   for (const name of fs.readdirSync(ROOT).filter(name => /^[a-zA-Z0-9_-]+\.json$/.test(name))) {
     const record = JSON.parse(fs.readFileSync(path.join(ROOT, name), "utf8"));
+    record.connectionId ||= record.id;
     record.htmlLines = countTrialHtmlLines(record.html || "");
     if (active(record)) {
       Object.assign(record, { status: "interrupted", error: "服务已重启，本次测试中断，请重新测试。", html: null, finishedAt: new Date().toISOString() });
@@ -54,14 +55,17 @@ export async function listTrials() {
     cli: state.cli,
     running: !!state.batch,
     accounts: connections.map(connection => {
-      const record = state.records.get(connection.id);
-      const { html, log, output, prompt, ...summary } = record || {};
-      const session = state.batch?.sessions.get(connection.id);
+      const results = [...state.records.values()].filter(record => record.connectionId === connection.id)
+        .sort((a, b) => a.model.localeCompare(b.model)).map(record => {
+          const { html, log, output, prompt, ...summary } = record;
+          const session = state.batch?.sessions.get(record.id);
+          return { ...summary, hasHtml: !!html, outputTail: active(record) ? output?.slice(-12000) || "" : undefined,
+            requests: session?.requests ?? record.requests, routerErrors: session?.errors ?? record.routerErrors };
+        });
       return {
         id: connection.id, name: connection.displayName || connection.name || connection.email || connection.id,
         email: connection.email || "", enabled: connection.isActive !== false,
-        result: record ? { ...summary, hasHtml: !!html, outputTail: active(record) ? output?.slice(-12000) || "" : undefined,
-          requests: session?.requests ?? record.requests, routerErrors: session?.errors ?? record.routerErrors } : null,
+        results, result: results[0] || null,
       };
     }),
   };
@@ -71,7 +75,11 @@ export async function startTrials(input) {
   initialize();
   if (state.batch) throw fail("已有测试正在执行，请等待完成或先停止。", 409);
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > CODEX_TRIAL_PROMPT_LIMIT) throw fail(`请输入 1–${CODEX_TRIAL_PROMPT_LIMIT} 字的提示词。`);
-  if (!CODEX_TRIAL_MODELS.some(model => model.id === input.model) || !getThinkingLevels("codex", input.model)?.includes(input.effort)) throw fail("模型或推理强度无效。");
+  const models = input.models ?? [{ model: input.model, effort: input.effort }];
+  if (!Array.isArray(models) || !models.length || models.length > CODEX_TRIAL_MODELS.length
+    || models.some(item => !item || !CODEX_TRIAL_MODELS.some(model => model.id === item.model)
+      || !getThinkingLevels("codex", item.model)?.includes(item.effort))) throw fail("请选择有效的模型和推理强度。");
+  if (new Set(models.map(item => item.model)).size !== models.length) throw fail("请勿重复选择同一模型。");
   const parallel = Number(input.parallel ?? 2);
   if (!Number.isInteger(parallel) || parallel < 1 || parallel > 3) throw fail("并行数必须为 1–3。");
   const connections = await getProviderConnections({ provider: "codex" });
@@ -81,21 +89,24 @@ export async function startTrials(input) {
   if (!state.cli.available) throw fail(state.cli.error, 503);
   // Re-check after asynchronous validation so two tabs cannot start overlapping batches.
   if (state.batch) throw fail("已有测试正在执行。", 409);
-  const batch = { controller: new AbortController(), sessions: new Map(), ids: [...ids] };
+  const batch = { controller: new AbortController(), sessions: new Map(), ids: [] };
   state.batch = batch;
   try {
-    for (const id of ids) {
-      const previous = state.records.get(id);
+    for (const connectionId of ids) for (const { model, effort } of models) {
+      const previous = [...state.records.values()].find(record => record.connectionId === connectionId && record.model === model);
+      // Keep legacy artifact URLs; new account/model pairs have independent persistent records.
+      const id = previous?.id || createHash("sha256").update(JSON.stringify([connectionId, model])).digest("hex");
       save({
-        id, runId: randomUUID(), status: "queued", prompt: input.prompt.trim(), model: input.model, effort: input.effort,
+        id, connectionId, runId: randomUUID(), status: "queued", prompt: input.prompt.trim(), model, effort,
         cliVersion: state.cli.version, queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
         attempts: (previous?.attempts || 0) + 1, failures: previous?.failures || 0,
         html: null, htmlLines: 0, log: "", output: "", activity: "等待测试位置", lastOutputAt: null, error: null, usage: null, elapsedMs: null, tokensPerSecond: null,
         routerErrors: 0, routerStatsVersion: 3, cliErrors: 0, requests: 0, reportedModels: [],
       });
+      batch.ids.push(id);
     }
   } catch (error) { state.batch = null; throw error; }
-  const queue = [...ids];
+  const queue = [...batch.ids];
   async function worker() {
     while (queue.length) {
       const id = queue.shift();
@@ -104,7 +115,7 @@ export async function startTrials(input) {
         save({ ...record, status: "cancelled", error: "已取消排队。", finishedAt: new Date().toISOString() });
         continue;
       }
-      const session = createTrialSession(id, record.model, record.effort);
+      const session = createTrialSession(record.connectionId, record.model, record.effort);
       batch.sessions.set(id, session.session);
       let progressTimer;
       const onProgress = progress => {
@@ -142,10 +153,10 @@ export async function startTrials(input) {
     }
   }
   // The task belongs to the server, not the browser connection; refreshes do not cancel it.
-  batch.promise = Promise.allSettled(Array.from({ length: Math.min(parallel, ids.length) }, worker)).then(results => {
+  batch.promise = Promise.allSettled(Array.from({ length: Math.min(parallel, batch.ids.length) }, worker)).then(results => {
     for (const result of results) if (result.status === "rejected") console.error("[Codex trials]", result.reason?.message);
   }).finally(() => { if (state.batch === batch) state.batch = null; });
-  return { count: ids.length };
+  return { count: batch.ids.length };
 }
 
 export function stopTrials() {

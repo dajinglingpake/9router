@@ -30,6 +30,7 @@ import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
 import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
 import { appendChatErrorHint } from "../utils/errorHints.js";
 import { getTrialSession, getTrialCredentials } from "./codexTrialSession.js";
+import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
 
 /**
  * Handle single model chat request
@@ -128,7 +129,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       provider,
       model,
       credentials: refreshedCredentials,
-      apiKey,
+      apiKey: trial ? CODEX_TRIAL_IDENTITY.key : apiKey,
       providerThinking,
     });
     const apiKeyRecordId = clientRawRequest?.apiKeyRecordId || null;
@@ -258,7 +259,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       clientRawRequest,
       connectionId: credentials.connectionId,
       userAgent,
-      apiKey,
+      apiKey: trial ? CODEX_TRIAL_IDENTITY.key : apiKey,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
       rtkEnabled: !!chatSettings.rtkEnabled,
       headroomEnabled: !!chatSettings.headroomEnabled,

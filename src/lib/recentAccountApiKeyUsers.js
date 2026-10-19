@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { getAdapter } from "./db/driver.js";
 import { parseJson } from "./db/helpers/jsonCol.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { getCodexTrialIdentity } from "@/shared/utils/codexTrialIdentity.js";
 
 export const RECENT_ACCOUNT_USAGE_MS = 6 * 3600000;
 
@@ -39,9 +40,13 @@ export async function getRecentAccountApiKeyUsers(connections, now = Date.now())
     const lastUsedAt = new Date(time).toISOString(), previous = users.get(connectionId).get(user.id);
     if (!previous || lastUsedAt > previous.lastUsedAt) users.get(connectionId).set(user.id, { ...user, lastUsedAt });
   }
-  for (const row of usage) remember(row.connectionId, caller(byValue.get(row.apiKey), row.apiKey ? `key:${row.apiKey}` : null), row.lastUsedAt);
+  for (const row of usage) {
+    if (getCodexTrialIdentity(row.apiKey)) continue;
+    remember(row.connectionId, caller(byValue.get(row.apiKey), row.apiKey ? `key:${row.apiKey}` : null), row.lastUsedAt);
+  }
   for (const row of errors) {
     const value = parseJson(row.apiKeyId), id = typeof value === "string" && value.trim() ? value : null;
+    if (getCodexTrialIdentity(id, parseJson(row.apiKeyName))) continue;
     remember(row.connectionId, caller(byId.get(id), id ? `id:${id}` : null, parseJson(row.apiKeyName)), row.lastUsedAt);
   }
   for (const [id, callers] of users) result.set(id, [...callers.values()].sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt) || a.id.localeCompare(b.id)));
