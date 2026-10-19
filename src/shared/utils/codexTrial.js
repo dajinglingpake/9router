@@ -4,6 +4,8 @@ export const CODEX_TRIAL_PROMPT = "创建一个HTML，内容是SVG绘制一个�
 export const CODEX_TRIAL_PROMPT_LIMIT = 20000;
 export const CODEX_TRIAL_MODEL = "gpt-6.1-sol";
 export const CODEX_TRIAL_EFFORT = "xhigh";
+export const CODEX_TRIAL_PARALLEL = 4;
+export const CODEX_TRIAL_MAX_PARALLEL = 10;
 export const CODEX_TRIAL_MODELS = getModelsByProviderId("codex").filter(model =>
   (!model.kind || model.kind === "llm") && model.quotaFamily !== "review" && !model.id.endsWith("-review") && !model.id.endsWith("[1m]")
 );

@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { DATA_DIR } from "@/lib/dataDir";
 import { getProviderConnections } from "@/lib/localDb";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
-import { CODEX_TRIAL_MODELS, CODEX_TRIAL_PROMPT_LIMIT, countTrialHtmlLines } from "@/shared/utils/codexTrial";
+import { CODEX_TRIAL_MODELS, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL, countTrialHtmlLines } from "@/shared/utils/codexTrial";
 import { getOutputThroughput } from "@/shared/utils/outputThroughput";
 import { getAccountQualityMetadata } from "@/shared/utils/accountQuality.js";
 import { createTrialSession } from "@/sse/local/codexTrialSession";
@@ -56,6 +56,8 @@ export async function listTrials() {
     serverNow: Date.now(),
     cli: state.cli,
     running: !!state.batch,
+    stopping: state.batch?.controller.signal.aborted || false,
+    parallel: state.batch?.parallel ?? null,
     accounts: connections.map(connection => {
       const results = [...state.records.values()].filter(record => record.connectionId === connection.id)
         .sort((a, b) => a.model.localeCompare(b.model)).map(record => {
@@ -76,27 +78,32 @@ export async function listTrials() {
 
 export async function startTrials(input) {
   initialize();
-  if (state.batch) throw fail("已有测试正在执行，请等待完成或先停止。", 409);
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > CODEX_TRIAL_PROMPT_LIMIT) throw fail(`请输入 1–${CODEX_TRIAL_PROMPT_LIMIT} 字的提示词。`);
   const models = input.models ?? [{ model: input.model, effort: input.effort }];
   if (!Array.isArray(models) || !models.length || models.length > CODEX_TRIAL_MODELS.length
     || models.some(item => !item || !CODEX_TRIAL_MODELS.some(model => model.id === item.model)
       || !getThinkingLevels("codex", item.model)?.includes(item.effort))) throw fail("请选择有效的模型和推理强度。");
   if (new Set(models.map(item => item.model)).size !== models.length) throw fail("请勿重复选择同一模型。");
-  const parallel = Number(input.parallel ?? 2);
-  if (!Number.isInteger(parallel) || parallel < 1 || parallel > 3) throw fail("并行数必须为 1–3。");
+  const parallel = Number(input.parallel ?? CODEX_TRIAL_PARALLEL);
+  if (!Number.isInteger(parallel) || parallel < 1 || parallel > CODEX_TRIAL_MAX_PARALLEL) throw fail(`并发数必须为 1–${CODEX_TRIAL_MAX_PARALLEL}。`);
   const connections = await getProviderConnections({ provider: "codex" });
   const ids = input.all === true ? connections.map(connection => connection.id) : [...new Set(Array.isArray(input.ids) ? input.ids : [])];
   if (!ids.length || ids.some(id => !connections.some(connection => connection.id === id))) throw fail("请选择有效的 Codex 账号。");
   state.cli = await getCliVersion();
   if (!state.cli.available) throw fail(state.cli.error, 503);
-  // Re-check after asynchronous validation so two tabs cannot start overlapping batches.
-  if (state.batch) throw fail("已有测试正在执行。", 409);
-  const batch = { controller: new AbortController(), sessions: new Map(), ids: [] };
+  // Check each account/model after asynchronous validation so two tabs cannot overwrite an active run.
+  if (state.batch?.controller.signal.aborted) throw fail("正在停止测试，请稍后再试。", 409);
+  const jobs = models.flatMap(({ model, effort }) => ids.map(connectionId => {
+    const previous = [...state.records.values()].find(record => record.connectionId === connectionId && record.model === model);
+    if (active(previous)) throw fail("该账号的此模型已在测试或排队，请等待完成。", 409);
+    return { connectionId, model, effort, previous };
+  }));
+  const batch = state.batch || { controller: new AbortController(), sessions: new Map(), queue: [], workers: 0, parallel };
+  if (!batch.promise) batch.promise = new Promise(resolve => { batch.resolve = resolve; });
   state.batch = batch;
   try {
-    for (const connectionId of ids) for (const { model, effort } of models) {
-      const previous = [...state.records.values()].find(record => record.connectionId === connectionId && record.model === model);
+    // Start different accounts first, before their additional models compete for account limits.
+    for (const { connectionId, model, effort, previous } of jobs) {
       // Keep legacy artifact URLs; new account/model pairs have independent persistent records.
       const id = previous?.id || createHash("sha256").update(JSON.stringify([connectionId, model])).digest("hex");
       save({
@@ -106,60 +113,67 @@ export async function startTrials(input) {
         html: null, htmlLines: 0, log: "", output: "", activity: "等待测试位置", lastOutputAt: null, error: null, usage: null, elapsedMs: null, tokensPerSecond: null,
         routerErrors: 0, routerStatsVersion: 3, cliErrors: 0, requests: 0, reportedModels: [],
       });
-      batch.ids.push(id);
+      batch.queue.push(id);
     }
-  } catch (error) { state.batch = null; throw error; }
-  const queue = [...batch.ids];
-  async function worker() {
-    while (queue.length) {
-      const id = queue.shift();
-      const record = state.records.get(id);
-      if (batch.controller.signal.aborted) {
-        save({ ...record, status: "cancelled", error: "已取消排队。", finishedAt: new Date().toISOString() });
-        continue;
-      }
-      const session = createTrialSession(record.connectionId, record.model, record.effort);
-      batch.sessions.set(id, session.session);
-      let progressTimer;
-      const onProgress = progress => {
-        const current = state.records.get(id);
-        if (current?.runId !== record.runId || current.status !== "running") return;
-        state.records.set(id, { ...current, ...progress });
-        // Keep live reads immediate, but checkpoint at most once per second.
-        if (!progressTimer) progressTimer = setTimeout(() => {
-          progressTimer = null;
-          try { save(state.records.get(id)); }
-          catch (error) { console.error("[Codex trials] Cannot save live output:", error.message); }
-        }, 1000);
-      };
-      try {
-        save({ ...record, status: "running", activity: "正在启动 Codex CLI", startedAt: new Date().toISOString() });
-        const result = await runCodexCli({
-          ...record, token: session.token,
-          directory: path.join(ROOT, "jobs", record.runId),
-          signal: AbortSignal.any([batch.controller.signal, AbortSignal.timeout(15 * 60_000)]),
-          onProgress,
-        });
-        clearTimeout(progressTimer);
-        const status = batch.controller.signal.aborted ? "cancelled" : result.error ? "error" : "success";
-        const rate = getOutputThroughput({ kind: status, outputTokens: result.usage?.output_tokens, latencyMs: result.elapsedMs });
-        save({
-          ...state.records.get(id), ...result, html: status === "success" ? result.html : null,
-          htmlLines: status === "success" ? countTrialHtmlLines(result.html) : 0,
-          status, error: result.error || null, finishedAt: new Date().toISOString(), tokensPerSecond: rate?.totalTps ?? null,
-          failures: record.failures + (status === "error" ? 1 : 0),
-          routerErrors: session.session.errors, requests: session.session.requests, reportedModels: [...session.session.models],
-        });
-      } catch (error) {
-        save({ ...state.records.get(id), html: null, status: "error", error: error.message, failures: record.failures + 1, finishedAt: new Date().toISOString() });
-      } finally { clearTimeout(progressTimer); session.revoke(); batch.sessions.delete(id); }
-    }
+  } finally { startWorkers(batch); }
+  return { count: jobs.length, parallel: batch.parallel };
+}
+
+function startWorkers(batch) {
+  // Newly submitted tests can fill spare slots in the same pool immediately.
+  while (batch.workers < batch.parallel && batch.queue.length) {
+    batch.workers++;
+    runTrial(batch, batch.queue.shift()).catch(error => {
+      console.error("[Codex trials]", error.message);
+    }).finally(() => { batch.workers--; startWorkers(batch); });
   }
-  // The task belongs to the server, not the browser connection; refreshes do not cancel it.
-  batch.promise = Promise.allSettled(Array.from({ length: Math.min(parallel, batch.ids.length) }, worker)).then(results => {
-    for (const result of results) if (result.status === "rejected") console.error("[Codex trials]", result.reason?.message);
-  }).finally(() => { if (state.batch === batch) state.batch = null; });
-  return { count: batch.ids.length };
+  if (!batch.workers && !batch.queue.length) {
+    if (state.batch === batch) state.batch = null;
+    batch.resolve();
+  }
+}
+
+async function runTrial(batch, id) {
+  const record = state.records.get(id);
+  if (batch.controller.signal.aborted) {
+    save({ ...record, status: "cancelled", error: "已取消排队。", finishedAt: new Date().toISOString() });
+    return;
+  }
+  const session = createTrialSession(record.connectionId, record.model, record.effort);
+  batch.sessions.set(id, session.session);
+  let progressTimer;
+  const onProgress = progress => {
+    const current = state.records.get(id);
+    if (current?.runId !== record.runId || current.status !== "running") return;
+    state.records.set(id, { ...current, ...progress });
+    // Keep live reads immediate, but checkpoint at most once per second.
+    if (!progressTimer) progressTimer = setTimeout(() => {
+      progressTimer = null;
+      try { save(state.records.get(id)); }
+      catch (error) { console.error("[Codex trials] Cannot save live output:", error.message); }
+    }, 1000);
+  };
+  try {
+    save({ ...record, status: "running", activity: "正在启动 Codex CLI", startedAt: new Date().toISOString() });
+    const result = await runCodexCli({
+      ...record, token: session.token,
+      directory: path.join(ROOT, "jobs", record.runId),
+      signal: AbortSignal.any([batch.controller.signal, AbortSignal.timeout(15 * 60_000)]),
+      onProgress,
+    });
+    clearTimeout(progressTimer);
+    const status = batch.controller.signal.aborted ? "cancelled" : result.error ? "error" : "success";
+    const rate = getOutputThroughput({ kind: status, outputTokens: result.usage?.output_tokens, latencyMs: result.elapsedMs });
+    save({
+      ...state.records.get(id), ...result, html: status === "success" ? result.html : null,
+      htmlLines: status === "success" ? countTrialHtmlLines(result.html) : 0,
+      status, error: result.error || null, finishedAt: new Date().toISOString(), tokensPerSecond: rate?.totalTps ?? null,
+      failures: record.failures + (status === "error" ? 1 : 0),
+      routerErrors: session.session.errors, requests: session.session.requests, reportedModels: [...session.session.models],
+    });
+  } catch (error) {
+    save({ ...state.records.get(id), html: null, status: "error", error: error.message, failures: record.failures + 1, finishedAt: new Date().toISOString() });
+  } finally { clearTimeout(progressTimer); session.revoke(); batch.sessions.delete(id); }
 }
 
 export function stopTrials() {
