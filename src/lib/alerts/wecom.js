@@ -6,6 +6,7 @@ import { getConcurrencySnapshot } from "../../sse/services/concurrencyLimiter.js
 import { ALERT_DEFAULTS, ALERT_SEND_TIMEOUT_MS, validateWebhook } from "./config.js";
 import { getApiKeys } from "../db/repos/apiKeysRepo.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { getCodexRoutingPolicy } from "@/sse/local/routingPolicy.js";
 
 const state = globalThis._wecomAlerts ||= { pending: Promise.resolve(), queued: new Set() };
 const STATUS_KEY = "wecomAlertStatus";
@@ -36,11 +37,12 @@ export async function sendWecomMessage(webhookUrl, content, mentionedList = []) 
   if (result.errcode !== 0) throw new Error(`企业微信错误码 ${Number(result.errcode) || "未知"}`);
 }
 
-export function queueAlert({ key, content, connectionId, cooldownMs, test = false }) {
+export function queueAlert({ key, content, connectionId, quotaProvider, cooldownMs, test = false }) {
   if (state.queued.has(key)) return Promise.resolve(false);
   state.queued.add(key);
   const task = state.pending.then(async () => {
-    const config = { ...ALERT_DEFAULTS, ...(await getSettings()).wecomAlerts };
+    const settings = await getSettings();
+    const config = { ...ALERT_DEFAULTS, ...settings.wecomAlerts };
     if (!test && !config.enabled) return false;
     const now = Date.now();
     const recordKey = `wecomAlert:${key}`;
@@ -54,6 +56,12 @@ export function queueAlert({ key, content, connectionId, cooldownMs, test = fals
     const lastAttemptAt = Date.now();
     try {
       let mentionedList = [];
+      if (quotaProvider === "codex") {
+        const policy = getCodexRoutingPolicy(settings);
+        if (policy.quotaModelSwitch) {
+          content = content.replace("\n", `\n自动切换模型：${policy.quotaFallbackModel}（已用 ≥ ${policy.quotaUsedPercent}%，额度未耗尽且模型权限允许时生效）\n`);
+        }
+      }
       if (connectionId) {
         const connection = await getProviderConnectionById(connectionId);
         if (!connection || connection.isActive === false) return false;
@@ -63,7 +71,7 @@ export function queueAlert({ key, content, connectionId, cooldownMs, test = fals
           // API Key names are WeCom UserIDs. Deleted keys never become @all.
           mentionedList = [...new Set(keys.filter(item => ids.includes(item.id))
             .map(item => item.name?.trim()).filter(name => name && name.toLowerCase() !== "@all"))];
-          content = content.replace("\n", `\n额度归属：专用${mentionedList.length ? `（${mentionedList.join("、")}）` : "（绑定人员不存在）"}\n`);
+          content = content.replace("\n", `\n额度归属：专用${mentionedList.length ? `（${mentionedList.map(name => `@${name}`).join("、")}）` : "（绑定人员不存在）"}\n`);
         } else {
           content = content.replace("\n", "\n额度归属：共享\n");
         }
@@ -116,7 +124,7 @@ export async function notifyRequestError(entry) {
     : entry.proxyConfigured === true ? "已配置" : "未知";
   return queueAlert({
     key: `${connection.id}:${kind}`,
-    ...(kind === "quota" ? { connectionId: connection.id } : {}),
+    ...(kind === "quota" ? { connectionId: connection.id, quotaProvider: connection.provider } : {}),
     content: [
       `9router 告警｜${label}`,
       `账号：${connection.name || connection.email || connection.id}`,

@@ -12,6 +12,7 @@ function combineAlerts(group, periods, config) {
   return {
     groupKey: group.key,
     connectionId: group.connectionId,
+    quotaProvider: "codex",
     key: `${alertPrefix(group)}:${periods.map(item => `${item.period}:${item.empty ? "empty" : "low"}`).join("+")}`,
     cooldownMs: ALERT_DAILY_MS,
     periods,

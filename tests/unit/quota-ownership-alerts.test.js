@@ -146,9 +146,54 @@ describe("isolated quota alerts", () => {
     expect(payloads()[0].text).not.toHaveProperty("mentioned_list");
     expect(payloads()[1].text.mentioned_list).toEqual(["Alice.User", "Bob.User"]);
     expect(payloads()[2].text.mentioned_list).toEqual(["Bob.User"]);
-    expect(payloads()[1].text.content).toContain("额度归属：专用");
+    expect(payloads()[0].text.content).not.toContain("@Alice.User");
+    expect(payloads()[1].text.content).toContain("额度归属：专用（@Alice.User、@Bob.User）");
+    expect(payloads()[1].text.content).not.toContain("自动切换");
     await notifyCodexQuotaSummary(summary([[shared, usage(0, 0)], [alice, usage(0, 0)], [bob, usage(0, 0)]]), config);
     expect(payloads()).toHaveLength(3);
+  });
+
+  it("shows the confirmed Chinese UserID with @ while sending the unprefixed recipient ID", async () => {
+    mocks.keys.mockResolvedValue([
+      { id: "alice-key", name: " 陶俊帆 " },
+      { id: "duplicate-key", name: "陶俊帆" },
+    ]);
+    await notifyCodexQuotaSummary(summary([[alice, usage(10)]]), config);
+    expect(payloads()[0].text.mentioned_list).toEqual(["陶俊帆"]);
+    expect(payloads()[0].text.content).toContain("额度归属：专用（@陶俊帆）");
+  });
+
+  it("includes the saved model and routing threshold for both shared and dedicated quota alerts", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: config, localCodexRouting: {
+      quotaModelSwitch: true, quotaFallbackModel: "gpt-6-luna", quotaUsedPercent: 95,
+    } });
+    await notifyCodexQuotaSummary(summary([[shared, usage(5)], [alice, usage(5)]]), config);
+    expect(payloads()).toHaveLength(2);
+    for (const payload of payloads()) {
+      expect(payload.text.content).toContain("自动切换模型：gpt-6-luna（已用 ≥ 95%");
+      expect(payload.text.content).toContain("额度未耗尽且模型权限允许时生效");
+    }
+    expect(payloads()[0].text).not.toHaveProperty("mentioned_list");
+  });
+
+  it("omits model switching when disabled even if a target is configured", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: config, localCodexRouting: {
+      quotaModelSwitch: false, quotaFallbackModel: "gpt-6-luna",
+    } });
+    await notifyCodexQuotaSummary(summary([[alice, usage(10)]]), config);
+    expect(payloads()[0].text.content).not.toContain("自动切换");
+    expect(payloads()[0].text.content).not.toContain("gpt-6-luna");
+  });
+
+  it("preserves recipient and model details when per-account quota text is truncated", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: config, localCodexRouting: {
+      quotaModelSwitch: true, quotaFallbackModel: "configured-model",
+    } });
+    const alerts = getAccountAlerts(alice, usage(10), { ...config, codexQuotaMode: "account" });
+    await queueAlert({ ...alerts[0], content: alerts[0].content + "\n" + "额度详情".repeat(200) });
+    expect(payloads()[0].text.content).toHaveLength(650);
+    expect(payloads()[0].text.content).toContain("额度归属：专用（@Alice.User、@Bob.User）");
+    expect(payloads()[0].text.content).toContain("自动切换模型：configured-model");
   });
 
   it("deduplicates periods independently and still alerts newly depleted quotas", async () => {
@@ -190,11 +235,13 @@ describe("isolated quota alerts", () => {
   });
 
   it("preserves per-account mode and applies mentions to other providers", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: config, localCodexRouting: { quotaModelSwitch: true } });
     const connection = { ...alice, provider: "claude" };
     const alerts = getAccountAlerts(connection, usage(0), { ...config, codexQuotaMode: "account" });
     expect(alerts).toHaveLength(1);
     await queueAlert(alerts[0]);
     expect(payloads()[0].text.mentioned_list).toEqual(["Alice.User", "Bob.User"]);
+    expect(payloads()[0].text.content).not.toContain("自动切换");
   });
 
   it("never turns missing users or the reserved @all name into a broadcast", async () => {
@@ -204,11 +251,15 @@ describe("isolated quota alerts", () => {
   });
 
   it("allows dedicated upstream 402 alerts while shared accounts use aggregate alerts", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: config, localCodexRouting: {
+      quotaModelSwitch: true, quotaFallbackModel: "gpt-6-luna",
+    } });
     const entry = { source: "upstream", statusCode: 402, timestamp: new Date().toISOString() };
     await notifyRequestError({ ...entry, connectionId: shared.id });
     expect(payloads()).toHaveLength(0);
     await notifyRequestError({ ...entry, connectionId: alice.id });
     expect(payloads()).toHaveLength(1);
     expect(payloads()[0].text.mentioned_list).toEqual(["Alice.User", "Bob.User"]);
+    expect(payloads()[0].text.content).toContain("自动切换模型：gpt-6-luna");
   });
 });

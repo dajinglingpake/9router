@@ -50,6 +50,7 @@ export function getAccountAlerts(connection, usage, config, now = Date.now()) {
   if (low.length || empty.length) alerts.push({
     key: `${connection.id}:quota-${empty.length ? "empty" : "low"}`,
     connectionId: connection.id,
+    quotaProvider: connection.provider,
     cooldownMs: ALERT_DAILY_MS,
     content: `9router 告警｜${empty.length ? "额度已用尽" : "额度即将用尽"}\n${account}\n${[...empty, ...low].join("\n")}`,
   });
