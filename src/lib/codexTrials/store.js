@@ -53,6 +53,7 @@ export async function listTrials() {
   const connections = await getProviderConnections({ provider: "codex" });
   if (!state.cli) state.cli = await getCliVersion();
   return {
+    serverNow: Date.now(),
     cli: state.cli,
     running: !!state.batch,
     accounts: connections.map(connection => {

@@ -31,7 +31,7 @@ function Metric({ label, children, danger }) {
 function AccountCard({ account, busy, now, onRun, onInspect, onUpdated }) {
   const result = account.result;
   const [status, color] = states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
-  const duration = result?.status === "running" && result.startedAt ? now - new Date(result.startedAt).getTime() : result?.elapsedMs;
+  const duration = result?.status === "running" && result.startedAt ? Math.max(0, now - new Date(result.startedAt).getTime()) : result?.elapsedMs;
   return <article className={`${panel} min-w-0 overflow-hidden`}>
     <div className="flex items-start justify-between gap-3 p-4">
       <div className="min-w-0">
@@ -106,7 +106,8 @@ export default function CodexTrialsPanel() {
       const response = await fetch("/api/codex-trials", { cache: "no-store", signal });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "读取测试记录失败。");
-      if (sequence.current === current && !signal?.aborted) { setData(payload); setNow(Date.now()); setReadError(""); }
+      // Trial timestamps and elapsed time must use the same server clock.
+      if (sequence.current === current && !signal?.aborted) { setData(payload); setNow(payload.serverNow ?? Date.now()); setReadError(""); }
     } catch (cause) { if (sequence.current === current && !signal?.aborted) setReadError(cause.message); }
   }, []);
   useEffect(() => {
