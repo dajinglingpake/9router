@@ -25,15 +25,19 @@ export function countTrialHtmlLines(html = "") {
 export function trialPreviewDocument(html) {
   const sizing = `<style>html{overflow:hidden!important;scrollbar-width:none!important}html::-webkit-scrollbar,body::-webkit-scrollbar{display:none!important}</style><script>
 (() => {
-  const report = () => parent.postMessage({type:'9router-codex-preview-size',
-    width:Math.max(document.documentElement.scrollWidth,document.body?.scrollWidth||0),
-    height:Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight||0)},'*');
-  const observer = new ResizeObserver(report);
-  observer.observe(document.documentElement);
-  if(document.body) observer.observe(document.body);
-  addEventListener('load',report);
-  document.fonts?.ready.then(report);
-  report();
+  // Measure once at the initial viewport: resizing and measuring again can grow
+  // vh/% layouts and decorative overflow forever, shrinking the actual artwork.
+  const report = async () => {
+    await document.fonts?.ready;
+    const root = document.documentElement, body = document.body;
+    const style = body && getComputedStyle(body);
+    const clipped = axis => style && ['hidden','clip'].includes(style[axis]);
+    parent.postMessage({type:'9router-codex-preview-size',
+      width:clipped('overflowX') ? innerWidth : Math.max(innerWidth,root.scrollWidth,body?.scrollWidth||0),
+      height:clipped('overflowY') ? innerHeight : Math.max(innerHeight,root.scrollHeight,body?.scrollHeight||0)},'*');
+  };
+  if(document.readyState === 'complete') report();
+  else addEventListener('load',report,{once:true});
 })();
 </script>`;
   return /<\/body\s*>/i.test(html) ? html.replace(/<\/body\s*>/i, () => `${sizing}</body>`) : html + sizing;
