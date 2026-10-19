@@ -6,6 +6,7 @@ import Button from "@/shared/components/Button";
 import Modal from "@/shared/components/Modal";
 import CodexTrialOutput from "./CodexTrialOutput";
 import CodexTrialPreview from "./CodexTrialPreview";
+import CodexTrialErrors from "./CodexTrialErrors";
 import { formatTrialLog } from "@/shared/utils/codexTrialOutput";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { CODEX_TRIAL_PROMPT, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_MODEL, CODEX_TRIAL_EFFORT, CODEX_TRIAL_MODELS } from "@/shared/utils/codexTrial";
@@ -57,7 +58,10 @@ function AccountCard({ account, busy, now, onRun, onInspect }) {
     <div className="p-4">
       <dl className="grid grid-cols-3 gap-3 sm:grid-cols-5 sm:gap-2">
         <Metric label="输出 tok/s">{typeof result?.tokensPerSecond === "number" ? result.tokensPerSecond.toFixed(1) : "—"}</Metric>
-        <Metric label="中转错误" danger={result?.routerStatsVersion === 3 && result.routerErrors > 0}>{number(result?.routerStatsVersion === 3 ? result.routerErrors : null)}</Metric>
+        <Metric label="中转错误" danger={result?.routerStatsVersion === 3 && result.routerErrors > 0}>
+          {result ? <button type="button" className="cursor-pointer rounded underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label={`查看 ${account.name} 本次测试的中转错误`} onClick={() => onInspect(account, "errors")}>{number(result.routerStatsVersion === 3 ? result.routerErrors : null)}</button> : "—"}
+        </Metric>
         <Metric label="输出 tokens">{number(result?.usage?.output_tokens)}</Metric>
         <Metric label="总耗时">{elapsed(duration)}</Metric>
         <Metric label="HTML 行数">{result?.hasHtml ? number(result.htmlLines) : "—"}</Metric>
@@ -175,7 +179,9 @@ export default function CodexTrialsPanel() {
     <p className="-mt-3 text-xs leading-5 text-text-muted">速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。作品用于人工比较，不自动判定账号质量。</p>
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.id} account={account} busy={busy} now={now} onRun={run} onInspect={inspect} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加 Codex 账号。"}</div>}
-    <Modal isOpen={!!inspector} onClose={() => setInspector(null)} title={inspector?.account.name} size="full"
+    {inspector?.mode === "errors" && <CodexTrialErrors key={inspector.account.result.runId}
+      account={accounts.find(account => account.id === inspector.account.id) || inspector.account} onClose={() => setInspector(null)} />}
+    <Modal isOpen={!!inspector && inspector.mode !== "errors"} onClose={() => setInspector(null)} title={inspector?.account.name} size="full"
       footer={<><Button variant="secondary" onClick={() => setInspector(null)}>关闭</Button>{inspector?.account.result?.hasHtml && <a className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white" href={artifactUrl(inspector.account, "download")} download>下载 HTML</a>}</>}>
       {inspector?.mode === "preview" ? <CodexTrialPreview key={inspector.account.result?.runId} title={`${inspector.account.name} 的完整作品`} src={artifactUrl(inspector.account)} className="h-[60vh] w-full rounded-lg" />
         : <div className="space-y-4"><p className="text-xs text-text-muted">{detail ? `${detail.model || ""} · ${detail.effort || ""} · ${detail.cliVersion || ""}` : "正在读取记录…"}</p>{detail?.reportedModels?.length > 0 && <p className="text-xs text-text-muted">上游返回模型：{detail.reportedModels.join("、")}</p>}{detail?.prompt && <p className="whitespace-pre-wrap text-sm">{detail.prompt}</p>}{detail?.error && <p className="whitespace-pre-wrap break-words text-sm text-red-600">{detail.error}</p>}

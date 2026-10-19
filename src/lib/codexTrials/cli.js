@@ -8,13 +8,14 @@ import { createTrialOutputFormatter } from "../../shared/utils/codexTrialOutput.
 const exec = promisify(execFile);
 const CLI = process.env.CODEX_TRIAL_CLI || "/opt/codex/bin/codex";
 const RUNTIME = process.env.CODEX_TRIAL_RUNTIME || path.dirname(path.dirname(CLI));
+const UNSANDBOXED = process.env.CODEX_TRIAL_UNSANDBOXED === "true";
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const LOG_LIMIT = 64 * 1024;
 
 export async function getCliVersion() {
   try {
     const { stdout } = await exec(CLI, ["--version"], { timeout: 5000, maxBuffer: 4096 });
-    if (process.platform === "linux") {
+    if (!UNSANDBOXED && process.platform === "linux") {
       try { await fs.access("/proc/self/ns/user"); }
       catch { return { available: false, version: stdout.trim(), error: "当前宿主机内核未启用用户命名空间，无法运行 Codex CLI 沙箱。请在支持用户命名空间的 Linux 主机上部署账号测试功能。" }; }
     }
@@ -22,7 +23,7 @@ export async function getCliVersion() {
   } catch { return { available: false, error: "容器内未找到可运行的 Codex CLI，请使用账号对比专用构建配置。" }; }
 }
 
-// A fresh CLI process and sandbox per account. No inherited user auth, MCPs, skills or config.
+// A fresh CLI process per account. No inherited user auth, MCPs, skills or config.
 export async function runCodexCli({ directory, token, model, effort, prompt, signal, onProgress }) {
   const workspace = path.join(directory, "workspace");
   const home = path.join(directory, "home");
@@ -33,15 +34,18 @@ export async function runCodexCli({ directory, token, model, effort, prompt, sig
     model_reasoning_effort: JSON.stringify(effort),
     'model_providers.nine-router-trial': `{ name="9router", base_url="http://127.0.0.1:${Number(process.env.PORT) || 20128}/v1", wire_api="responses", env_key="CODEX_GATEWAY_API_KEY", request_max_retries=0, stream_max_retries=2 }`,
     approval_policy: '"never"',
-    default_permissions: '"trial"',
-    'permissions.trial.filesystem': `{ ":minimal"="read", ${JSON.stringify(workspace)}="write", ${JSON.stringify(home)}="read", ${JSON.stringify(RUNTIME)}="read" }`,
-    'permissions.trial.network.enabled': "false",
+    ...(!UNSANDBOXED ? {
+      default_permissions: '"trial"',
+      'permissions.trial.filesystem': `{ ":minimal"="read", ${JSON.stringify(workspace)}="write", ${JSON.stringify(home)}="read", ${JSON.stringify(RUNTIME)}="read" }`,
+      'permissions.trial.network.enabled': "false",
+    } : {}),
     web_search: '"disabled"',
     'features.multi_agent': "false",
     'shell_environment_policy.inherit': '"core"',
     'shell_environment_policy.filters': '{ "CODEX_GATEWAY_API_KEY"="exclude" }',
   };
   const args = ["exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--color", "never", "-C", workspace, "-m", model];
+  if (UNSANDBOXED) args.push("--dangerously-bypass-approvals-and-sandbox");
   for (const [key, value] of Object.entries(config)) args.push("-c", `${key}=${value}`);
   args.push("-");
   const startedAt = Date.now();
