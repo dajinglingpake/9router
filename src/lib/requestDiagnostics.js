@@ -9,6 +9,7 @@ import { DIAGNOSTIC_TOKEN_COLUMNS, extractDiagnosticTokenUsage } from "./diagnos
 import { ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityMetadata, isAccountQualityColor } from "@/shared/utils/accountQuality.js";
 import { getAccountPlan } from "./accountPlan.js";
 import { getCodexTrialIdentity } from "@/shared/utils/codexTrialIdentity.js";
+import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 
 const MAX_ROWS = 20000;
 const valueOrNull = value => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
@@ -30,6 +31,7 @@ export function parseDiagnosticsQuery(params, now = Date.now()) {
   if (!["all", "marked", "unmarked"].includes(accountLabel) && !(accountLabel.startsWith("label:") && accountLabel.slice(6).trim() && accountLabel.slice(6).length <= ACCOUNT_QUALITY_MAX_LENGTH)) throw new Error("账号标签筛选无效。");
   if (accountColor !== "all" && !isAccountQualityColor(accountColor)) throw new Error("标签颜色筛选无效。");
   return { start, end, slowMs, page, pageSize: 20, issue,
+    detailsOnly: params.get("detailsOnly") === "1", includeAnalysis: params.get("analysis") !== "0",
     accountLabel: accountLabel.startsWith("label:") ? `label:${accountLabel.slice(6).trim()}` : accountLabel, accountColor: accountColor.toLowerCase(),
     focusApiKeyId: params.get("focusApiKeyId") || null, focusConnectionId: params.get("focusConnectionId") || null,
     provider: params.get("provider") || "all", model: params.get("model") || "all",
@@ -65,13 +67,17 @@ export async function getRequestDiagnostics(options) {
       exclusiveApiKeyNames: ids.map(id => keyById.get(id)?.name || "已删除 Key") };
   });
   const accountMap = new Map(connections.map(c => [c.id, c]));
-  const historyStart = options.detailsOnly ? options.start : options.start - 7 * 86400000;
+  const historyStart = options.detailsOnly || options.includeAnalysis === false ? options.start : options.start - 7 * 86400000;
   const start = new Date(historyStart).toISOString(), end = new Date(options.end).toISOString();
   const providerClause = options.provider && options.provider !== "all" ? " AND provider = ?" : "";
   const providerParams = providerClause ? [options.provider] : [];
-  // Trial details need only this account/model/window, without the dashboard's comparison history.
-  const detailClause = options.detailsOnly ? " AND connectionId = ? AND model = ?" : "";
-  const detailParams = options.detailsOnly ? [options.focusConnectionId, options.model] : [];
+  // Details do not need peer comparisons or the seven-day waiting baseline.
+  const detailFilters = options.detailsOnly ? [
+    ["connectionId", options.focusConnectionId], ["connectionId", options.connectionId],
+    ["model", options.model !== "all" ? options.model : null],
+  ].filter(([, value]) => value) : [];
+  const detailClause = detailFilters.map(([column]) => ` AND ${column} = ?`).join("");
+  const detailParams = detailFilters.map(([, value]) => value);
   const usage = db.all(`SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, status, promptTokens, completionTokens,
     CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.total') END AS latencyMs,
     CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.ttft') END AS ttftMs,
@@ -115,7 +121,14 @@ export async function getRequestDiagnostics(options) {
       requestId: r.requestId, endpoint: data.endpoint || null, clientIp: data.clientIp || null });
   }
   samples.push(...attempts.values());
-  return { ...buildDiagnosticsReport(samples, options, connections, keys),
+  const report = buildDiagnosticsReport(samples, options, connections, keys);
+  // Return saved error text only for the displayed page, never in aggregate statistics.
+  const detailIds = new Set(report.details.map(record => record.id));
+  const rawMessages = new Map(errors.filter(row => detailIds.has(`error-${row.id}`)).map(row => {
+    const message = parseJson(row.data, {})?.message;
+    return [`error-${row.id}`, typeof message === "string" ? safeDiagnosticMessage(message) : null];
+  }));
+  return { ...report, details: report.details.map(record => ({ ...record, rawMessage: rawMessages.get(record.id) || null })),
     providers: [...new Set([...connections.map(c => c.provider), ...samples.map(r => r.provider)])].sort(),
     source: { kind: "live" },
     generatedAt: Date.now(), truncated: usage.length > MAX_ROWS || errors.length > MAX_ROWS,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Button from "@/shared/components/Button";
 import SegmentedControl from "@/shared/components/SegmentedControl";
 import DiagnosticsChart from "./DiagnosticsChart";
@@ -8,6 +8,7 @@ import DiagnosticsPressure from "./DiagnosticsPressure";
 import DiagnosticsAccounts from "./DiagnosticsAccounts";
 import DiagnosticsIdentity from "./DiagnosticsIdentity";
 import DiagnosticsDetailsModal from "./DiagnosticsDetailsModal";
+import useDiagnosticsReport from "./useDiagnosticsReport";
 import { clock, duration, formatNumber, percent, throughput, Icon } from "./format";
 import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
@@ -42,7 +43,7 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
   const [accountLabel, setAccountLabel] = useState(initialAccountLabel);
   const [accountColor, setAccountColor] = useState(initialAccountColor);
   const [slowMs, setSlowMs] = useState(60000);
-  const [dimension, setDimension] = useState(initialFocus?.dimension === "byApiKey" ? "byAccount" : "byApiKey");
+  const [dimension, setDimension] = useState(initialFocus?.dimension === "byAccount" ? "byApiKey" : "byAccount");
   const [showAllRows, setShowAllRows] = useState(false);
   const [sort, setSort] = useState("overloadCount");
   const [search, setSearch] = useState("");
@@ -52,45 +53,17 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
   const [issue, setIssue] = useState("error");
   const [page, setPage] = useState(1);
   const [refreshTick, setRefreshTick] = useState(0);
-  const [result, setResult] = useState({ key: "", data: null, error: "" });
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const rankingRef = useRef(null);
-  const options = { start: range.start, end: range.end, provider, model, accountLabel, accountColor, slowMs, issue, page, pageSize: 20,
+  const options = { start: range.start, end: range.end, provider, model, accountLabel, accountColor, slowMs, refreshTick,
     focusApiKeyId: focus?.dimension === "byApiKey" ? focus.id : null,
-    focusConnectionId: focus?.dimension === "byAccount" ? focus.id : null,
+    focusConnectionId: focus?.dimension === "byAccount" ? focus.id : null };
+  const { data, error, loading } = useDiagnosticsReport({ ...options, includeAnalysis: analysisOpen });
+  const details = useDiagnosticsReport(detailsOpen ? { ...options, detailsOnly: true, issue, page,
     apiKeyId: selection?.dimension === "byApiKey" ? selection.id : null,
-    connectionId: selection?.dimension === "byAccount" ? selection.id : null };
-  const requestKey = JSON.stringify({ ...options, refreshTick });
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const query = JSON.parse(requestKey);
-    const load = async () => {
-      const params = new URLSearchParams({ start: new Date(query.start).toISOString(), end: new Date(query.end).toISOString(),
-        slowMs: String(query.slowMs), provider: query.provider, model: query.model, issue: query.issue, page: String(query.page) });
-      if (query.accountLabel !== "all") params.set("accountLabel", query.accountLabel);
-      if (query.accountColor !== "all") params.set("accountColor", query.accountColor);
-      if (query.focusApiKeyId) params.set("focusApiKeyId", query.focusApiKeyId);
-      if (query.focusConnectionId) params.set("focusConnectionId", query.focusConnectionId);
-      if (query.apiKeyId) params.set("apiKeyId", query.apiKeyId);
-      if (query.connectionId) params.set("connectionId", query.connectionId);
-      const response = await fetch(`/api/usage/diagnostics?${params}`, { cache: "no-store", signal: controller.signal });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "读取诊断数据失败");
-      return data;
-    };
-    load().then(data => {
-      if (controller.signal.aborted) return;
-      setResult({ key: requestKey, data, error: "" });
-    })
-      .catch(error => { if (!controller.signal.aborted) setResult({ key: requestKey, data: null, error: error.message }); });
-    return () => controller.abort();
-  }, [requestKey]);
-
-  const data = result.data;
-  const error = result.key === requestKey ? result.error : "";
-  const loading = result.key !== requestKey;
-  const rows = useMemo(() => (data?.[dimension] || []).filter(row => `${row.name} ${getAccountQualityLabel(row)} ${row.providers.join(" ")} ${row.related.map(r => `${r.name} ${getAccountQualityLabel(r)}`).join(" ")}`.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => (b[sort] ?? -1) - (a[sort] ?? -1) || b.recordCount - a.recordCount), [data, dimension, search, sort]);
+    connectionId: selection?.dimension === "byAccount" ? selection.id : null } : null);
+  const rows = useMemo(() => (data?.byApiKey || []).filter(row => `${row.name} ${row.providers.join(" ")} ${row.related.map(r => `${r.name} ${getAccountQualityLabel(r)}`).join(" ")}`.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (b[sort] ?? -1) - (a[sort] ?? -1) || b.recordCount - a.recordCount), [data, search, sort]);
   const resetScope = () => { setSelection(null); setPage(1); };
   const changeQualityFilters = (nextLabel, nextColor) => {
     setAccountLabel(nextLabel); setAccountColor(nextColor); resetScope(); setSearch(""); setShowAllRows(false);
@@ -153,7 +126,6 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
         <label className="flex items-center gap-2 text-xs text-text-muted">提供商<select className={control} value={provider} onChange={e => { setProvider(e.target.value); resetScope(); }}><option value="all">全部提供商</option>{(data?.providers || []).map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="flex min-w-0 items-center gap-2 text-xs text-text-muted">模型<select aria-label="诊断模型" className={`${control} min-w-0 max-w-56`} value={model} onChange={e => changeModel(e.target.value)}><option value="all">全部模型</option>{[...new Set([...(data?.models || []), ...(model === "all" ? [] : [model])])].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="flex items-center gap-2 text-xs text-text-muted">长响应阈值<select className={control} value={slowMs} onChange={e => { setSlowMs(Number(e.target.value)); setPage(1); }}>{[30000, 60000, 120000].map(value => <option key={value} value={value}>总耗时 ≥ {value / 1000}s</option>)}</select></label>
-        <span className="ml-auto text-xs text-text-muted">总耗时包含生成时间；过载依据上游错误内容</span>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
         <label className="flex min-w-0 items-center gap-2 text-xs text-text-muted">账号标签
@@ -169,7 +141,6 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
           </select>
         </label>
         {(accountLabel !== "all" || accountColor !== "all") && <button type="button" className="min-h-11 cursor-pointer rounded-lg px-3 text-xs text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => changeQualityFilters("all", "all")}>清除标签筛选</button>}
-        <p className="basis-full text-xs leading-5 text-text-muted">标签使用账号当前配置；指标、趋势、排行与明细一起筛选，表现分类仍按所选时段日志计算。</p>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border-subtle pt-4">
         <label className="flex min-w-0 flex-1 flex-wrap items-center gap-3 text-sm font-medium">仅关注
@@ -182,7 +153,6 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
             <optgroup label="账号">{(data?.subjects.accounts || []).map(item => <option key={item.id} value={`byAccount:${item.id}`}>{item.name}{item.accountPlan ? ` · ${item.accountPlan.label}` : ""}{getAccountQualityLabel(item) ? ` · ${getAccountQualityLabel(item)}` : ""}</option>)}</optgroup>
           </select>
         </label>
-        <span className="text-xs text-text-muted">关注后，指标、趋势与排行一起筛选</span>
       </div>
       {focus && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-sm"><Icon className="text-primary">filter_center_focus</Icon><span className="min-w-0 flex-1 break-all">仅关注{focus.dimension === "byApiKey" ? " API Key" : "账号"}：<strong>{focusName}</strong></span><button className="min-h-9 cursor-pointer rounded-md px-2 text-xs text-primary hover:bg-primary/10" onClick={() => focusGroup(null)}>返回全部</button>{focus.dimension === "byAccount" && <div className="flex basis-full flex-wrap items-center gap-2"><AccountPlanBadge connection={focusSubject} /><AccountQualityBadge connection={focusSubject} /></div>}</div>}
       {customOpen && <form onSubmit={applyCustom} className="mt-4 flex flex-wrap items-end gap-3 border-t border-border-subtle pt-4">
@@ -201,40 +171,36 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
         <Metric label="请求记录" value={formatNumber(summary.recordCount)} hint={`${formatNumber(summary.successCount)} 次成功完成 · ${summary.cancelledCount} 次取消`} icon="receipt_long" onClick={() => focusIssue("all")} />
         <Metric label="失败尝试" value={formatNumber(summary.failureCount)} hint={`异常占比 ${percent(summary.errorRate)} · ${summary.recoveredCount} 次已重试恢复`} icon="error" color="text-danger" onClick={() => focusIssue("error")} />
         <Metric label="上游报告过载" value={formatNumber(summary.overloadCount)} hint={`${data.pressure.affectedAccounts} 个账号 · ${data.pressure.affectedApiKeys} 个 API Key 遇到过载`} icon="report" color="text-danger" onClick={() => focusIssue("overload")} />
-        <Metric label="全程输出吞吐" value={throughput(summary.throughputMeanTps)} hint={`${formatNumber(summary.throughputSamples)} 次有效记录 · 按日志总耗时，含执行内等待`} icon="speed" onClick={() => { setSort("throughputMeanTps"); rankingRef.current?.scrollIntoView({ block: "start" }); }} />
+        <Metric label="全程输出吞吐" value={throughput(summary.throughputMeanTps)} hint={`${formatNumber(summary.throughputSamples)} 次有效记录 · 按日志总耗时，含执行内等待`} icon="speed" onClick={() => { setDimension("byAccount"); rankingRef.current?.scrollIntoView({ block: "start" }); }} />
       </div>
 
-      <DiagnosticsAccounts performance={data.accountPerformance} loading={loading} onFocusAccount={focusGroup}
-        onShowOverload={row => focusIssue("overload", row, "byAccount")} onShowFailures={row => focusIssue("error", row, "byAccount")} />
+      <div ref={rankingRef} className="flex scroll-mt-6 flex-wrap items-center justify-between gap-3">
+        <SegmentedControl options={[{ value: "byAccount", label: "账号表现", icon: "account_circle" }, { value: "byApiKey", label: "API Key 调用", icon: "key" }]} value={dimension} onChange={setDimension} />
+        <button type="button" className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusIssue("slow")}>查看长响应 {formatNumber(summary.slowCount)} 条</button>
+      </div>
+      {dimension === "byAccount" && <DiagnosticsAccounts performance={data.accountPerformance} loading={loading} onFocusAccount={focusGroup}
+        onShowOverload={row => focusIssue("overload", row, "byAccount")} onShowFailures={row => focusIssue("error", row, "byAccount")} />}
 
       {!summary.recordCount ? <div className={`${panel} flex flex-col items-center px-6 py-14 text-center`}>
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-2 text-text-muted"><Icon className="text-[28px]">query_stats</Icon></div>
         <h2 className="text-lg font-semibold">这段时间还没有请求记录</h2><p className="mt-2 max-w-md text-sm leading-6 text-text-muted">可以扩大查询时间范围，或返回全部账号与 API Key。</p>
         {focus && <Button variant="secondary" className="mt-5 min-h-11" onClick={() => focusGroup(null)}>返回全部</Button>}
       </div> : <>
-        <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-          <section className={`${panel} min-w-0 p-5`}><DiagnosticsChart timeline={data.timeline} onFocus={focusTime} /></section>
-          <DiagnosticsPressure pressure={data.pressure} onFocusTime={focusTime} onFocusAccount={focusGroup} />
-        </div>
-
-        <section ref={rankingRef} className={`${panel} scroll-mt-6 overflow-hidden`} aria-label="API Key 与账号排行">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border-subtle p-5">
-            <div><h2 className="text-base font-semibold">异常与延迟排行</h2><p className="mt-1 text-xs text-text-muted">名称可选中复制，使用“仅关注”按钮筛选；点击失败、过载或长响应次数查看明细</p></div>
-            <SegmentedControl options={[{ value: "byApiKey", label: "按 API Key", icon: "key" }, { value: "byAccount", label: "按账号", icon: "account_circle" }]} value={dimension} onChange={setDimension} />
-          </div>
+        {dimension === "byApiKey" && <section className={`${panel} overflow-hidden`} aria-label="API Key 调用排行">
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-            <button className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusIssue("slow")}>查看长响应 {formatNumber(summary.slowCount)} 条</button>
-            <label className="relative"><span className="sr-only">搜索排行名称或标签</span><Icon className="pointer-events-none absolute left-3 top-3 text-text-muted">search</Icon><input value={search} onChange={e => setSearch(e.target.value)} className={`${control} w-full pl-10 sm:w-72`} placeholder={dimension === "byApiKey" ? "搜索 Key、关联账号或标签" : "搜索账号、调用人或标签"} /></label>
+            <label className="relative"><span className="sr-only">搜索排行名称或标签</span><Icon className="pointer-events-none absolute left-3 top-3 text-text-muted">search</Icon><input value={search} onChange={e => setSearch(e.target.value)} className={`${control} w-full pl-10 sm:w-72`} placeholder="搜索 Key、关联账号或标签" /></label>
             <label className="flex items-center gap-2 text-xs text-text-muted">排序<select className={control} value={sort} onChange={e => setSort(e.target.value)}>{[{ value: "throughputMeanTps", label: "全程吞吐最高" }, { value: "overloadCount", label: "过载报告优先" }, { value: "failureCount", label: "失败次数优先" }, { value: "errorRate", label: "异常占比优先" }, { value: "slowCount", label: "长响应次数优先" }, { value: "ttftP95Ms", label: "开始响应 P95 优先" }, { value: "p95Ms", label: "总耗时 P95 优先" }, { value: "recordCount", label: "请求数优先" }].map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-left text-sm"><caption className="sr-only">{dimension === "byApiKey" ? "API Key" : "账号"}的失败与延迟排行</caption>
-              <thead className="bg-surface-2/60 text-xs text-text-muted"><tr>{[dimension === "byApiKey" ? "API Key / 关联账号" : "账号 / 调用人", "请求记录", "失败 / 异常占比", "上游过载", "长响应", "开始响应 P95", "全程吞吐 / 总耗时 P95", "主要问题"].map(label => <th key={label} className="whitespace-nowrap px-4 py-3 font-medium first:pl-5">{label}</th>)}</tr></thead>
+            <table className="w-full min-w-[900px] text-left text-sm"><caption className="sr-only">API Key 的失败与延迟排行</caption>
+              <thead className="bg-surface-2/60 text-xs text-text-muted"><tr>{["API Key / 关联账号", "请求记录", "失败 / 异常占比", "上游过载", "长响应", "开始响应 P95", "全程吞吐 / 总耗时 P95", "主要问题"].map(label => <th key={label} className="whitespace-nowrap px-4 py-3 font-medium first:pl-5">{label}</th>)}</tr></thead>
               <tbody>{(showAllRows ? rows : rows.slice(0, 8)).map((row, index) => <tr key={row.id} className={`border-t border-border-subtle transition-colors hover:bg-surface-2/50 ${focus?.dimension === dimension && focus.id === row.id ? "bg-primary/5" : ""}`}>
                 <td className="max-w-72 py-4 pl-5 pr-4"><div className="flex items-start gap-3"><span className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-medium tabular-nums ${index < 3 && (row.failureCount || row.slowCount) ? "bg-primary/10 text-primary" : "bg-surface-2 text-text-muted"}`}>{index + 1}</span><div className="min-w-0">
-                  <DiagnosticsIdentity name={row.name} connection={dimension === "byAccount" ? row : undefined} label={dimension === "byAccount" ? "账号" : "API Key 名称"} onFocus={() => focusGroup(row)} />
-                  {dimension === "byApiKey" && <div className="space-y-1">{row.related.filter(account => getAccountQualityLabel(account) || account.accountPlan).slice(0, 3).map(account => <div key={account.id} className="min-w-0"><p className="select-text break-all text-xs text-text-muted">{account.name}</p><div className="flex flex-wrap items-center gap-x-2"><AccountPlanBadge connection={account} /><AccountQualityBadge connection={account} /></div></div>)}{row.related.filter(account => getAccountQualityLabel(account) || account.accountPlan).length > 3 && <button type="button" className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusGroup(row)}>查看全部关联账号</button>}</div>}
-                  <p className="mt-1 truncate text-xs text-text-muted" title={row.related.map(r => r.name).join("、")}>{row.related.length} 个{dimension === "byApiKey" ? "账号" : "API Key"} · {row.providers.join(" / ")}</p>
+                  <DiagnosticsIdentity name={row.name} label="API Key 名称" onFocus={() => focusGroup(row)} />
+                  <details className="mt-1 text-xs text-text-muted">
+                    <summary className="w-fit cursor-pointer py-1">{row.related.length} 个关联账号 · {row.providers.join(" / ")}</summary>
+                    <div className="mt-1 space-y-1">{row.related.map(account => <button key={account.id} type="button" className="block min-h-8 select-text break-all text-left hover:text-primary" onClick={() => focusGroup(account, "byAccount")}>{account.name}</button>)}</div>
+                  </details>
                   {row.bindings.length > 0 && <p className="mt-1.5 max-w-64 truncate text-xs text-primary" title={row.bindings.join("、")}>专用：{row.bindings.join("、")}</p>}
                 </div></div></td>
                 <td className="px-4 py-4 font-mono tabular-nums">{formatNumber(row.recordCount)}</td>
@@ -248,9 +214,18 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
             </table>
             {!rows.length && <p className="p-8 text-center text-sm text-text-muted">没有匹配的 API Key 或账号</p>}
           </div>
-          {rows.length > 8 && <button className="w-full min-h-11 cursor-pointer border-t border-border-subtle text-xs text-primary hover:bg-primary/5" onClick={() => setShowAllRows(value => !value)}>{showAllRows ? "收起排行" : `显示全部 ${rows.length} 个${dimension === "byApiKey" ? " API Key" : "账号"}`}</button>}
-        </section>
+          {rows.length > 8 && <button className="w-full min-h-11 cursor-pointer border-t border-border-subtle text-xs text-primary hover:bg-primary/5" onClick={() => setShowAllRows(value => !value)}>{showAllRows ? "收起排行" : `显示全部 ${rows.length} 个 API Key`}</button>}
+        </section>}
 
+        <section className={panel} aria-label="趋势与等待分析">
+          <button type="button" onClick={() => setAnalysisOpen(value => !value)} aria-expanded={analysisOpen} className="flex min-h-14 w-full cursor-pointer items-center justify-between px-5 py-3 text-left text-sm font-medium hover:bg-surface-2/40">
+            <span>趋势与等待分析</span><span className="flex items-center gap-2 text-xs text-text-muted">{analysisOpen ? "收起" : "展开"}<Icon className="text-[18px]">{analysisOpen ? "expand_less" : "expand_more"}</Icon></span>
+          </button>
+          {analysisOpen && (loading ? <p role="status" className="p-5 text-sm text-text-muted">正在加载趋势与历史对比…</p> : <div className="grid min-w-0 gap-5 border-t border-border-subtle p-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+            <div className="min-w-0"><DiagnosticsChart timeline={data.timeline} onFocus={focusTime} /></div>
+            <DiagnosticsPressure pressure={data.pressure} onFocusTime={focusTime} onFocusAccount={focusGroup} />
+          </div>)}
+        </section>
       </>}
       <details className="rounded-xl border border-dashed border-border px-4 py-3 text-xs leading-6 text-text-muted">
         <summary className="w-fit cursor-pointer font-medium">统计说明与数据完整性 <span className="ml-2 font-normal">已记录耗时 {formatNumber(summary.latencySamples)} / {formatNumber(summary.recordCount)} 条</span></summary>
@@ -263,6 +238,6 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
         </div>
       </details>
     </>}
-    <DiagnosticsDetailsModal isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} data={loading ? null : data} loading={loading} error={error} selection={selection} focusName={focusName} issue={issue} onIssueChange={value => { setIssue(value); setPage(1); }} onPageChange={setPage} slowMs={slowMs} />
+    <DiagnosticsDetailsModal isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} data={details.loading ? null : details.data} loading={details.loading} error={details.error} selection={selection} focusName={focusName} issue={issue} onIssueChange={value => { setIssue(value); setPage(1); }} onPageChange={setPage} slowMs={slowMs} blurBackdrop={false} />
   </div>;
 }

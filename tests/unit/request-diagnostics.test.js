@@ -244,7 +244,8 @@ describe("request diagnostics API", () => {
   it("joins real usage and error records, deduplicates attempts and exposes dedicated owners", async () => {
     const errors = await import("@/lib/db/repos/requestErrorsRepo.js");
     const entry = { timestamp: start + 3000, provider: "codex", model: "test-model", connectionId: privateAccount.id, apiKeyId: owner.id, apiKeyName: owner.name,
-      requestId: "same-request", status: "FAILED 503", source: "upstream", latencyMs: 65000, message: "private upstream body", transient: true };
+      requestId: "same-request", status: "FAILED 503", source: "upstream", latencyMs: 65000,
+      message: JSON.stringify({ code: "server_is_overloaded", message: "Our servers are currently overloaded. Please try again later." }), transient: true };
     const id = await errors.saveRequestError(entry);
     await errors.saveRequestError(entry);
     adapter.run("UPDATE requestErrors SET recovered = 1 WHERE id = ?", [id]);
@@ -256,7 +257,55 @@ describe("request diagnostics API", () => {
     expect(report.summary).toMatchObject({ recordCount: 4, successCount: 2, failureCount: 1, recoveredCount: 1, cancelledCount: 1, slowCount: 2 });
     expect(report.byAccount.find(a => a.id === privateAccount.id).bindings).toEqual(["Owner"]);
     expect(report.byApiKey.find(k => k.id === owner.id).bindings).toEqual(["Dedicated account"]);
-    for (const secret of [owner.key, other.key, "private-access-token", "private-refresh-token", "private upstream body"]) expect(JSON.stringify(report)).not.toContain(secret);
+    expect(report.details.find(record => record.kind === "error").rawMessage).toBe(entry.message);
+    expect(JSON.stringify({ ...report, details: [] })).not.toContain(entry.message);
+    for (const secret of [owner.key, other.key, "private-access-token", "private-refresh-token"]) expect(JSON.stringify(report)).not.toContain(secret);
+  });
+  it("returns original errors only on their detail page, bounds legacy text and handles missing messages", async () => {
+    const errors = await import("@/lib/db/repos/requestErrorsRepo.js");
+    for (let i = 0; i < 22; i++) await errors.saveRequestError({ timestamp: start + 3000 + i,
+      provider: "codex", model: "test-model", connectionId: privateAccount.id, apiKeyId: owner.id,
+      status: "FAILED 503", message: `original error ${i}`, requestId: `request-${i}` });
+    const first = await (await api.GET(request({ issue: "error", page: "1", detailsOnly: "1" }))).json();
+    const second = await (await api.GET(request({ issue: "error", page: "2", detailsOnly: "1" }))).json();
+    expect(first.details).toHaveLength(20);
+    expect(second.details.map(row => row.rawMessage)).toEqual(["original error 1", "original error 0"]);
+    expect(JSON.stringify(first)).not.toContain('"original error 0"');
+    expect(first.summary).toBeUndefined();
+    adapter.run("UPDATE requestErrors SET data = ? WHERE id = ?", [JSON.stringify({ status: "FAILED 503", message: "x".repeat(5000), privateField: "hidden-extra-field" }), 22]);
+    adapter.run("UPDATE requestErrors SET data = ? WHERE id = ?", ["not-json", 21]);
+    const legacy = await (await api.GET(request({ issue: "error", detailsOnly: "1" }))).json();
+    expect(legacy.details[0].rawMessage).toBe("x".repeat(2000));
+    expect(legacy.details[1].rawMessage).toBeNull();
+    expect(JSON.stringify(legacy)).not.toContain("hidden-extra-field");
+    const success = await (await api.GET(request({ issue: "success", detailsOnly: "1" }))).json();
+    expect(success.details.every(row => row.rawMessage === null)).toBe(true);
+  });
+  it("loads the overview without reading historical rows until analysis is requested", async () => {
+    adapter.run(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 20001)
+      INSERT INTO usageHistory(timestamp, provider, model, connectionId)
+      SELECT ?, 'codex', 'historical-model', ? FROM n`, [new Date(start - 1000).toISOString(), privateAccount.id]);
+    const quick = await (await api.GET(request({ analysis: "0" }))).json();
+    const full = await (await api.GET(request({ analysis: "1" }))).json();
+    expect(quick.truncated).toBe(false);
+    expect(full.truncated).toBe(true);
+    expect(quick.models).not.toContain("historical-model");
+    expect(full.models).toContain("historical-model");
+    expect(quick.summary).toEqual(full.summary);
+    expect(quick.byAccount).toEqual(full.byAccount);
+    expect(quick.accountPerformance).toEqual(full.accountPerformance);
+  });
+  it("supports standalone dashboard details with key, label, model and account scopes", async () => {
+    await db.updateProviderConnection(privateAccount.id, { qualityStatus: "custom", qualityLabel: "观察中", qualityColor: "#facc15" });
+    const scope = { analysis: "0", focusApiKeyId: owner.id, accountColor: "#facc15", model: "test-model", issue: "all" };
+    const full = await (await api.GET(request(scope))).json();
+    const details = await (await api.GET(request({ ...scope, detailsOnly: "1" }))).json();
+    expect(details.details).toEqual(full.details);
+    expect(details.pagination).toEqual(full.pagination);
+    expect(details.summary).toBeUndefined();
+    expect(details.pressure).toBeUndefined();
+    const incompatible = await (await api.GET(request({ ...scope, detailsOnly: "1", connectionId: sharedAccount.id }))).json();
+    expect(incompatible.details).toEqual([]);
   });
   it("filters provider and detail scope while keeping provider options available", async () => {
     const report = await (await api.GET(request({ provider: "codex", apiKeyId: owner.id }))).json();

@@ -9,6 +9,7 @@ import { isReportedOverload } from "@/shared/utils/diagnosticStatistics";
 import { isSlowResponse } from "@/shared/utils/requestDiagnostics";
 import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
+import DiagnosticsRawError from "./DiagnosticsRawError";
 
 export default function DiagnosticsDetailsModal({ isOpen, onClose, data, loading, error, selection, focusName, issue, onIssueChange, onPageChange, slowMs, blurBackdrop = true }) {
   const [expanded, setExpanded] = useState(null);
@@ -66,10 +67,18 @@ function RequestRow({ record, expanded, onToggle, slowMs }) {
       <td className="px-5 py-4"><p className="whitespace-nowrap font-mono text-xs">{record.model}</p><p className="mt-1 text-xs text-text-muted">{record.provider}</p></td>
       <td className="px-5 py-4"><Status record={record} /></td>
       <td className="whitespace-nowrap px-5 py-4 font-mono text-xs"><span className="text-text-muted">{duration(record.ttftMs)}</span><span className="mx-1.5 text-text-muted">/</span><span className={slow ? "text-amber-700 dark:text-amber-300" : ""}>{duration(record.latencyMs)}</span>{slow && <span className="ml-2 rounded bg-warning/10 px-1.5 py-0.5 font-sans text-amber-700 dark:text-amber-300">长响应</span>}</td>
-      <td className="max-w-60 px-5 py-4 text-xs leading-5 text-text-muted">{record.kind === "success" ? slow ? "响应耗时偏高" : "—" : overloaded ? "上游明确报告过载" : record.message}</td>
+      <td className="max-w-60 px-5 py-4 text-xs leading-5 text-text-muted">{record.kind === "success" ? slow ? "响应耗时偏高" : "—" : <>
+        <p>{overloaded ? "上游明确报告过载" : record.message}</p>
+        <button type="button" onClick={onToggle} aria-expanded={expanded} className="min-h-9 cursor-pointer text-primary hover:underline">{expanded ? "收起详情" : "查看原始错误"}</button>
+      </>}</td>
     </tr>
-    {expanded && <tr className="border-t border-border-subtle bg-surface-2/40"><td colSpan={6} className="px-7 py-4"><dl className="grid gap-x-8 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
-      {[["API Key", record.apiKeyName], ["实际账号", record.accountName], ["请求 ID", record.requestId || "未记录"], ["错误来源", ({ upstream: "上游", router: "路由 / 排队", client: "客户端" })[record.source] || record.source], ["客户端 IP", record.clientIp || "未记录"], ["端点", record.endpoint || "未记录"], ["开始响应延迟", duration(record.ttftMs)], ["总耗时", duration(record.latencyMs)], ["全程输出吞吐（含执行内等待）", throughput(rates?.totalTps)], ["非思考全程吞吐", throughput(rates?.nonReasoningTps)], ["输入 token", tokenCount(record.inputTokens)], ["总输出 token", tokenCount(record.outputTokens)], ["思考 token", tokenCount(record.reasoningTokens)], ["重试次数", record.retryCount], ["上游 HTTP 状态", record.upstreamStatus ?? "未记录"], ["本地排队耗时", duration(record.queueWaitMs)], ["过载证据", overloaded ? "上游报告过载 / 并发限制" : "无明确过载报告"]].map(([label, value]) => <div key={label} className="min-w-0"><dt className="mb-1 text-text-muted">{label}</dt><dd className="break-all font-medium text-text-main">{value}</dd></div>)}
+    {expanded && <tr className="border-t border-border-subtle bg-surface-2/40"><td colSpan={6} className="px-7 py-4">
+      {record.kind !== "success" && <DiagnosticsRawError message={record.rawMessage} />}
+      <dl className="grid gap-x-8 gap-y-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
+      {[["请求 ID", record.requestId || "未记录"], ["来源", ({ upstream: "上游", router: "路由 / 排队", client: "客户端" })[record.source] || record.source], ["客户端 IP", record.clientIp || "未记录"], ["端点", record.endpoint || "未记录"],
+        ...(record.kind === "success" ? [["全程输出吞吐（含执行内等待）", throughput(rates?.totalTps)], ["非思考全程吞吐", throughput(rates?.nonReasoningTps)], ["输入 token", tokenCount(record.inputTokens)], ["总输出 token", tokenCount(record.outputTokens)], ["思考 token", tokenCount(record.reasoningTokens)]]
+          : [["重试次数", record.retryCount], ["上游 HTTP 状态", record.upstreamStatus ?? "未记录"], ["本地排队耗时", duration(record.queueWaitMs)]])
+      ].map(([label, value]) => <div key={label} className="min-w-0"><dt className="mb-1 text-text-muted">{label}</dt><dd className="break-all font-medium text-text-main">{value}</dd></div>)}
     </dl></td></tr>}
   </>;
 }
