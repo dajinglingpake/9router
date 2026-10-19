@@ -307,6 +307,20 @@ describe("request diagnostics API", () => {
     const incompatible = await (await api.GET(request({ ...scope, detailsOnly: "1", connectionId: sharedAccount.id }))).json();
     expect(incompatible.details).toEqual([]);
   });
+  it("separates trial requests from normal traffic on the same account and model", async () => {
+    const errors = await import("@/lib/db/repos/requestErrorsRepo.js");
+    await db.saveRequestUsage({ timestamp: new Date(start + 3000).toISOString(), provider: "codex", model: "test-model",
+      connectionId: privateAccount.id, apiKey: "9r-trial-account-test", tokens: { completion_tokens: 5 } });
+    const entry = { timestamp: start + 4000, provider: "codex", model: "test-model", connectionId: privateAccount.id,
+      status: "FAILED 503", message: "server_is_overloaded", source: "upstream" };
+    await errors.saveRequestError({ ...entry, apiKeyId: owner.id, requestId: "ordinary-traffic" });
+    await errors.saveRequestError({ ...entry, apiKeyId: "codex-account-test", requestId: "trial-traffic" });
+    const report = await diagnostics.getRequestDiagnostics({ ...options, detailsOnly: true, model: "test-model",
+      focusConnectionId: privateAccount.id, apiKeyId: "codex-account-test" });
+    expect(report.pagination.total).toBe(2);
+    expect(report.details.every(row => row.apiKeyId === "codex-account-test")).toBe(true);
+    expect(report.details.map(row => row.kind)).toEqual(["error", "success"]);
+  });
   it("filters provider and detail scope while keeping provider options available", async () => {
     const report = await (await api.GET(request({ provider: "codex", apiKeyId: owner.id }))).json();
     expect(report.summary.recordCount).toBe(1);

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-export default function CodexTrialOutput({ result, text, now, className = "" }) {
+export default function CodexTrialOutput({ result, text, now, className = "", title }) {
   const viewport = useRef(null);
   const follow = useRef(true);
   const running = result?.status === "running";
@@ -10,9 +10,9 @@ export default function CodexTrialOutput({ result, text, now, className = "" }) 
   useEffect(() => {
     if (follow.current && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
   }, [text]);
-  return <section aria-label="Codex 执行输出" className={`flex min-h-0 flex-col overflow-hidden bg-slate-950 text-slate-200 ${className}`}>
+  return <section aria-label={title || "Codex 执行输出"} className={`flex min-h-0 flex-col overflow-hidden bg-slate-950 text-slate-200 ${className}`}>
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-2.5 text-xs">
-      <span className="flex items-center gap-2"><span className={`h-1.5 w-1.5 rounded-full ${running ? "animate-pulse bg-emerald-400 motion-reduce:animate-none" : "bg-slate-500"}`} />{running ? "实时执行输出" : "执行输出"}</span>
+      <span className="flex items-center gap-2"><span className={`h-1.5 w-1.5 rounded-full ${running ? "animate-pulse bg-emerald-400 motion-reduce:animate-none" : "bg-slate-500"}`} />{title || (running ? "实时执行输出" : "执行输出")}</span>
       <span className="text-slate-400">{running && age !== null ? `${age} 秒前收到输出` : running ? "等待首条输出" : "已保存"}</span>
     </div>
     <pre ref={viewport} tabIndex={0} aria-label="Codex 输出内容"

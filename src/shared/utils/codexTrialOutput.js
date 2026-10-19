@@ -41,3 +41,19 @@ export function formatTrialLog(log = "") {
     catch { return [line]; }
   }).join("\n\n");
 }
+
+// Show reported errors on demand without unrelated commands or generated file content.
+export function formatTrialErrorLog(log = "", failure = "") {
+  const format = createTrialOutputFormatter();
+  const errors = log.split("\n").flatMap(line => {
+    try {
+      const event = JSON.parse(line);
+      if (event.type !== "error" && event.type !== "turn.failed"
+        && !(["item.started", "item.updated", "item.completed"].includes(event.type) && event.item?.type === "error")) return [];
+      const rendered = format(event);
+      return rendered?.text ? [rendered.text] : [];
+    } catch { return []; }
+  });
+  if (failure && !errors.includes(`[错误] ${failure}`)) errors.push(`[错误] ${failure}`);
+  return [...new Set(errors)].join("\n\n");
+}
