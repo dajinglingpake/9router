@@ -13,6 +13,7 @@ export default function Modal({
   footer,
   size = "md",
   closeOnOverlay = true,
+  blurBackdrop = true,
   showTrafficLights = true,
   className,
 }) {
@@ -47,7 +48,7 @@ export default function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Overlay */}
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-[2px] fade-in"
+        className={cn("absolute inset-0 bg-black/50 fade-in", blurBackdrop && "backdrop-blur-[2px]")}
         onClick={closeOnOverlay ? onClose : undefined}
       />
 

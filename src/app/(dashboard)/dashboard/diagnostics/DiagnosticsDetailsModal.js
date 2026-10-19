@@ -10,7 +10,7 @@ import { isSlowResponse } from "@/shared/utils/requestDiagnostics";
 import AccountQualityBadge from "@/shared/components/AccountQualityBadge";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 
-export default function DiagnosticsDetailsModal({ isOpen, onClose, data, loading, error, selection, focusName, issue, onIssueChange, onPageChange, slowMs }) {
+export default function DiagnosticsDetailsModal({ isOpen, onClose, data, loading, error, selection, focusName, issue, onIssueChange, onPageChange, slowMs, blurBackdrop = true }) {
   const [expanded, setExpanded] = useState(null);
   const dialogRef = useRef(null);
   useEffect(() => {
@@ -29,7 +29,7 @@ export default function DiagnosticsDetailsModal({ isOpen, onClose, data, loading
     return () => { dialog?.removeEventListener("keydown", trapFocus); previous?.focus(); };
   }, [isOpen]);
   return <div ref={dialogRef} role={isOpen ? "dialog" : undefined} aria-modal={isOpen ? "true" : undefined} aria-label="请求明细" data-i18n-skip>
-    <Modal isOpen={isOpen} onClose={onClose} title="请求明细" size="full" footer={<Button variant="outline" onClick={onClose}>关闭</Button>}>
+    <Modal isOpen={isOpen} blurBackdrop={blurBackdrop} onClose={onClose} title="请求明细" size="full" footer={<Button variant="outline" onClick={onClose}>关闭</Button>}>
       <p className="mb-3 break-all text-sm text-text-muted">{[focusName, selection?.name].filter(Boolean).join(" · ") || "全部账号与 API Key"}<span className="ml-2 text-xs">{data ? `${formatNumber(data.pagination.total)} 条` : ""}</span></p>
       <div className="mb-4 flex flex-wrap gap-1" aria-label="明细状态筛选">{[{ value: "all", label: "全部" }, { value: "error", label: "失败尝试" }, { value: "overload", label: "过载报告" }, { value: "slow", label: "长响应" }, { value: "success", label: "成功" }, { value: "cancelled", label: "已取消" }].map(item => <button key={item.value} type="button" aria-pressed={issue === item.value} onClick={() => onIssueChange(item.value)} className={`min-h-10 cursor-pointer rounded-lg px-3 text-xs font-medium transition-colors ${issue === item.value ? "bg-primary/10 text-primary" : "text-text-muted hover:bg-surface-2"}`}>{item.label}</button>)}</div>
       {error && <p role="alert" className="mb-3 text-sm text-danger">{error}</p>}

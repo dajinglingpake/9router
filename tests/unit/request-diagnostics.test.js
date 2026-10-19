@@ -274,6 +274,39 @@ describe("request diagnostics API", () => {
     expect(account.summary.p95Ms).toBe(2000);
     expect(account.byApiKey.map(r => r.id)).toEqual([other.id]);
   });
+  it("reads trial details without letting unrelated traffic or seven-day history consume the row limit", async () => {
+    const errors = await import("@/lib/db/repos/requestErrorsRepo.js");
+    const entry = { timestamp: start + 3000, provider: "codex", model: "test-model", connectionId: privateAccount.id,
+      requestId: "trial-request", status: "FAILED 503", source: "upstream", message: "server is overloaded", apiKeyId: owner.id };
+    await errors.saveRequestError(entry);
+    await errors.saveRequestError(entry);
+    // More unrelated rows than the report limit, split between another account and another model.
+    adapter.run(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 20001)
+      INSERT INTO usageHistory(timestamp, provider, model, connectionId)
+      SELECT ?, 'codex', CASE WHEN x % 2 = 0 THEN 'other-model' ELSE 'test-model' END,
+        CASE WHEN x % 2 = 0 THEN ? ELSE ? END FROM n`, [new Date(start + 5000).toISOString(), privateAccount.id, sharedAccount.id]);
+    adapter.run(`INSERT INTO requestErrors(timestamp, provider, model, connectionId, category, data)
+      SELECT ?, provider, model, connectionId, 'upstream', '{}' FROM usageHistory WHERE timestamp = ?`, [start + 5000, new Date(start + 5000).toISOString()]);
+    adapter.run(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 20001)
+      INSERT INTO usageHistory(timestamp, provider, model, connectionId)
+      SELECT ?, 'codex', 'test-model', ? FROM n`, [new Date(start - 1000).toISOString(), privateAccount.id]);
+    const scoped = { ...options, provider: "codex", model: "test-model", focusConnectionId: privateAccount.id, detailsOnly: true };
+    const report = await diagnostics.getRequestDiagnostics(scoped);
+    expect(report.truncated).toBe(false);
+    expect(report.pagination.total).toBe(2);
+    expect(report.details.map(r => r.kind)).toEqual(["error", "success"]);
+    expect(report.details.every(r => r.connectionId === privateAccount.id && r.model === "test-model")).toBe(true);
+    expect(report.summary).toBeUndefined();
+    expect(report.pressure).toBeUndefined();
+    expect(report.accountPerformance).toBeUndefined();
+    const failed = await diagnostics.getRequestDiagnostics({ ...scoped, issue: "error" });
+    expect(failed.pagination.total).toBe(1);
+    expect(failed.details[0].statusCode).toBe(503);
+    const second = await diagnostics.getRequestDiagnostics({ ...scoped, page: 2, pageSize: 1 });
+    expect(second.pagination).toMatchObject({ total: 2, page: 2, totalPages: 2 });
+    expect(second.details[0].kind).toBe("success");
+    for (const secret of [owner.key, other.key, "private-access-token", "private-refresh-token"]) expect(JSON.stringify(report)).not.toContain(secret);
+  });
   it("reads current custom labels and colors from the database without exposing credentials", async () => {
     const quality = { qualityStatus: "custom", qualityLabel: "风控已结束，恢复正常", qualityColor: "#15803d", qualityMarkedAt: "2026-10-14T02:00:00.000Z" };
     await db.updateProviderConnection(privateAccount.id, { ...quality, isActive: false });

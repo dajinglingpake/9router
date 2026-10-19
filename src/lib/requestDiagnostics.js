@@ -65,17 +65,20 @@ export async function getRequestDiagnostics(options) {
       exclusiveApiKeyNames: ids.map(id => keyById.get(id)?.name || "已删除 Key") };
   });
   const accountMap = new Map(connections.map(c => [c.id, c]));
-  const historyStart = options.start - 7 * 86400000;
+  const historyStart = options.detailsOnly ? options.start : options.start - 7 * 86400000;
   const start = new Date(historyStart).toISOString(), end = new Date(options.end).toISOString();
   const providerClause = options.provider && options.provider !== "all" ? " AND provider = ?" : "";
   const providerParams = providerClause ? [options.provider] : [];
+  // Trial details need only this account/model/window, without the dashboard's comparison history.
+  const detailClause = options.detailsOnly ? " AND connectionId = ? AND model = ?" : "";
+  const detailParams = options.detailsOnly ? [options.focusConnectionId, options.model] : [];
   const usage = db.all(`SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, status, promptTokens, completionTokens,
     CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.total') END AS latencyMs,
     CASE WHEN json_valid(meta) THEN json_extract(meta, '$.latency.ttft') END AS ttftMs,
     ${DIAGNOSTIC_TOKEN_COLUMNS}
-    FROM usageHistory WHERE timestamp >= ? AND timestamp < ?${providerClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [start, end, ...providerParams, MAX_ROWS + 1]);
+    FROM usageHistory WHERE timestamp >= ? AND timestamp < ?${providerClause}${detailClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [start, end, ...providerParams, ...detailParams, MAX_ROWS + 1]);
   const errors = db.all(`SELECT id, timestamp, connectionId, provider, model, requestId, retryCount, recovered, data
-    FROM requestErrors WHERE timestamp >= ? AND timestamp < ?${providerClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [options.start, options.end, ...providerParams, MAX_ROWS + 1]);
+    FROM requestErrors WHERE timestamp >= ? AND timestamp < ?${providerClause}${detailClause} ORDER BY timestamp DESC, id DESC LIMIT ?`, [options.start, options.end, ...providerParams, ...detailParams, MAX_ROWS + 1]);
 
   function identity(connectionId, key) {
     return { connectionId: connectionId || "unrouted", accountName: accountMap.get(connectionId)?.name || (connectionId ? "已删除账号" : "未路由到账号"),

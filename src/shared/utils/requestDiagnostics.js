@@ -85,6 +85,17 @@ export function buildDiagnosticsReport(samples, options, connections = [], keys 
   const comparisonRecords = scopedSamples.filter(r => r.timestamp >= start && r.timestamp < end && (provider === "all" || r.provider === provider)
     && (model === "all" || r.model === model));
   const records = comparisonRecords.filter(r => (!focusApiKeyId || r.apiKeyId === focusApiKeyId) && (!focusConnectionId || r.connectionId === focusConnectionId));
+  const filtered = records.filter(r => (!apiKeyId || r.apiKeyId === apiKeyId)
+    && (!connectionId || r.connectionId === connectionId)
+    && (issue === "all" || (issue === "slow" ? isSlowResponse(r, slowMs) : issue === "overload" ? isReportedOverload(r) : r.kind === issue)))
+    .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const details = {
+    details: filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    pagination: { page: currentPage, pageSize, total: filtered.length, totalPages },
+  };
+  if (options.detailsOnly) return details;
   const subjects = (configured, field, nameField) => {
     const values = new Map(samples.map(r => [r[field], { id: r[field], name: r[nameField] }]));
     configured.forEach(item => values.set(item.id, { id: item.id, name: item.name || values.get(item.id)?.name || item.id,
@@ -98,12 +109,6 @@ export function buildDiagnosticsReport(samples, options, connections = [], keys 
     const to = start + (index + 1) * bucketSize;
     return { start: from, end: to, ...summarize(records.filter(r => r.timestamp >= from && r.timestamp < to), slowMs) };
   });
-  const filtered = records.filter(r => (!apiKeyId || r.apiKeyId === apiKeyId)
-    && (!connectionId || r.connectionId === connectionId)
-    && (issue === "all" || (issue === "slow" ? isSlowResponse(r, slowMs) : issue === "overload" ? isReportedOverload(r) : r.kind === issue)))
-    .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
   const byAccount = groupRecords(records, "connectionId", "accountName", slowMs, connections).map(account => ({ ...account, ...accountMetadataById.get(account.id) }));
   const comparisonAccounts = focusApiKeyId || focusConnectionId ? groupRecords(comparisonRecords, "connectionId", "accountName", slowMs, connections) : byAccount;
   const accountPerformance = buildAccountPerformance(byAccount, options, scopedConnections, comparisonAccounts);
@@ -122,7 +127,6 @@ export function buildDiagnosticsReport(samples, options, connections = [], keys 
       related: key.related.map(account => ({ ...account, ...accountMetadataById.get(account.id) })) })),
     byAccount,
     accountPerformance: { ...accountPerformance, accounts: accountPerformance.accounts.map(account => ({ ...account, ...accountMetadataById.get(account.id) })) },
-    details: filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    pagination: { page: currentPage, pageSize, total: filtered.length, totalPages },
+    ...details,
   };
 }

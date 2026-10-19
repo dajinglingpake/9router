@@ -103,7 +103,7 @@ export default function CodexTrialsPanel() {
   const load = useCallback(async signal => {
     const current = ++sequence.current;
     try {
-      const response = await fetch("/api/codex-trials", { cache: "no-store", signal });
+      const response = await fetch("/api/codex-trials", { cache: "no-store", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)]) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "读取测试记录失败。");
       // Trial timestamps and elapsed time must use the same server clock.
@@ -112,10 +112,13 @@ export default function CodexTrialsPanel() {
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    const refresh = () => { if (!controller.signal.aborted) load(controller.signal); };
+    let timer;
+    const refresh = async () => {
+      if (!document.hidden && !controller.signal.aborted) await load(controller.signal);
+      if (!controller.signal.aborted) timer = setTimeout(refresh, 1000);
+    };
     Promise.resolve().then(refresh);
-    const timer = setInterval(refresh, 1000);
-    return () => { clearInterval(timer); controller.abort(); };
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [load]);
   useEffect(() => {
     if (!inspector || inspector.mode !== "log") return;
@@ -183,7 +186,7 @@ export default function CodexTrialsPanel() {
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加 Codex 账号。"}</div>}
     {inspector?.mode === "errors" && <CodexTrialErrors key={inspector.account.result.runId}
       account={cards.find(account => account.result?.id === inspector.account.result.id) || inspector.account} onClose={() => setInspector(null)} />}
-    <Modal isOpen={!!inspector && inspector.mode !== "errors"} onClose={() => setInspector(null)} title={inspector ? `${inspector.account.name} · ${inspector.account.result.model}` : ""} size="full"
+    <Modal isOpen={!!inspector && inspector.mode !== "errors"} blurBackdrop={false} onClose={() => setInspector(null)} title={inspector ? `${inspector.account.name} · ${inspector.account.result.model}` : ""} size="full"
       footer={<><Button variant="secondary" onClick={() => setInspector(null)}>关闭</Button>{inspector?.account.result?.hasHtml && <a className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white" href={artifactUrl(inspector.account, "download")} download>下载 HTML</a>}</>}>
       {inspector?.mode === "preview" ? <CodexTrialPreview key={inspector.account.result?.runId} title={`${inspector.account.name} 的完整作品`} src={artifactUrl(inspector.account)} className="h-[60vh] w-full rounded-lg" />
         : <div className="space-y-4"><p className="text-xs text-text-muted">{detail ? `${detail.model || ""} · ${detail.effort || ""} · ${detail.cliVersion || ""}` : "正在读取记录…"}</p>{detail?.reportedModels?.length > 0 && <p className="text-xs text-text-muted">上游返回模型：{detail.reportedModels.join("、")}</p>}{detail?.prompt && <p className="whitespace-pre-wrap text-sm">{detail.prompt}</p>}{detail?.error && <p className="whitespace-pre-wrap break-words text-sm text-red-600">{detail.error}</p>}
