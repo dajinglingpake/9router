@@ -38,7 +38,8 @@ export async function applyHelpIdentity(user) {
 export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "9router-appeal-"));
   const binary = process.env.ACCOUNT_APPEAL_CHROMIUM || "/usr/bin/chromium";
-  const args = ["--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-sync", "--disable-extensions", "--disable-features=Translate", "--remote-debugging-pipe", `--user-data-dir=${directory}`, `--window-size=${VIEWPORT.width},${VIEWPORT.height}`, "--lang=zh-CN", "about:blank"];
+  const displayRunner = process.env.ACCOUNT_APPEAL_XVFB;
+  const args = [...(displayRunner ? [] : ["--headless=new"]), "--no-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-sync", "--disable-extensions", "--disable-features=Translate", "--remote-debugging-pipe", `--user-data-dir=${directory}`, `--window-size=${VIEWPORT.width},${VIEWPORT.height}`, "--lang=zh-CN", "about:blank"];
   let proxy;
   if (proxyUrl) {
     proxy = new URL(proxyUrl);
@@ -74,7 +75,8 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) 
     await fs.rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   };
   try {
-    child = spawn(binary, args, { detached: true, stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: directory, LANG: "zh_CN.UTF-8" } });
+    const launchArgs = displayRunner ? ["--auto-servernum", `--server-args=-screen 0 ${VIEWPORT.width}x${VIEWPORT.height}x24 -nolisten tcp`, binary, ...args] : args;
+    child = spawn(displayRunner || binary, launchArgs, { detached: true, stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, HOME: directory, LANG: "zh_CN.UTF-8" } });
     child.stdio[3].on("error", failPending);
     child.once("error", failPending);
     child.once("close", () => { failPending(); onExit(); });

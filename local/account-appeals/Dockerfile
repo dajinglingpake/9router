@@ -2,6 +2,7 @@
 ARG ROUTER_IMAGE=9router:codex-trial
 FROM ${ROUTER_IMAGE}
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-noto-cjk \
+RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-noto-cjk xvfb xauth \
     && rm -rf /var/lib/apt/lists/*
 ENV ACCOUNT_APPEAL_CHROMIUM=/usr/bin/chromium
+ENV ACCOUNT_APPEAL_XVFB=/usr/bin/xvfb-run

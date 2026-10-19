@@ -19,7 +19,7 @@ docker build -f "local/account-appeals/Dockerfile" \
   -t "9router:with-account-appeals" "."
 ```
 
-容器必须启用 `init: true`，用于回收浏览器子进程。Chromium 使用 DevTools 管道通信，不监听调试 TCP 端口。针对现有群晖内核，浏览器在容器内使用无 Chromium 沙箱模式。
+容器必须启用 `init: true`，用于回收浏览器子进程。Chromium 在 Xvfb 图形环境中运行，使用 DevTools 管道通信，不监听调试 TCP 端口。浏览器和图形环境一起启动、回收；网站人工验证仍须用户自行完成。针对现有群晖内核，浏览器在容器内使用无 Chromium 沙箱模式。
 
 本地开发可设置 `ACCOUNT_APPEAL_CHROMIUM` 指向 Chromium/Chrome 可执行文件。浏览器支持 HTTP、HTTPS 和无认证 SOCKS5 代理；网页中继代理不适用。
 
