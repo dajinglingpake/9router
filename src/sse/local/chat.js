@@ -14,6 +14,7 @@ import { getRequestId, rejectChatRequest, resolveRequestProviderScope } from "./
 import { handleSingleModelChat } from "./modelRouting.js";
 import { getModelInfo } from "../services/model.js";
 import { extractClientApiKey as extractApiKey, getKeyAccessContext, enforceKeyAccess } from "../services/keyAccess.js";
+import { getTrialSession, isTrialToken, trackTrialResponse } from "./codexTrialSession.js";
 
 /**
  * Handle chat completion request
@@ -21,6 +22,8 @@ import { extractClientApiKey as extractApiKey, getKeyAccessContext, enforceKeyAc
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  const trial = getTrialSession(request);
+  if (isTrialToken(request) && !trial) return Response.json({ error: "账号试用凭证已失效。" }, { status: 401 });
   const requestId = getRequestId(request);
   const callerApiKey = extractApiKey(request);
   let requestBody = clientRawRequest?.body || null;
@@ -72,7 +75,10 @@ export async function handleChat(request, clientRawRequest = null) {
 
     try {
       const apiKey = callerApiKey;
-      if (apiKey) {
+      if (trial) {
+        requestContext.apiKeyName = "Codex 账号对比";
+        requestContext.apiKeyMasked = null;
+      } else if (apiKey) {
         const record = await getApiKeyByValue(apiKey);
         requestContext.apiKeyName = record?.name || "未命名 API Key";
         requestContext.apiKeyMasked = log.maskKey(apiKey);
@@ -90,7 +96,7 @@ export async function handleChat(request, clientRawRequest = null) {
     }
 
     const response = await handleChatInternal(request, requestContext);
-    return response;
+    return trial ? trackTrialResponse(trial, response) : response;
   } catch (error) {
     throw error;
   } finally {
@@ -109,6 +115,13 @@ async function handleChatInternal(request, clientRawRequest = null) {
     }
     log.warn("CHAT", "Invalid JSON body");
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body", clientRawRequest);
+  }
+
+  const trial = getTrialSession(request);
+  if (trial) {
+    if (body.model !== trial.model) return rejectChatRequest(400, "试用模型与任务配置不一致。", clientRawRequest);
+    body.model = `codex/${trial.model}`;
+    body.reasoning = { ...body.reasoning, effort: trial.effort };
   }
 
   // Build clientRawRequest for logging (if not provided)
@@ -149,7 +162,7 @@ async function handleChatInternal(request, clientRawRequest = null) {
       log.warn("AUTH", "Missing API key (requireApiKey=true)");
       return rejectChatRequest(HTTP_STATUS.UNAUTHORIZED, "Missing API key", clientRawRequest);
     }
-    const valid = await isValidApiKey(apiKey, request);
+    const valid = !!trial || await isValidApiKey(apiKey, request);
     if (!valid) {
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return rejectChatRequest(HTTP_STATUS.UNAUTHORIZED, "Invalid API key", clientRawRequest);

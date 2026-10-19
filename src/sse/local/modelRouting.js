@@ -29,11 +29,13 @@ import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
 import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
 import { appendChatErrorHint } from "../utils/errorHints.js";
+import { getTrialSession, getTrialCredentials } from "./codexTrialSession.js";
 
 /**
  * Handle single model chat request
  */
 export async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set(), deadline = Date.now() + queueTimeoutMs(), retryCount = 0, comboNames = []) {
+  const trial = getTrialSession(request);
   if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
   seenModels.add(modelStr);
   const requestId = getRequestId(request);
@@ -57,6 +59,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
 
   const { provider } = modelInfo;
   let { model } = modelInfo;
+  if (trial && (provider !== "codex" || model !== trial.model)) return rejectChatRequest(400, "试用任务不允许切换模型或提供商。", clientRawRequest);
   const modelByConnection = await getComboAccountModels(comboNames, provider);
 
   // Routing shown in the unified "▶" line (client model → provider/model)
@@ -64,19 +67,19 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
-  const sessionKey = getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
+  const sessionKey = trial ? null : getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
-  const codexPolicy = provider === "codex" ? getCodexRoutingPolicy(chatSettings) : null;
+  const codexPolicy = provider === "codex" && !trial ? getCodexRoutingPolicy(chatSettings) : null;
   const apiKeyRoutingKey = codexPolicy?.apiKeyAffinity
     ? getApiKeyRoutingKey(provider, clientRawRequest?.apiKeyRecordId, apiKey || extractClientApiKey(request))
     : null;
-  const stickyBinding = !!(apiKeyRoutingKey || sessionKey);
+  const stickyBinding = !!(trial || apiKeyRoutingKey || sessionKey);
   const quotaFailover = !!(apiKeyRoutingKey || codexPolicy?.quotaFailover);
   // Automatic quota downgrades must respect the key's model allow list.
   const fallbackModels = codexPolicy?.quotaModelSwitch
     ? await filterAdapterModels(await getKeyAccessContext(request), [`${provider}/${codexPolicy.quotaFallbackModel}`], [])
     : null;
-  const credentials = await getProviderCredentials(provider, excludedAccounts, model, {
+  const credentials = trial ? await getTrialCredentials(trial) : await getProviderCredentials(provider, excludedAccounts, model, {
     request,
     sessionKey, apiKeyRoutingKey, apiKeyRecordId: clientRawRequest?.apiKeyRecordId, fillFirst: true, modelByConnection,
     contextMarker: clientRawRequest?.modelContextMarker,
@@ -117,7 +120,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     }
 
     // Use shared chatCore
-    const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    const providerThinking = trial ? null : (chatSettings.providerThinking || {})[provider] || null;
     const concurrencyMetadata = buildConcurrencyMetadata({
       body,
       clientRawRequest,
@@ -194,11 +197,12 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       : await getProviderConnectionById(credentials.connectionId);
     // Administrative removal may happen while the request is queued. Release
     // the old permits and reselect without sending traffic to that account.
-    if (!liveConnection || !liveConnection.isActive) {
+    if (trial && !liveConnection) return rejectChatRequest(404, "试用账号已删除。", clientRawRequest);
+    if (!liveConnection || (!liveConnection.isActive && !trial)) {
       excludedAccounts.add(credentials.connectionId);
       return retry();
     }
-    if (credentials.connectionId !== "noauth") {
+    if (credentials.connectionId !== "noauth" && !trial) {
       const accessible = await filterAccountPoolForRequest(await getProviderConnections({ provider }), request);
       if (!accessible.some(c => c.id === credentials.connectionId)) {
         excludedAccounts.add(credentials.connectionId);

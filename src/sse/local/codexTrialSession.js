@@ -1,0 +1,110 @@
+import { randomBytes } from "node:crypto";
+import { getProviderConnectionById } from "@/lib/localDb";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { DEFAULT_ACCOUNT_COOLDOWN_MIN_MS, DEFAULT_ACCOUNT_COOLDOWN_MAX_MS } from "open-sse/config/errorConfig.js";
+import { waitForAccountRequest } from "../services/concurrencyLimiter.js";
+import { extractClientApiKey } from "../services/keyAccess.js";
+
+// Only dashboard-created jobs can pin an account. Never trust a client-supplied account id.
+const sessions = globalThis.__ninerouterCodexTrialSessions ||= new Map();
+const PREFIX = "9r-trial-";
+
+export function createTrialSession(connectionId, model, effort) {
+  for (const [token, session] of sessions) if (session.expiresAt <= Date.now()) sessions.delete(token);
+  const token = PREFIX + randomBytes(32).toString("hex");
+  const session = { connectionId, model, effort, expiresAt: Date.now() + 20 * 60_000, requests: 0, errors: 0, models: new Set() };
+  sessions.set(token, session);
+  return { token, session, revoke: () => sessions.delete(token) };
+}
+
+export function getTrialSession(request) {
+  const session = sessions.get(extractClientApiKey(request));
+  return session && session.expiresAt > Date.now() ? session : null;
+}
+
+export function isTrialToken(request) {
+  return extractClientApiKey(request)?.startsWith(PREFIX) || false;
+}
+
+export async function getTrialCredentials(session) {
+  const connection = await getProviderConnectionById(session.connectionId);
+  if (!connection || connection.provider !== "codex") return null;
+  const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+  return {
+    ...connection,
+    connectionId: connection.id,
+    connectionName: connection.displayName || connection.name || connection.email || connection.id,
+    routingModel: session.model,
+    providerSpecificData: {
+      ...connection.providerSpecificData,
+      connectionProxyEnabled: proxy.connectionProxyEnabled,
+      connectionProxyUrl: proxy.connectionProxyUrl,
+      connectionNoProxy: proxy.connectionNoProxy,
+      connectionProxyPoolId: proxy.proxyPoolId || null,
+      vercelRelayUrl: proxy.vercelRelayUrl || "",
+      strictProxy: proxy.strictProxy === true,
+    },
+    maxConcurrency: connection.maxConcurrency || 0,
+    accountCooldownMinMs: Number(connection.accountCooldownMinMs) || DEFAULT_ACCOUNT_COOLDOWN_MIN_MS,
+    accountCooldownMaxMs: Number(connection.accountCooldownMaxMs) || DEFAULT_ACCOUNT_COOLDOWN_MAX_MS,
+    beforeUpstreamRequest: ({ signal } = {}) => waitForAccountRequest({
+      id: connection.id, signal,
+      minIntervalMs: Number(connection.minRequestIntervalMs) || 0,
+      maxIntervalMs: Number(connection.maxRequestIntervalMs) || Number(connection.minRequestIntervalMs) || 0,
+    }),
+    _connection: connection,
+  };
+}
+
+// Count failed HTTP requests / Responses streams once, including CLI retries.
+export function trackTrialResponse(session, response) {
+  session.requests++;
+  let failed = false;
+  const fail = () => { if (!failed) { session.errors++; failed = true; } };
+  if (!response.ok) fail();
+  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) return response;
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed = false;
+  const consume = () => {
+    let boundary;
+    while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+      const frame = buffer.slice(0, boundary.index);
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      const lines = frame.split(/\r?\n/);
+      const data = lines.filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
+      if (!data || data === "[DONE]") continue;
+      try {
+        const event = JSON.parse(data);
+        const type = lines.find(line => line.startsWith("event:"))?.slice(6).trim() || event.type;
+        if (["error", "response.failed", "response.incomplete"].includes(type) || event.error || event.response?.error
+          || ["failed", "incomplete"].includes(event.response?.status)) fail();
+        if (["response.completed", "response.done"].includes(type) || event.response?.status === "completed") {
+          completed = true;
+          if (event.response?.model) session.models.add(event.response.model);
+        }
+      } catch { /* Ignore unrelated SSE frames. */ }
+    }
+    if (buffer.length > 4 * 1024 * 1024) buffer = "";
+  };
+  const reader = response.body.getReader();
+  return new Response(new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          buffer += decoder.decode() + "\n\n";
+          consume();
+          if (!completed) fail();
+          controller.close();
+          reader.releaseLock();
+        } else {
+          buffer += decoder.decode(value, { stream: true });
+          consume();
+          controller.enqueue(value);
+        }
+      } catch (error) { if (!completed) fail(); controller.error(error); }
+    },
+    cancel(reason) { if (!completed) fail(); return reader.cancel(reason); },
+  }), { status: response.status, headers: response.headers });
+}
