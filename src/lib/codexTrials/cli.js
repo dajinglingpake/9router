@@ -8,7 +8,7 @@ import { createTrialOutputFormatter } from "../../shared/utils/codexTrialOutput.
 const exec = promisify(execFile);
 const CLI = process.env.CODEX_TRIAL_CLI || "/opt/codex/bin/codex";
 const RUNTIME = process.env.CODEX_TRIAL_RUNTIME || path.dirname(path.dirname(CLI));
-const UNSANDBOXED = process.env.CODEX_TRIAL_UNSANDBOXED === "true";
+const UNSANDBOXED = process.env.CODEX_TRIAL_UNSANDBOXED !== "false";
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const LOG_LIMIT = 64 * 1024;
 
