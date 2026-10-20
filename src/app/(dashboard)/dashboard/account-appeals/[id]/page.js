@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Button from "@/shared/components/Button";
 
+const DEFAULT_APPEAL_DRAFT = `I've been using GPT for a long time, and only recently started noticing what feels like a real drop in quality or intelligence.I've always trusted you guys to provide the level of service and quality users should be able to expect. I also genuinely believe that better collaboration between people and AI can help us do better work and, in some small way, make the world a better place.So, if there's any chance you can press the "back to normal effort/model" button on your side, I'd be incredibly grateful.`;
+
 async function request(url, options = {}) {
   const response = await fetch(url, { cache: "no-store", ...options });
   const data = await response.json();
@@ -21,7 +23,7 @@ function AppealWorkspace({ connectionId }) {
   const [session, setSession] = useState(null);
   const [frame, setFrame] = useState(null);
   const [error, setError] = useState("");
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(DEFAULT_APPEAL_DRAFT);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [attempt, setAttempt] = useState(0);
