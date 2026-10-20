@@ -8,22 +8,35 @@ const control = "mt-1.5 min-h-11 w-full rounded-lg border border-border bg-surfa
 export const trialDefaultEffort = (provider, model) =>
   provider === "codex" && getThinkingLevels(provider, model)?.includes("xhigh") ? "xhigh" : "";
 
-export default function CodexTrialModels({ provider, models, onChange, disabled }) {
-  if (!provider) return null;
-  const remaining = provider.models.find(item => !models.some(selected => selected.model === item.id));
+export default function CodexTrialModels({ providers, models, onChange, disabled }) {
+  const unusedModel = provider => provider.models.find(item => !models.some(selected => selected.provider === provider.id && selected.model === item.id));
+  const lastProvider = providers.find(provider => provider.id === models.at(-1)?.provider);
+  const nextProvider = lastProvider && (unusedModel(lastProvider) || lastProvider.allowCustomModel) ? lastProvider
+    : providers.find(provider => unusedModel(provider) || provider.allowCustomModel);
+  const selection = (provider, model = unusedModel(provider)?.id || provider.defaultModel) =>
+    ({ provider: provider.id, model, effort: trialDefaultEffort(provider.id, model) });
   const update = (index, value) => onChange(models.map((item, i) => i === index ? value : item));
-  const chooseModel = (index, model) => update(index, { model, effort: trialDefaultEffort(provider.id, model) });
   return <div className="mt-4 space-y-3">
-    <datalist id="account-trial-models">{provider.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist>
-    {models.map((item, index) => <div key={index} className="grid items-end gap-3 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto]">
+    {models.map((item, index) => {
+      const provider = providers.find(provider => provider.id === item.provider);
+      if (!provider) return null;
+      return <div key={index} className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_auto]">
+      <label className="min-w-0 text-xs text-text-muted">供应商 {index + 1}
+        <select aria-label={`供应商 ${index + 1}`} className={control} value={provider.id} disabled={disabled}
+          onChange={event => update(index, selection(providers.find(provider => provider.id === event.target.value)))}>
+          {providers.map(provider => <option key={provider.id} value={provider.id}
+            disabled={provider.id !== item.provider && !unusedModel(provider) && !provider.allowCustomModel}>{provider.name}</option>)}
+        </select>
+      </label>
       <label className="min-w-0 text-xs text-text-muted">模型 {index + 1}
-        {provider.allowCustomModel ? <input aria-label={`模型 ${index + 1}`} list="account-trial-models" className={control}
+        {provider.allowCustomModel ? <><datalist id={`account-trial-models-${index}`}>{provider.models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist>
+          <input aria-label={`模型 ${index + 1}`} list={`account-trial-models-${index}`} className={control}
           value={item.model} disabled={disabled} placeholder="选择或输入上游模型 ID"
-          onChange={event => chooseModel(index, event.target.value)} />
+          onChange={event => update(index, selection(provider, event.target.value))} /></>
           : <select aria-label={`模型 ${index + 1}`} className={control} value={item.model} disabled={disabled}
-          onChange={event => chooseModel(index, event.target.value)}>
+          onChange={event => update(index, selection(provider, event.target.value))}>
           {provider.models.map(model => <option key={model.id} value={model.id}
-            disabled={models.some((selected, i) => i !== index && selected.model === model.id)}>{model.id}</option>)}
+            disabled={models.some((selected, i) => i !== index && selected.provider === provider.id && selected.model === model.id)}>{model.id}</option>)}
         </select>}
       </label>
       <label className="text-xs text-text-muted">推理强度
@@ -35,8 +48,8 @@ export default function CodexTrialModels({ provider, models, onChange, disabled 
       </label>
       <Button variant="ghost" disabled={disabled || models.length === 1} aria-label={`移除模型 ${index + 1}`}
         onClick={() => onChange(models.filter((_, i) => i !== index))}>移除</Button>
-    </div>)}
-    <Button variant="secondary" size="sm" icon="add" disabled={disabled || models.length >= 20 || (!remaining && !provider.allowCustomModel)}
-      onClick={() => onChange([...models, { model: remaining?.id || "", effort: trialDefaultEffort(provider.id, remaining?.id) }])}>添加模型</Button>
+    </div>; })}
+    <Button variant="secondary" size="sm" icon="add" disabled={disabled || models.length >= 20 || !nextProvider}
+      onClick={() => onChange([...models, selection(nextProvider, unusedModel(nextProvider)?.id || "")])}>添加模型</Button>
   </div>;
 }

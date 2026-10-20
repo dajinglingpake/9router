@@ -10,7 +10,7 @@ import CodexTrialErrors from "./CodexTrialErrors";
 import CodexTrialModels, { trialDefaultEffort } from "./CodexTrialModels";
 import CodexTrialAccountActions from "./CodexTrialAccountActions";
 import { formatTrialErrorLog, formatTrialLog } from "@/shared/utils/codexTrialOutput";
-import { CODEX_TRIAL_PROMPT, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_MODEL, CODEX_TRIAL_EFFORT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL } from "@/shared/utils/codexTrial";
+import { CODEX_TRIAL_PROMPT, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL } from "@/shared/utils/codexTrial";
 import { CODEX_TRIAL_DEGRADATION_LIMITS, getTrialDegradationMetrics, matchesTrialDegradationRule } from "@/shared/utils/codexTrialQuality";
 
 const panel = "rounded-2xl border border-border bg-surface shadow-[var(--shadow-soft)]";
@@ -29,12 +29,13 @@ function Metric({ label, children, danger }) {
   return <div><dt className="text-[11px] text-text-muted">{label}</dt><dd className={`mt-1 text-base font-semibold tabular-nums ${danger ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>{children}</dd></div>;
 }
 
-function AccountCard({ account, busy, models, selectedProvider, now, onRun, onInspect, onUpdated }) {
+function AccountCard({ account, busy, models, now, onRun, onInspect, onUpdated }) {
   const result = account.result;
   const lowMetrics = getTrialDegradationMetrics(result);
   const degraded = lowMetrics.length > 0;
   const active = result => ["queued", "running"].includes(result?.status);
-  const selectedActive = account.results?.some(result => active(result) && models.some(item => item.model === result.model));
+  const selectedModels = models.filter(item => item.provider === account.provider);
+  const selectedActive = account.results?.some(result => active(result) && selectedModels.some(item => item.model === result.model));
   const [status, color] = states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
   const duration = result?.status === "running" && result.startedAt ? Math.max(0, now - new Date(result.startedAt).getTime()) : result?.elapsedMs;
   return <article className={`${panel} min-w-0 overflow-hidden`}>
@@ -91,7 +92,7 @@ function AccountCard({ account, busy, models, selectedProvider, now, onRun, onIn
       {result && result.routerStatsVersion !== 3 && <p className="mt-1 text-[11px] text-text-muted">旧记录的中转错误计数需重新测试后更新。</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" disabled={busy || active(result)} icon="play_arrow" onClick={() => onRun(account, result)}>{result ? "重测此模型" : "测试此账号"}</Button>
-        {result && account.firstResult && account.provider === selectedProvider && <Button size="sm" variant="ghost" disabled={busy || selectedActive} onClick={() => onRun(account)}>测试所选模型</Button>}
+        {result && account.firstResult && selectedModels.length > 0 && <Button size="sm" variant="ghost" disabled={busy || selectedActive} onClick={() => onRun(account)}>测试所选模型</Button>}
         {result?.hasHtml && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "preview")}>放大</Button>}
         {result && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "log")}>执行输出</Button>}
         <Link className="ml-auto py-1 text-xs font-medium text-primary hover:underline" href={`/dashboard/diagnostics?focusConnectionId=${encodeURIComponent(account.id)}`}>请求明细 ↗</Link>
@@ -105,8 +106,7 @@ export default function CodexTrialsPanel() {
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
   const [prompt, setPrompt] = useState(CODEX_TRIAL_PROMPT);
-  const [providerId, setProviderId] = useState("codex");
-  const [modelSelections, setModelSelections] = useState({ codex: [{ model: CODEX_TRIAL_MODEL, effort: CODEX_TRIAL_EFFORT }] });
+  const [modelSelections, setModels] = useState(null);
   const [parallel, setParallel] = useState(CODEX_TRIAL_PARALLEL);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
@@ -115,9 +115,10 @@ export default function CodexTrialsPanel() {
   const [inspector, setInspector] = useState(null);
   const [detail, setDetail] = useState(null);
   const sequence = useRef(0);
-  const provider = data?.providers?.find(item => item.id === providerId) || data?.providers?.[0];
-  const models = modelSelections[provider?.id] || (provider ? [{ model: provider.defaultModel, effort: trialDefaultEffort(provider.id, provider.defaultModel) }] : []);
-  const setModels = value => setModelSelections(previous => ({ ...previous, [provider.id]: value }));
+  const providers = data?.providers || [];
+  const initialProvider = providers.find(item => item.id === "codex") || providers[0];
+  const models = modelSelections || (initialProvider ? [{ provider: initialProvider.id, model: initialProvider.defaultModel,
+    effort: trialDefaultEffort(initialProvider.id, initialProvider.defaultModel) }] : []);
   const validParallel = Number.isInteger(parallel) && parallel >= 1 && parallel <= CODEX_TRIAL_MAX_PARALLEL;
   const busy = submitting || data?.stopping || !data?.cli?.available || !validParallel;
   const load = useCallback(async signal => {
@@ -167,12 +168,14 @@ export default function CodexTrialsPanel() {
     } catch (cause) { setError(cause.message); }
     finally { setSubmitting(false); }
   }
-  const run = (account, result) => submit({ provider: account?.provider || provider?.id, prompt, parallel: data?.parallel ?? parallel,
-    models: result ? [{ model: result.model, effort: result.effort }] : models, ...(account ? { ids: [account.id] } : { all: true }) });
+  const run = (account, result) => submit({ prompt, parallel: data?.parallel ?? parallel,
+    models: result ? [{ provider: account.provider, model: result.model, effort: result.effort }]
+      : models.filter(item => !account || item.provider === account.provider), ...(account ? { ids: [account.id] } : { all: true }) });
   const inspect = (account, mode) => { setDetail(null); setInspector({ account, mode }); };
   const accounts = data?.accounts || [];
-  const selectedAccounts = accounts.filter(account => account.provider === provider?.id);
-  const cards = accounts.filter(account => account.provider === provider?.id || account.results?.length).flatMap(account => (account.results?.length ? account.results : [account.result || null])
+  const selectedAccounts = accounts.filter(account => models.some(item => item.provider === account.provider));
+  const jobCount = models.reduce((count, item) => count + accounts.filter(account => account.provider === item.provider).length, 0);
+  const cards = accounts.filter(account => selectedAccounts.includes(account) || account.results?.length).flatMap(account => (account.results?.length ? account.results : [account.result || null])
     .map((result, index) => ({ ...account, result, firstResult: index === 0 })));
   const success = cards.filter(account => account.result?.status === "success").length;
   const failures = cards.filter(account => ["error", "interrupted"].includes(account.result?.status)).length;
@@ -188,17 +191,11 @@ export default function CodexTrialsPanel() {
       <span className={`rounded-full px-3 py-1.5 text-xs ${data?.cli?.available ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-surface-2 text-text-muted"}`}>{data?.cli?.version || (data ? "CLI 未就绪" : "正在连接…")}</span>
     </div>
     <section className={`${panel} p-5`} aria-label="测试配置">
-      <label className="mb-4 block text-sm font-medium" htmlFor="account-trial-provider">供应商
-        <select id="account-trial-provider" className={`${control} mt-2`} value={provider?.id || ""} disabled={submitting || !data?.providers?.length} onChange={event => setProviderId(event.target.value)}>
-          {!data?.providers?.length && <option value="">暂无可测试的供应商</option>}
-          {data?.providers?.map(item => <option key={item.id} value={item.id}>{item.name} · {accounts.filter(account => account.provider === item.id).length} 个账号</option>)}
-        </select>
-      </label>
       <label htmlFor="codex-trial-prompt" className="text-sm font-medium">提示词</label>
       <textarea id="codex-trial-prompt" rows={3} value={prompt} maxLength={CODEX_TRIAL_PROMPT_LIMIT} onChange={event => setPrompt(event.target.value)} disabled={submitting} className={`${control} mt-2 resize-y py-3 leading-6`} />
-      <CodexTrialModels provider={provider} models={models} onChange={setModels} disabled={submitting} />
+      <CodexTrialModels providers={providers} models={models} onChange={setModels} disabled={submitting} />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-text-muted">{selectedAccounts.length} 个账号 × {models.length} 个模型 · 共 {selectedAccounts.length * models.length} 项测试</p>
+        <p className="text-sm text-text-muted">{selectedAccounts.length} 个账号 · {models.length} 组供应商 / 模型 · 共 {jobCount} 项测试</p>
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex items-center gap-2 text-sm" htmlFor="codex-trial-parallel">并发数
             <input id="codex-trial-parallel" type="number" min={1} max={CODEX_TRIAL_MAX_PARALLEL} step={1}
@@ -206,13 +203,13 @@ export default function CodexTrialsPanel() {
               disabled={data?.running || submitting} aria-invalid={!validParallel} aria-describedby="codex-trial-parallel-help" className={`${control} !w-20`} />
           </label>
           {data?.running && <Button variant="danger" size="lg" disabled={submitting} icon="stop" onClick={() => submit({ action: "stop" })}>停止全部测试</Button>}
-          <Button size="lg" icon="play_arrow" loading={submitting} disabled={busy || !selectedAccounts.length || !prompt.trim() || !models.length || models.some(item => !item.model.trim())} onClick={() => run()}>测试该供应商全部账号</Button>
+          <Button size="lg" icon="play_arrow" loading={submitting} disabled={busy || !selectedAccounts.length || !prompt.trim() || !models.length || models.some(item => !item.model.trim())} onClick={() => run()}>一键测试所选模型</Button>
         </div>
       </div>
       <p id="codex-trial-parallel-help" className={`mt-3 text-xs ${validParallel ? "text-text-muted" : "text-red-600 dark:text-red-400"}`}>
         {validParallel ? `最多同时执行 ${data?.running ? data.parallel ?? parallel : parallel} 项，完成一项后自动补下一项。其他测试可随时加入，满额时排队；同一账号仍遵守已有的并发限制。` : `请输入 1–${CODEX_TRIAL_MAX_PARALLEL} 之间的整数。`}
       </p>
-      <p className="mt-4 text-xs leading-5 text-text-muted">切换供应商后，已有作品仍在下方一起展示。每个账号、模型分别保存，重测失败直接显示错误。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
+      <p className="mt-4 text-xs leading-5 text-text-muted">每行可选择不同供应商，同时测试各自的全部账号（含禁用账号）。已有作品始终一起展示，每个账号、模型分别保存，重测失败直接显示错误。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
     </section>
     {(error || readError || data?.cli?.error) && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">{error || readError || data.cli.error}</p>}
     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -223,7 +220,7 @@ export default function CodexTrialsPanel() {
       <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
       <p>速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。</p>
     </div>
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} models={models} selectedProvider={provider?.id} now={now} onRun={run} onInspect={inspect} onUpdated={() => load()} />)}</div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} models={models} now={now} onRun={run} onInspect={inspect} onUpdated={() => load()} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加可测试的供应商账号。"}</div>}
     {["errors", "requests"].includes(inspector?.mode) && <CodexTrialErrors key={`${inspector.account.result.runId}:${inspector.mode}`}
       initialIssue={inspector.mode === "requests" ? "all" : "error"}

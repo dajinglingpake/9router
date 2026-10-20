@@ -87,36 +87,42 @@ export async function listTrials() {
 export async function startTrials(input) {
   initialize();
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > CODEX_TRIAL_PROMPT_LIMIT) throw fail(`请输入 1–${CODEX_TRIAL_PROMPT_LIMIT} 字的提示词。`);
-  const provider = input.provider ?? "codex";
-  const connections = (await getProviderConnections()).filter(connection => connection.provider === provider);
-  const catalog = (await getTrialProviders(connections)).find(item => item.id === provider);
-  if (!catalog) throw fail("请选择已配置账号的文本模型供应商。");
+  const connections = await getProviderConnections();
+  const providers = await getTrialProviders(connections);
   const selected = input.models ?? [{ model: input.model, effort: input.effort }];
   if (!Array.isArray(selected) || !selected.length || selected.length > 20
-    || selected.some(item => !item || typeof item.model !== "string" || !/^[^\s()[\]\x00-\x1f\x7f]{1,256}$/.test(item.model)
-      || (!catalog.allowCustomModel && !catalog.models.some(model => model.id === item.model))
-      || (item.effort && !getThinkingLevels(provider, item.model)?.includes(item.effort)))) throw fail("请选择有效的文本模型和推理强度。");
-  const models = selected.map(item => ({ model: item.model, effort: item.effort || null }));
-  if (new Set(models.map(item => item.model)).size !== models.length) throw fail("请勿重复选择同一模型。");
+    || selected.some(item => !item || typeof item.model !== "string" || !/^[^\s()[\]\x00-\x1f\x7f]{1,256}$/.test(item.model))) throw fail("请选择有效的文本模型。");
+  const models = selected.map(item => ({ provider: item.provider ?? input.provider ?? "codex", model: item.model, effort: item.effort || null }));
+  for (const item of models) {
+    const catalog = providers.find(provider => provider.id === item.provider);
+    if (!catalog) throw fail("请选择已配置账号的文本模型供应商。");
+    if ((!catalog.allowCustomModel && !catalog.models.some(model => model.id === item.model))
+      || (item.effort && !getThinkingLevels(item.provider, item.model)?.includes(item.effort))) throw fail("请选择有效的文本模型和推理强度。");
+  }
+  if (new Set(models.map(item => JSON.stringify([item.provider, item.model]))).size !== models.length) throw fail("请勿重复选择同一供应商的同一模型。");
   const parallel = Number(input.parallel ?? CODEX_TRIAL_PARALLEL);
   if (!Number.isInteger(parallel) || parallel < 1 || parallel > CODEX_TRIAL_MAX_PARALLEL) throw fail(`并发数必须为 1–${CODEX_TRIAL_MAX_PARALLEL}。`);
-  const ids = input.all === true ? connections.map(connection => connection.id) : [...new Set(Array.isArray(input.ids) ? input.ids : [])];
-  if (!ids.length || ids.some(id => !connections.some(connection => connection.id === id))) throw fail("请选择属于该供应商的有效账号。");
+  const eligible = connections.filter(connection => models.some(item => item.provider === connection.provider));
+  const ids = input.all === true ? eligible.map(connection => connection.id) : [...new Set(Array.isArray(input.ids) ? input.ids : [])];
+  if (!ids.length || ids.some(id => !eligible.some(connection => connection.id === id))) throw fail("请选择属于所选供应商的有效账号。");
+  const targets = models.flatMap(item => eligible.filter(connection => connection.provider === item.provider && ids.includes(connection.id))
+    .map(connection => ({ ...item, connectionId: connection.id })));
+  if (models.some(item => !targets.some(target => target.provider === item.provider))) throw fail("所选供应商没有对应的待测试账号。");
   state.cli = await getCliVersion();
   if (!state.cli.available) throw fail(state.cli.error, 503);
   // Check each account/model after asynchronous validation so two tabs cannot overwrite an active run.
   if (state.batch?.controller.signal.aborted) throw fail("正在停止测试，请稍后再试。", 409);
-  const jobs = models.flatMap(({ model, effort }) => ids.map(connectionId => {
+  const jobs = targets.map(({ connectionId, provider, model, effort }) => {
     const previous = [...state.records.values()].find(record => record.connectionId === connectionId && record.model === model);
     if (active(previous)) throw fail("该账号的此模型已在测试或排队，请等待完成。", 409);
-    return { connectionId, model, effort, previous };
-  }));
+    return { connectionId, provider, model, effort, previous };
+  });
   const batch = state.batch || { controller: new AbortController(), sessions: new Map(), queue: [], workers: 0, parallel };
   if (!batch.promise) batch.promise = new Promise(resolve => { batch.resolve = resolve; });
   state.batch = batch;
   try {
     // Start different accounts first, before their additional models compete for account limits.
-    for (const { connectionId, model, effort, previous } of jobs) {
+    for (const { connectionId, provider, model, effort, previous } of jobs) {
       // Keep legacy artifact URLs; new account/model pairs have independent persistent records.
       const id = previous?.id || createHash("sha256").update(JSON.stringify([connectionId, model])).digest("hex");
       save({

@@ -128,6 +128,26 @@ describe("Codex trial scheduling", () => {
     globalThis.__ninerouterCodexTrials.loaded = false;
     expect((await records()).filter(record => record.status === "success")).toHaveLength(2);
   });
+  it("starts different providers in one submission and pins each model to its own accounts", async () => {
+    const result = await store.startTrials(input({
+      ids: ["account-0", "account-1", "compatible-account"], parallel: 4,
+      models: [{ provider: "codex", ...models[0] }, { provider: "openai-compatible-fixture", model: models[0].model }],
+    }));
+    expect(result.count).toBe(3);
+    expect(fixture.jobs.map(job => [job.provider, job.connectionId, job.model])).toEqual([
+      ["codex", "account-0", models[0].model], ["codex", "account-1", models[0].model],
+      ["openai-compatible-fixture", "compatible-account", models[0].model],
+    ]);
+    expect((await records()).filter(record => record.status === "running")).toHaveLength(3);
+  });
+  it("validates every selected provider before starting any jobs", async () => {
+    await expect(store.startTrials(input({ all: true, models: [
+      { provider: "codex", ...models[0] }, { provider: "unknown", model: "invalid" },
+    ] }))).rejects.toMatchObject({ status: 400 });
+    expect(fixture.jobs).toHaveLength(0);
+    expect(await records()).toHaveLength(0);
+    await expect(store.startTrials(input({ all: true, models: [models[0], models[0]] }))).rejects.toMatchObject({ status: 400 });
+  });
   it("rejects cross-provider account selections and invalid model reasoning", async () => {
     await expect(store.startTrials(input({ provider: "openai-compatible-fixture", ids: ["account-0"], models: [{ model: "vendor/model" }] }))).rejects.toMatchObject({ status: 400 });
     await expect(store.startTrials(input({ provider: "openai-compatible-fixture", all: true, models: [{ model: "vendor/model", effort: "xhigh" }] }))).rejects.toMatchObject({ status: 400 });
