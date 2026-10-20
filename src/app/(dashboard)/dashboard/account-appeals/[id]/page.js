@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Button from "@/shared/components/Button";
+import AccountActions from "./AccountActions";
 
 const DEFAULT_APPEAL_DRAFT = `I've been using GPT for a long time, and only recently started noticing what feels like a real drop in quality or intelligence.I've always trusted you guys to provide the level of service and quality users should be able to expect. I also genuinely believe that better collaboration between people and AI can help us do better work and, in some small way, make the world a better place.So, if there's any chance you can press the "back to normal effort/model" button on your side, I'd be incredibly grateful.`;
 
@@ -113,6 +114,7 @@ function AppealWorkspace({ connectionId }) {
       {ended || error && !frame ? <Button variant="secondary" onClick={retry} icon="refresh">重新打开</Button>
         : <Button variant="secondary" onClick={stop} disabled={!session} loading={busy} icon="close">结束申诉</Button>}
     </div>
+    <AccountActions connectionId={connectionId} />
     <p className="text-sm text-text-muted">独立浏览器会话，与日常浏览器登录互不影响。关闭此页面后释放资源，15 分钟无操作也会自动关闭。</p>
     <p role="status" className={`text-sm ${frame?.status === "error" ? "text-red-600" : "text-text-muted"}`}>{frame?.message || "正在打开独立申诉窗口…"}</p>
     {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
