@@ -51,6 +51,15 @@ export function getTrialRecord(id) {
   return state.records.get(id) || null;
 }
 
+export function deleteTrialRecord(id) {
+  const record = getTrialRecord(id);
+  if (!record) throw fail("测试记录不存在或已删除。", 404);
+  if (active(record)) throw fail("测试正在执行或排队，请结束测试后再删除。", 409);
+  fs.unlinkSync(fileFor(id));
+  state.records.delete(id);
+  return { deleted: id };
+}
+
 export async function listTrials() {
   initialize();
   const connections = await getProviderConnections();

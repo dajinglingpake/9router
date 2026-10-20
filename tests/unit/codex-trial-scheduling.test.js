@@ -148,6 +148,25 @@ describe("Codex trial scheduling", () => {
     expect(await records()).toHaveLength(0);
     await expect(store.startTrials(input({ all: true, models: [models[0], models[0]] }))).rejects.toMatchObject({ status: 400 });
   });
+  it("deletes only the selected finished result, persists deletion and protects running or queued jobs", async () => {
+    await store.startTrials(input({ ids: ["account-0", "account-1"], parallel: 1 }));
+    const [first, second] = await records();
+    expect(() => store.deleteTrialRecord(first.id)).toThrow(/执行或排队/);
+    expect(() => store.deleteTrialRecord(second.id)).toThrow(/执行或排队/);
+    fixture.jobs[0].finish({ error: "unsupported model", html: null });
+    await vi.waitFor(() => expect(fixture.jobs).toHaveLength(2));
+    fixture.jobs[1].finish();
+    await globalThis.__ninerouterCodexTrials.batch.promise;
+    expect(store.deleteTrialRecord(first.id)).toEqual({ deleted: first.id });
+    expect(store.getTrialRecord(first.id)).toBeNull();
+    expect(fs.existsSync(path.join(fixture.directory, "codex-trials", `${first.id}.json`))).toBe(false);
+    globalThis.__ninerouterCodexTrials.records.clear();
+    globalThis.__ninerouterCodexTrials.loaded = false;
+    expect((await records()).map(record => record.id)).toEqual([second.id]);
+    expect(store.getTrialRecord(second.id).html).toBe("<html>saved</html>");
+    expect(() => store.deleteTrialRecord(first.id)).toThrow(/不存在/);
+    expect(() => store.deleteTrialRecord("../outside")).toThrow(/无效/);
+  });
   it("rejects cross-provider account selections and invalid model reasoning", async () => {
     await expect(store.startTrials(input({ provider: "openai-compatible-fixture", ids: ["account-0"], models: [{ model: "vendor/model" }] }))).rejects.toMatchObject({ status: 400 });
     await expect(store.startTrials(input({ provider: "openai-compatible-fixture", all: true, models: [{ model: "vendor/model", effort: "xhigh" }] }))).rejects.toMatchObject({ status: 400 });

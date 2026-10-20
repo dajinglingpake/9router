@@ -29,7 +29,7 @@ function Metric({ label, children, danger }) {
   return <div><dt className="text-[11px] text-text-muted">{label}</dt><dd className={`mt-1 text-base font-semibold tabular-nums ${danger ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>{children}</dd></div>;
 }
 
-function AccountCard({ account, busy, models, now, onRun, onInspect, onUpdated }) {
+function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, onInspect, onUpdated }) {
   const result = account.result;
   const lowMetrics = getTrialDegradationMetrics(result);
   const degraded = lowMetrics.length > 0;
@@ -95,6 +95,10 @@ function AccountCard({ account, busy, models, now, onRun, onInspect, onUpdated }
         {result && account.firstResult && selectedModels.length > 0 && <Button size="sm" variant="ghost" disabled={busy || selectedActive} onClick={() => onRun(account)}>测试所选模型</Button>}
         {result?.hasHtml && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "preview")}>放大</Button>}
         {result && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "log")}>执行输出</Button>}
+        {result && <Button size="sm" variant="ghost" icon="delete_outline" disabled={deleting || active(result)}
+          title="删除此模型的作品、执行输出和测试指标"
+          aria-label={`删除 ${account.providerName} ${account.name} 的 ${result.model} 测试结果`}
+          onClick={() => onDelete(result.id)}>删除结果</Button>}
         <Link className="ml-auto py-1 text-xs font-medium text-primary hover:underline" href={`/dashboard/diagnostics?focusConnectionId=${encodeURIComponent(account.id)}`}>请求明细 ↗</Link>
       </div>
     </div>
@@ -168,6 +172,17 @@ export default function CodexTrialsPanel() {
     } catch (cause) { setError(cause.message); }
     finally { setSubmitting(false); }
   }
+  async function removeResult(id) {
+    setSubmitting(true); setError("");
+    try {
+      const response = await fetch(`/api/codex-trials/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "删除测试结果失败。");
+      if (inspector?.account.result?.id === id) setInspector(null);
+      await load();
+    } catch (cause) { setError(cause.message); }
+    finally { setSubmitting(false); }
+  }
   const run = (account, result) => submit({ prompt, parallel: data?.parallel ?? parallel,
     models: result ? [{ provider: account.provider, model: result.model, effort: result.effort }]
       : models.filter(item => !account || item.provider === account.provider), ...(account ? { ids: [account.id] } : { all: true }) });
@@ -220,7 +235,7 @@ export default function CodexTrialsPanel() {
       <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
       <p>速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。</p>
     </div>
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} models={models} now={now} onRun={run} onInspect={inspect} onUpdated={() => load()} />)}</div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} deleting={submitting} models={models} now={now} onRun={run} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加可测试的供应商账号。"}</div>}
     {["errors", "requests"].includes(inspector?.mode) && <CodexTrialErrors key={`${inspector.account.result.runId}:${inspector.mode}`}
       initialIssue={inspector.mode === "requests" ? "all" : "error"}

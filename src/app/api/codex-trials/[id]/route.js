@@ -1,8 +1,15 @@
-import { getTrialRecord } from "@/lib/codexTrials/store";
+import { deleteTrialRecord, getTrialRecord } from "@/lib/codexTrials/store";
 import { CODEX_TRIAL_CSP, trialPreviewDocument } from "@/shared/utils/codexTrial";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function DELETE(request, { params }) {
+  try {
+    const { id } = await params;
+    return Response.json(deleteTrialRecord(id), { headers: { "Cache-Control": "no-store" } });
+  } catch (error) { return Response.json({ error: error.message }, { status: error.status || 500 }); }
+}
 
 export async function GET(request, { params }) {
   try {
