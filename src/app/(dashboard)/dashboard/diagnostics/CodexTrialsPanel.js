@@ -258,7 +258,7 @@ export default function CodexTrialsPanel() {
           {inspector?.mode === "cli-errors" && <p className="text-xs text-text-muted">这是 Codex 执行时的报错和重试提示，相同原因合并展示；不代表最终测试失败次数。同一次故障也可能记录为中转错误。</p>}
           <CodexTrialOutput key={`${detail?.runId}:${inspector?.mode}`} result={detail}
             title={inspector?.mode === "cli-errors" ? "CLI 报错与重试提示" : undefined}
-            text={inspector?.mode === "cli-errors" ? detail ? formatTrialErrorLog(detail.log, detail.error) || (detail.cliErrors ? `CLI 记录了 ${detail.cliErrors} 次报错，但已保留日志中没有对应原文。` : "本轮没有 CLI 报错。") : "正在读取 CLI 报错…" : detail?.output || formatTrialLog(detail?.log)} now={now} className="h-[45vh] rounded-xl" />
+            text={inspector?.mode === "cli-errors" ? detail ? formatTrialErrorLog(detail.log, detail.error) || (detail.cliErrors ? `CLI 记录了 ${detail.cliErrors} 次报错，但已保留日志中没有对应原文。` : "本轮没有 CLI 报错。") : "正在读取 CLI 报错…" : detail?.log ? formatTrialLog(detail.log) : detail?.output} now={now} className="h-[45vh] rounded-xl" />
           {inspector?.mode === "cli-errors" && <Button size="sm" variant="secondary" onClick={() => inspect(inspector.account, "log")}>查看全部执行输出</Button>}
           {detail?.log && <details><summary className="cursor-pointer text-xs text-text-muted">原始 CLI 日志</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-surface-2 p-4 text-xs leading-5">{detail.log}</pre></details>}
         </div>}

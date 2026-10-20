@@ -28,7 +28,16 @@ export function createTrialOutputFormatter() {
       text: `[文件] ${(item.changes || []).map(change => `${change.kind || "修改"} ${change.path}`).join("、") || "更新工作目录"} · ${item.status || event.type}`,
       activity: "正在写入文件",
     };
-    if (item.type === "error") return { text: `[错误] ${item.message || "工具执行失败"}`, activity: "收到工具错误" };
+    if (item.type === "error") {
+      // Codex emits this recoverable catalog warning as an error item for custom models.
+      const fallbackModel = /^Model metadata for `([^`]+)` not found\. Defaulting to fallback metadata; this can degrade performance and cause issues\.$/.exec(item.message || "");
+      if (fallbackModel) return {
+        text: `[警告] Codex CLI 未内置模型 ${fallbackModel[1]} 的元数据，已使用默认元数据继续运行，可能影响兼容性或性能。`,
+        activity: "使用默认模型元数据继续运行",
+        warning: true,
+      };
+      return { text: `[错误] ${item.message || "工具执行失败"}`, activity: "收到工具错误" };
+    }
     return null;
   };
 }
@@ -51,7 +60,7 @@ export function formatTrialErrorLog(log = "", failure = "") {
       if (event.type !== "error" && event.type !== "turn.failed"
         && !(["item.started", "item.updated", "item.completed"].includes(event.type) && event.item?.type === "error")) return [];
       const rendered = format(event);
-      return rendered?.text ? [rendered.text] : [];
+      return rendered?.text && !rendered.warning ? [rendered.text] : [];
     } catch { return []; }
   });
   if (failure && !errors.includes(`[错误] ${failure}`)) errors.push(`[错误] ${failure}`);
