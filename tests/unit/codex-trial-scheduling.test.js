@@ -3,17 +3,22 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set() }));
+const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [] }));
 vi.mock("@/lib/dataDir", () => ({ get DATA_DIR() { return fixture.directory; } }));
 vi.mock("@/lib/localDb", () => ({
   getProviderConnections: async () => [
     ...Array.from({ length: 10 }, (_, i) => ({ id: `account-${i}`, provider: "codex", isActive: i !== 9 })),
     { id: "compatible-account", provider: "openai-compatible-fixture", isActive: false },
     { id: "claude-account", provider: "claude", isActive: true },
+    { id: "codebuddy-account", provider: "codebuddy-cn", isActive: false },
   ],
   getProviderNodes: async () => [{ id: "openai-compatible-fixture", type: "openai-compatible", name: "Fixture", prefix: "fixture" }],
   getCustomModels: async () => [{ providerAlias: "fixture", id: "vendor/model", type: "llm" }],
 }));
+vi.mock("@/lib/codebuddyModels", () => ({
+  resolveCodebuddyModels: vi.fn(async () => ({ models: fixture.codebuddyModels })),
+}));
+import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 vi.mock("@/lib/accountAppeals/history", () => ({ getAppealSummaries: async () => ({}) }));
 vi.mock("@/sse/local/codexTrialSession", () => ({ createTrialSession: (id, model) => {
   const token = `${id}/${model}`;
@@ -37,6 +42,8 @@ const records = async () => (await store.listTrials()).accounts.flatMap(a => a.r
 beforeEach(async () => {
   fixture.directory = fs.mkdtempSync(path.join(os.tmpdir(), "9router-trial-queue-"));
   fixture.jobs = [];
+  fixture.codebuddyModels = [];
+  vi.mocked(resolveCodebuddyModels).mockClear();
   fixture.sessions.clear();
   delete globalThis.__ninerouterCodexTrials;
   vi.resetModules();
@@ -51,6 +58,44 @@ afterEach(async () => {
 });
 
 describe("Codex trial scheduling", () => {
+  it("discovers CodeBuddy models on page entry without probing accounts during status polling", async () => {
+    fixture.codebuddyModels = [{ id: "space-bunny", name: "Space-Bunny" }];
+    const { GET } = await import("@/app/api/codex-trials/route.js");
+    const response = await GET(new Request("http://localhost/api/codex-trials?refreshModels=1"));
+    const data = await response.json();
+    expect(response.status).toBe(200);
+    expect(data.providers.find(provider => provider.id === "codebuddy-cn").models.map(model => model.id)).toEqual(["space-bunny"]);
+    expect(data.accounts.find(account => account.id === "codebuddy-account").enabled).toBe(false);
+    expect(resolveCodebuddyModels).toHaveBeenCalledTimes(1);
+    await GET(new Request("http://localhost/api/codex-trials"));
+    await GET(new Request("http://localhost/api/codex-trials"));
+    expect(resolveCodebuddyModels).toHaveBeenCalledTimes(1);
+    expect(fixture.jobs).toHaveLength(0);
+  });
+  it("accepts a discovered model when starting a trial and pins it to the selected account", async () => {
+    fixture.codebuddyModels = [{ id: "space-bunny", name: "Space-Bunny" }];
+    await store.startTrials(input({
+      ids: ["codebuddy-account"], models: [{ provider: "codebuddy-cn", model: "space-bunny" }],
+    }));
+    expect(fixture.jobs).toHaveLength(1);
+    expect(fixture.jobs[0]).toMatchObject({
+      provider: "codebuddy-cn", connectionId: "codebuddy-account", model: "space-bunny", effort: null,
+    });
+  });
+  it("rejects models absent from discovery and retains static fallback when discovery fails", async () => {
+    fixture.codebuddyModels = [{ id: "space-bunny", name: "Space-Bunny" }];
+    await expect(store.startTrials(input({
+      ids: ["codebuddy-account"], models: [{ provider: "codebuddy-cn", model: "unpublished-model" }],
+    }))).rejects.toMatchObject({ status: 400 });
+    expect(fixture.jobs).toHaveLength(0);
+    fixture.codebuddyModels = [];
+    const data = await store.listTrials({ discoverModels: true });
+    expect(data.providers.find(provider => provider.id === "codebuddy-cn").models.some(model => model.id === "glm-5.2")).toBe(true);
+    await store.startTrials(input({
+      ids: ["codebuddy-account"], models: [{ provider: "codebuddy-cn", model: "glm-5.2" }],
+    }));
+    expect(fixture.jobs[0]).toMatchObject({ provider: "codebuddy-cn", model: "glm-5.2" });
+  });
   it("defaults to four parallel jobs and starts different accounts before additional models", async () => {
     await store.startTrials(input({ all: true, models: [...models, { model: "gpt-5.6-terra", effort: "xhigh" }] }));
     expect(fixture.jobs.map(j => j.connectionId)).toEqual(["account-0", "account-1", "account-2", "account-3"]);

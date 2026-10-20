@@ -3,8 +3,11 @@ import { listTrials, startTrials, stopTrials } from "@/lib/codexTrials/store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  try { return Response.json(await listTrials(), { headers: { "Cache-Control": "no-store" } }); }
+export async function GET(request) {
+  try {
+    const discoverModels = new URL(request.url).searchParams.get("refreshModels") === "1";
+    return Response.json(await listTrials({ discoverModels }), { headers: { "Cache-Control": "no-store" } });
+  }
   catch (error) { return Response.json({ error: error.message }, { status: 500 }); }
 }
 

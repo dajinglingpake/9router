@@ -125,21 +125,32 @@ export default function CodexTrialsPanel() {
     effort: trialDefaultEffort(initialProvider.id, initialProvider.defaultModel) }] : []);
   const validParallel = Number.isInteger(parallel) && parallel >= 1 && parallel <= CODEX_TRIAL_MAX_PARALLEL;
   const busy = submitting || data?.stopping || !data?.cli?.available || !validParallel;
-  const load = useCallback(async signal => {
+  const load = useCallback(async (signal, refreshModels = false) => {
     const current = ++sequence.current;
     try {
-      const response = await fetch("/api/codex-trials", { cache: "no-store", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)]) });
+      const response = await fetch(`/api/codex-trials${refreshModels ? "?refreshModels=1" : ""}`, {
+        cache: "no-store", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(refreshModels ? 30000 : 10000)]),
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "读取测试记录失败。");
       // Trial timestamps and elapsed time must use the same server clock.
-      if (sequence.current === current && !signal?.aborted) { setData(payload); setNow(payload.serverNow ?? Date.now()); setReadError(""); }
+      if (sequence.current === current && !signal?.aborted) {
+        // Status polling carries the local fallback catalog; keep the discovered
+        // choices until the page is reopened or refreshed.
+        setData(previous => ({ ...payload, providers: refreshModels ? payload.providers : previous?.providers || payload.providers }));
+        setNow(payload.serverNow ?? Date.now()); setReadError("");
+      }
     } catch (cause) { if (sequence.current === current && !signal?.aborted) setReadError(cause.message); }
   }, []);
   useEffect(() => {
     const controller = new AbortController();
     let timer;
+    let refreshModels = true;
     const refresh = async () => {
-      if (!document.hidden && !controller.signal.aborted) await load(controller.signal);
+      if (!document.hidden && !controller.signal.aborted) {
+        await load(controller.signal, refreshModels);
+        refreshModels = false;
+      }
       if (!controller.signal.aborted) timer = setTimeout(refresh, 1000);
     };
     Promise.resolve().then(refresh);

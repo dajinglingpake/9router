@@ -60,10 +60,10 @@ export function deleteTrialRecord(id) {
   return { deleted: id };
 }
 
-export async function listTrials() {
+export async function listTrials({ discoverModels = false } = {}) {
   initialize();
   const connections = await getProviderConnections();
-  const providers = await getTrialProviders(connections);
+  const providers = await getTrialProviders(connections, { discoverModels });
   const appeals = await getAppealSummaries();
   if (!state.cli) state.cli = await getCliVersion();
   return {
@@ -97,7 +97,7 @@ export async function startTrials(input) {
   initialize();
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > CODEX_TRIAL_PROMPT_LIMIT) throw fail(`请输入 1–${CODEX_TRIAL_PROMPT_LIMIT} 字的提示词。`);
   const connections = await getProviderConnections();
-  const providers = await getTrialProviders(connections);
+  const providers = await getTrialProviders(connections, { discoverModels: true });
   const selected = input.models ?? [{ model: input.model, effort: input.effort }];
   if (!Array.isArray(selected) || !selected.length || selected.length > 20
     || selected.some(item => !item || typeof item.model !== "string" || !/^[^\s()[\]\x00-\x1f\x7f]{1,256}$/.test(item.model))) throw fail("请选择有效的文本模型。");
