@@ -431,6 +431,11 @@ export function createSSEStream(options = {}) {
           }
         }
 
+        // Translated Responses clients also cancel immediately at the terminal
+        // event; persist usage now because transport EOF/flush may never arrive.
+        if (sourceFormat === FORMATS.OPENAI_RESPONSES && translated?.some(item =>
+          item && isOpenAIResponsesTerminalEvent(item.event, item.data || item))) finalizeStream();
+
         // The completion deferral can outlive the upstream: a broken chat upstream
         // may stall after finish_reason with no usage trailer and no [DONE], holding
         // the connection open. Bound the wait so the client still gets a terminal event.

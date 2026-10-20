@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { createSSETransformStreamWithLogger } from "../../open-sse/utils/stream.js";
@@ -63,6 +63,31 @@ function expectCodexUsageShape(usage) {
 }
 
 describe("Responses response.completed reports token usage", () => {
+  it.each([FORMATS.OPENAI, FORMATS.CLAUDE])("records %s usage when the CLI closes immediately on response.completed", async format => {
+    const onComplete = vi.fn();
+    const frames = format === FORMATS.OPENAI ? [
+      ...sse({ id: "c1", choices: [{ index: 0, delta: { content: "Hi" }, finish_reason: "stop" }] }),
+      ...sse({ id: "c1", choices: [], usage: { prompt_tokens: 300, completion_tokens: 20, total_tokens: 320 } }),
+    ] : [
+      ...claudeSse({ type: "message_start", message: { id: "m1", role: "assistant", content: [], usage: { input_tokens: 300, output_tokens: 0 } } }),
+      ...claudeSse({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } }),
+      ...claudeSse({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 20 } }),
+      ...claudeSse({ type: "message_stop" }),
+    ];
+    // No EOF: a Responses client cancels as soon as the terminal event arrives.
+    const source = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(frames.join("\n") + "\n")); } });
+    const reader = source.pipeThrough(createSSETransformStreamWithLogger(format, FORMATS.OPENAI_RESPONSES, "test", null, null, "test", null, null, onComplete)).getReader();
+    let text = "";
+    try {
+      while (!text.includes('"type":"response.completed"')) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("Missing completion");
+        text += new TextDecoder().decode(value);
+      }
+    } finally { await reader.cancel(); }
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onComplete.mock.calls[0][1]).toMatchObject({ prompt_tokens: 300, completion_tokens: 20 });
+  });
   it("reports Claude upstream usage to a Codex client, counting cached prompt tokens", async () => {
     const events = parseEvents(await runTransform(FORMATS.CLAUDE, [
       ...claudeSse({
