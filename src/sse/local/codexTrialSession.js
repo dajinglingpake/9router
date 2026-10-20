@@ -10,16 +10,15 @@ const sessions = globalThis.__ninerouterCodexTrialSessions ||= new Map();
 const PREFIX = "9r-trial-";
 
 export function createTrialSession(connectionId, model, effort, provider = "codex") {
-  for (const [token, session] of sessions) if (session.expiresAt <= Date.now()) sessions.delete(token);
   const token = PREFIX + randomBytes(32).toString("hex");
-  const session = { connectionId, provider, model, effort, expiresAt: Date.now() + 20 * 60_000, requests: 0, errors: 0, models: new Set() };
+  // The trial runner revokes this in its finally block on completion, failure or cancellation.
+  const session = { connectionId, provider, model, effort, requests: 0, errors: 0, models: new Set() };
   sessions.set(token, session);
   return { token, session, revoke: () => sessions.delete(token) };
 }
 
 export function getTrialSession(request) {
-  const session = sessions.get(extractClientApiKey(request));
-  return session && session.expiresAt > Date.now() ? session : null;
+  return sessions.get(extractClientApiKey(request)) || null;
 }
 
 export function isTrialToken(request) {

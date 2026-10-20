@@ -8,6 +8,22 @@ import { createTrialSession, getTrialSession, getTrialCredentials } from "@/sse/
 
 afterEach(() => vi.clearAllMocks());
 describe("account trial pinning", () => {
+  it("keeps an active trial authorized beyond twenty minutes and rejects it immediately after revocation", () => {
+    vi.useFakeTimers();
+    const job = createTrialSession("account", "space-bunny", "xhigh", "codebuddy-cn");
+    const request = new Request("http://localhost/v1/responses", { headers: { Authorization: `Bearer ${job.token}` } });
+    try {
+      vi.advanceTimersByTime(60 * 60_000);
+      const other = createTrialSession("another-account", "vendor/model");
+      other.revoke();
+      expect(getTrialSession(request)).toBe(job.session);
+      job.revoke();
+      expect(getTrialSession(request)).toBeNull();
+    } finally {
+      job.revoke();
+      vi.useRealTimers();
+    }
+  });
   it("pins a disabled non-Codex account and preserves its existing proxy configuration", async () => {
     const job = createTrialSession("account", "vendor/model", null, "openai-compatible-fixture");
     getProviderConnectionById.mockResolvedValue({
