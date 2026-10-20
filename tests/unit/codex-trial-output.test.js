@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTrialOutputFormatter, formatTrialErrorLog, formatTrialLog } from "@/shared/utils/codexTrialOutput.js";
+import { createTrialOutputFormatter, formatTrialErrorLog, formatTrialLog, formatTrialOutput } from "@/shared/utils/codexTrialOutput.js";
 
 describe("CLI error details", () => {
   it("keeps the custom-model metadata fallback visible as a warning without reporting a failed request", () => {
@@ -12,6 +12,9 @@ describe("CLI error details", () => {
     expect(formatTrialLog(log)).toContain("[警告] Codex CLI 未内置模型 space-bunny 的元数据");
     expect(formatTrialErrorLog(log)).toBe("");
     expect(formatTrialErrorLog(log, "request failed")).toBe("[错误] request failed");
+    const savedOutput = `previous output\n\n[错误] ${event.item.message}\n\n[错误] request failed\n`;
+    expect(formatTrialOutput(savedOutput)).toBe(`previous output\n\n${formatTrialLog(log)}\n\n[错误] request failed\n`);
+    expect(formatTrialOutput("saved command output")).toBe("saved command output");
   });
   it("does not suppress other missing-model or metadata failures", () => {
     const log = [

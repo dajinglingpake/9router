@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { formatTrialOutput } from "@/shared/utils/codexTrialOutput";
 
 export default function CodexTrialOutput({ result, text, now, className = "", title }) {
   const viewport = useRef(null);
@@ -18,7 +19,7 @@ export default function CodexTrialOutput({ result, text, now, className = "", ti
     <pre ref={viewport} tabIndex={0} aria-label="Codex 输出内容"
       onScroll={event => { const element = event.currentTarget; follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 32; }}
       className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
-      {text || (running ? "CLI 正在启动或等待响应，收到输出后会自动显示。" : "暂无执行输出。")}
+      {text ? formatTrialOutput(text) : (running ? "CLI 正在启动或等待响应，收到输出后会自动显示。" : "暂无执行输出。")}
     </pre>
     {running && <p className="border-t border-slate-800 px-4 py-2 text-[11px] text-slate-400">{result.activity || "执行中"} · 每秒更新</p>}
   </section>;

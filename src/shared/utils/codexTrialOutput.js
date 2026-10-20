@@ -1,3 +1,13 @@
+function modelMetadataWarning(message) {
+  const match = /^Model metadata for `([^`]+)` not found\. Defaulting to fallback metadata; this can degrade performance and cause issues\.$/.exec(message || "");
+  return match ? `[警告] Codex CLI 未内置模型 ${match[1]} 的元数据，已使用默认元数据继续运行，可能影响兼容性或性能。` : "";
+}
+
+// Saved output may outlive its original formatter; preserve it even if the JSONL log was truncated.
+export function formatTrialOutput(output = "") {
+  return output.replace(/^\[错误\] (.+)$/gm, (line, message) => modelMetadataWarning(message) || line);
+}
+
 // Render the CLI's public JSONL events as readable output, retaining incremental item updates.
 export function createTrialOutputFormatter() {
   const items = new Map();
@@ -30,9 +40,9 @@ export function createTrialOutputFormatter() {
     };
     if (item.type === "error") {
       // Codex emits this recoverable catalog warning as an error item for custom models.
-      const fallbackModel = /^Model metadata for `([^`]+)` not found\. Defaulting to fallback metadata; this can degrade performance and cause issues\.$/.exec(item.message || "");
-      if (fallbackModel) return {
-        text: `[警告] Codex CLI 未内置模型 ${fallbackModel[1]} 的元数据，已使用默认元数据继续运行，可能影响兼容性或性能。`,
+      const warning = modelMetadataWarning(item.message);
+      if (warning) return {
+        text: warning,
         activity: "使用默认模型元数据继续运行",
         warning: true,
       };
