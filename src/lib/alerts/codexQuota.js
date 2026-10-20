@@ -7,6 +7,16 @@ const state = globalThis._codexTotalQuotaAlerts ||= { pending: Promise.resolve()
 const periodNames = { session: "5 小时额度", weekly: "每周额度" };
 const alertPrefix = group => group.scope === "dedicated"
   ? `codex:dedicated-quota:${group.connectionId}` : `codex:shared-quota:${group.plan}`;
+const dateText = value => new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+
+function resetText(quota) {
+  if (!quota.earliestResetAt) return "重置时间：未知（上游未提供有效时间）";
+  const time = quota.earliestResetAt === quota.latestResetAt
+    ? dateText(quota.earliestResetAt)
+    : `最早 ${dateText(quota.earliestResetAt)}，最晚 ${dateText(quota.latestResetAt)}`;
+  const missing = quota.accountCount - quota.knownResetAccounts;
+  return `${missing ? "已知" : ""}重置时间：${time}（北京时间）${missing ? `；另 ${missing} 个账号重置时间未知` : ""}`;
+}
 
 function combineAlerts(group, periods, config) {
   return {
@@ -21,7 +31,10 @@ function combineAlerts(group, periods, config) {
       ...(group.scope === "dedicated" ? [`账号：${group.name}`] : []),
       `套餐：${group.plan}`,
       `启用账号：${group.accountCount} 个`,
-      ...periods.map(({ period, quota, empty }) => `${periodNames[period]}${empty ? "已用尽" : "即将用尽"}：剩余 ${quota.remainingPercent.toFixed(1)}%（约 ${quota.equivalentAccounts.toFixed(2)} / ${quota.accountCount} 个满额账号）`),
+      ...periods.flatMap(({ period, quota, empty }) => [
+        `${periodNames[period]}${empty ? "已用尽" : "即将用尽"}：剩余 ${quota.remainingPercent.toFixed(1)}%（约 ${quota.equivalentAccounts.toFixed(2)} / ${quota.accountCount} 个满额账号）`,
+        `${periodNames[period]}${resetText(quota)}`,
+      ]),
       `提醒阈值：剩余 ≤ ${config.quotaPercent}%`,
     ].join("\n"),
   };

@@ -45,6 +45,7 @@ beforeEach(async () => {
   await flushAlerts();
   vi.clearAllMocks();
   vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-10-20T00:00:00Z"));
   mocks.meta.clear();
   mocks.settings.mockResolvedValue({ wecomAlerts: config });
   mocks.connection.mockImplementation(async id => [shared, alice, bob].find(item => item.id === id));
@@ -136,8 +137,12 @@ describe("isolated quota alerts", () => {
   it("only alerts weekly once when the session quota shares the weekly window", () => {
     const data = usage(0, 0);
     data.quotas.session.sharedWith = "weekly";
+    data.quotas.session.resetAt = data.quotas.weekly.resetAt = "2030-01-07T20:45:00Z";
     const alerts = getCodexTotalQuotaAlerts(summary([[alice, data]]), config);
     expect(alerts[0].periods.map(item => item.period)).toEqual(["weekly"]);
+    expect(alerts[0].content).not.toContain("5 小时额度");
+    expect(alerts[0].content.match(/重置时间/g)).toHaveLength(1);
+    expect(alerts[0].content).toContain("每周额度重置时间：2030/1/8 04:45:00（北京时间）");
   });
 
   it("mentions every bound UserID once, including disabled keys, without sharing recipients", async () => {
@@ -161,6 +166,77 @@ describe("isolated quota alerts", () => {
     await notifyCodexQuotaSummary(summary([[alice, usage(10)]]), config);
     expect(payloads()[0].text.mentioned_list).toEqual(["陶俊帆"]);
     expect(payloads()[0].text.content).toContain("额度归属：专用（@陶俊帆）");
+  });
+
+  it("sends separate session and weekly reset times in Beijing time with mentions and the model target", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: config, localCodexRouting: { quotaModelSwitch: true } });
+    mocks.keys.mockResolvedValue([{ id: "alice-key", name: "陶俊帆" }]);
+    const data = usage(10, 0);
+    data.quotas.session.resetAt = "2030-01-01T18:30:00Z";
+    data.quotas.weekly.resetAt = "2030-01-07T20:45:00Z";
+    await notifyCodexQuotaSummary(summary([[alice, data]]), config);
+    const payload = payloads()[0].text;
+    expect(payload.mentioned_list).toEqual(["陶俊帆"]);
+    expect(payload.content).toContain("额度归属：专用（@陶俊帆）");
+    expect(payload.content).toContain("自动切换模型：gpt-6-luna");
+    expect(payload.content).toContain("5 小时额度重置时间：2030/1/2 02:30:00（北京时间）");
+    expect(payload.content).toContain("每周额度重置时间：2030/1/8 04:45:00（北京时间）");
+    expect(payload.content).toContain("提醒阈值");
+    expect(Buffer.byteLength(payload.content, "utf8")).toBeLessThanOrEqual(2048);
+  });
+
+  it("reports the earliest and latest shared reset without including dedicated or disabled accounts", () => {
+    const first = usage(5), last = usage(5), dedicated = usage(5);
+    first.quotas.session.resetAt = "2030-01-02T08:00:00+08:00";
+    last.quotas.session.resetAt = "2030-01-02T03:00:00Z";
+    dedicated.quotas.session.resetAt = "2030-01-01T00:00:00Z";
+    const result = summary([[shared, last], [account("shared-2"), first], [alice, dedicated],
+      [account("disabled", { isActive: false }), dedicated]]);
+    expect(result.groups.find(group => group.scope === "shared").session).toMatchObject({
+      accountCount: 2, knownResetAccounts: 2,
+      earliestResetAt: "2030-01-02T00:00:00.000Z", latestResetAt: "2030-01-02T03:00:00.000Z",
+    });
+    const alert = getCodexTotalQuotaAlerts(result, config).find(item => !item.connectionId);
+    expect(alert.content).toContain("5 小时额度重置时间：最早 2030/1/2 08:00:00，最晚 2030/1/2 11:00:00（北京时间）");
+    expect(alert.content).not.toContain("2030/1/1");
+  });
+
+  it("shows one reset time when every shared account resets together", () => {
+    const data = usage(10);
+    data.quotas.session.resetAt = "2030-01-02T00:00:00Z";
+    const result = summary([[shared, data], [account("shared-2"), data]]);
+    expect(result.groups[0].session.knownResetAccounts).toBe(2);
+    const [alert] = getCodexTotalQuotaAlerts(result, config);
+    expect(alert.content).toContain("重置时间：2030/1/2 08:00:00（北京时间）");
+    expect(alert.content).not.toMatch(/最早|最晚|未知/);
+  });
+
+  it.each([undefined, null, "invalid-date"])("marks unavailable reset time %s as unknown without suppressing the quota alert", resetAt => {
+    const data = usage(0);
+    data.quotas.session.resetAt = resetAt;
+    const result = summary([[alice, data]]);
+    expect(result.groups[0].session).toMatchObject({ knownResetAccounts: 0, earliestResetAt: null, latestResetAt: null });
+    const [alert] = getCodexTotalQuotaAlerts(result, config);
+    expect(alert.content).toContain("5 小时额度重置时间：未知（上游未提供有效时间）");
+    expect(alert.content).not.toMatch(/Invalid Date|1970/);
+  });
+
+  it("labels incomplete shared reset information as known times with the missing account count", () => {
+    const data = usage(5);
+    data.quotas.session.resetAt = "2030-01-02T00:00:00Z";
+    const [alert] = getCodexTotalQuotaAlerts(summary([[shared, data], [account("shared-2"), usage(5)]]), config);
+    expect(alert.content).toContain("5 小时额度已知重置时间：2030/1/2 08:00:00（北京时间）；另 1 个账号重置时间未知");
+  });
+
+  it("drops expired reset times and sends only the remaining applicable weekly reset", () => {
+    const data = usage(0, 0);
+    data.quotas.session.resetAt = new Date(Date.now() - 1000).toISOString();
+    data.quotas.weekly.resetAt = "2030-01-07T20:45:00Z";
+    const result = summary([[alice, data]]);
+    expect(result.groups[0].session.knownResetAccounts).toBe(0);
+    const [alert] = getCodexTotalQuotaAlerts(result, config);
+    expect(alert.content).not.toContain("5 小时额度");
+    expect(alert.content).toContain("每周额度重置时间：2030/1/8 04:45:00（北京时间）");
   });
 
   it("includes the saved model and routing threshold for both shared and dedicated quota alerts", async () => {
