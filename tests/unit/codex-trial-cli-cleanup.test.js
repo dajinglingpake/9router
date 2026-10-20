@@ -14,6 +14,7 @@ beforeEach(async () => {
 const fs = require('fs');
 const { spawn } = require('child_process');
 const mode = process.argv[process.argv.indexOf('-m') + 1];
+if (process.argv.includes('model_reasoning_effort="thinking"')) process.exit(2);
 const child = spawn(process.execPath, ['-e', 'const memory=Buffer.alloc(32*1024*1024,1);setInterval(()=>memory[0],1000)'], { stdio: 'ignore' });
 fs.writeFileSync(${JSON.stringify(path.join(directory, "child.pid"))}, String(child.pid));
 if (mode === 'cancel' || mode === 'timeout') setInterval(() => {}, 1000);
@@ -35,6 +36,14 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform !== "linux")("Codex CLI resource cleanup", () => {
+  it("leaves provider-specific reasoning to the gateway without passing unsupported levels to the CLI", async () => {
+    const result = await runCodexCli({
+      directory: path.join(directory, "job"), token: "fixture-token", model: "success",
+      provider: "zai", effort: "thinking", prompt: "fixture", signal: new AbortController().signal,
+    });
+    expect(result.error).toBeFalsy();
+    expect(result.html).toBe("<html>fixture</html>");
+  });
   it.each(["success", "error", "cancel", "timeout"])("removes job files and terminates child processes after %s", async mode => {
     const controller = new AbortController();
     const job = path.join(directory, "job");
