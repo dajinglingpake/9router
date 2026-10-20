@@ -180,16 +180,10 @@ export default function ProviderDetailPage() {
     : providerId === "kimi" ? "Kimi API Key"
     : (providerId === "qoder" || providerId === "qoder-cn") ? "PAT"
     : "API Key";
-  const modelThinkingLevels = (modelId) => {
-    const liveLevels = providerId === "codebuddy-cn"
-      ? models.find((model) => model.id === modelId)?.supportedEffortLevels
-      : undefined;
-    return liveLevels ?? getThinkingLevels(providerId, modelId);
-  };
   // Resolve suffix "(level)" for a model when a thinking level is picked and the model supports it.
   const resolveThinkingSuffix = (modelId) => {
     if (!thinkingMode || thinkingMode === "auto") return null;
-    const levels = modelThinkingLevels(modelId);
+    const levels = getThinkingLevels(providerId, modelId);
     return levels && levels.includes(thinkingMode) ? thinkingMode : null;
   };
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
@@ -201,7 +195,7 @@ export default function ProviderDetailPage() {
     const addLevels = (modelId) => {
       if (!modelId || seen.has(modelId)) return;
       seen.add(modelId);
-      const lv = modelThinkingLevels(modelId);
+      const lv = getThinkingLevels(providerId, modelId);
       if (lv) lv.forEach((l) => { if (l !== "none") set.add(l); });
     };
     for (const m of models) addLevels(m.id);
