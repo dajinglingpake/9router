@@ -87,7 +87,7 @@ function HistoryDialog({ connectionId, accountName, onClose, onUpdated }) {
     return () => controller.abort();
   }, [connectionId, offset, revision]);
   const reload = () => { setLoading(true); setError(""); setOffset(0); setRevision(n => n + 1); };
-  return <Modal isOpen onClose={onClose} title="申诉历史" size="full" showTrafficLights={false} footer={<Button variant="secondary" onClick={onClose}>关闭</Button>}>
+  return <Modal isOpen onClose={onClose} title="申诉历史" size="full" showTrafficLights={false} blurBackdrop={false} footer={<Button variant="secondary" onClick={onClose}>关闭</Button>}>
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="break-all text-sm text-text-muted">{accountName || connectionId}</p><Button size="sm" variant="secondary" loading={loading} onClick={reload} icon="refresh">刷新记录</Button></div>
     <p className="mb-4 text-xs text-text-muted">这里展示已保存的客服对话。关闭申诉窗口后收到的新回复，需要重新打开对应对话后同步。</p>
     {error && <p role="alert" className="mb-3 text-sm text-red-600">{error}</p>}
