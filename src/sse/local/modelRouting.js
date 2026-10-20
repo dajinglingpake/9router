@@ -60,7 +60,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
 
   const { provider } = modelInfo;
   let { model } = modelInfo;
-  if (trial && (provider !== "codex" || model !== trial.model)) return rejectChatRequest(400, "试用任务不允许切换模型或提供商。", clientRawRequest);
+  if (trial && (provider !== (trial.provider || "codex") || model !== trial.model)) return rejectChatRequest(400, "试用任务不允许切换模型或提供商。", clientRawRequest);
   const modelByConnection = await getComboAccountModels(comboNames, provider);
 
   // Routing shown in the unified "▶" line (client model → provider/model)

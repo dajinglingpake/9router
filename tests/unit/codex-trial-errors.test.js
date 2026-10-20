@@ -30,6 +30,12 @@ describe("trial request details", () => {
     expect((await GET(request("issue=all"), context)).status).toBe(200);
     expect(getRequestDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ issue: "all", apiKeyId: "codex-account-test" }));
   });
+  it("uses the saved provider for non-Codex request errors", async () => {
+    getTrialRecord.mockReturnValue({ ...record, provider: "claude", model: "claude-sonnet-4-6" });
+    getRequestDiagnostics.mockResolvedValue({ details: [], pagination: { total: 0 } });
+    expect((await GET(request("provider=codex"), context)).status).toBe(200);
+    expect(getRequestDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ provider: "claude", model: "claude-sonnet-4-6" }));
+  });
   it("uses server time for an active trial, including one that is still queued", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(end));

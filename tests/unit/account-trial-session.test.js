@@ -1,0 +1,33 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/localDb", () => ({ getProviderConnectionById: vi.fn() }));
+vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: async () => ({ connectionProxyEnabled: true, connectionProxyUrl: "http://proxy.test", strictProxy: true }) }));
+vi.mock("@/sse/services/concurrencyLimiter.js", () => ({ waitForAccountRequest: vi.fn() }));
+import { getProviderConnectionById } from "@/lib/localDb";
+import { createTrialSession, getTrialSession, getTrialCredentials } from "@/sse/local/codexTrialSession";
+
+afterEach(() => vi.clearAllMocks());
+describe("account trial pinning", () => {
+  it("pins a disabled non-Codex account and preserves its existing proxy configuration", async () => {
+    const job = createTrialSession("account", "vendor/model", null, "openai-compatible-fixture");
+    getProviderConnectionById.mockResolvedValue({
+      id: "account", provider: "openai-compatible-fixture", isActive: false, apiKey: "fixture",
+      providerSpecificData: { baseUrl: "https://fixture.test/v1", apiType: "chat" },
+    });
+    const request = new Request("http://localhost/v1/responses", { headers: { Authorization: `Bearer ${job.token}` } });
+    expect(getTrialSession(request)).toMatchObject({ provider: "openai-compatible-fixture", model: "vendor/model" });
+    expect(await getTrialCredentials(job.session)).toMatchObject({
+      connectionId: "account", isActive: false, routingModel: "vendor/model",
+      providerSpecificData: { baseUrl: "https://fixture.test/v1", strictProxy: true, connectionProxyUrl: "http://proxy.test" },
+    });
+    getProviderConnectionById.mockResolvedValue({ id: "account", provider: "codex" });
+    expect(await getTrialCredentials(job.session)).toBeNull();
+    job.revoke();
+    expect(getTrialSession(request)).toBeNull();
+  });
+  it("keeps the Codex provider default for legacy callers", () => {
+    const job = createTrialSession("account", "gpt-6.1-sol", "xhigh");
+    expect(job.session.provider).toBe("codex");
+    job.revoke();
+  });
+});

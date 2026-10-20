@@ -4,12 +4,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { DATA_DIR } from "@/lib/dataDir";
 import { getProviderConnections } from "@/lib/localDb";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
-import { CODEX_TRIAL_MODELS, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL, countTrialHtmlLines } from "@/shared/utils/codexTrial";
+import { CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL, countTrialHtmlLines } from "@/shared/utils/codexTrial";
 import { getOutputThroughput } from "@/shared/utils/outputThroughput";
 import { getAccountQualityMetadata } from "@/shared/utils/accountQuality.js";
 import { getAppealSummaries } from "@/lib/accountAppeals/history";
 import { createTrialSession } from "@/sse/local/codexTrialSession";
 import { getCliVersion, runCodexCli } from "./cli";
+import { getTrialProviders } from "./catalog";
 
 const ROOT = path.join(DATA_DIR, "codex-trials");
 const state = globalThis.__ninerouterCodexTrials ||= { records: new Map(), loaded: false, batch: null, cli: null };
@@ -34,6 +35,7 @@ function initialize() {
   for (const name of fs.readdirSync(ROOT).filter(name => /^[a-zA-Z0-9_-]+\.json$/.test(name))) {
     const record = JSON.parse(fs.readFileSync(path.join(ROOT, name), "utf8"));
     record.connectionId ||= record.id;
+    record.provider ||= "codex";
     record.htmlLines = countTrialHtmlLines(record.html || "");
     if (active(record)) {
       Object.assign(record, { status: "interrupted", error: "服务已重启，本次测试中断，请重新测试。", html: null, finishedAt: new Date().toISOString() });
@@ -51,7 +53,8 @@ export function getTrialRecord(id) {
 
 export async function listTrials() {
   initialize();
-  const connections = await getProviderConnections({ provider: "codex" });
+  const connections = await getProviderConnections();
+  const providers = await getTrialProviders(connections);
   const appeals = await getAppealSummaries();
   if (!state.cli) state.cli = await getCliVersion();
   return {
@@ -60,7 +63,8 @@ export async function listTrials() {
     running: !!state.batch,
     stopping: state.batch?.controller.signal.aborted || false,
     parallel: state.batch?.parallel ?? null,
-    accounts: connections.map(connection => {
+    providers,
+    accounts: connections.filter(connection => providers.some(provider => provider.id === connection.provider)).map(connection => {
       const results = [...state.records.values()].filter(record => record.connectionId === connection.id)
         .sort((a, b) => a.model.localeCompare(b.model)).map(record => {
           const { html, log, output, prompt, ...summary } = record;
@@ -70,9 +74,10 @@ export async function listTrials() {
         });
       return {
         id: connection.id, name: connection.displayName || connection.name || connection.email || connection.id,
+        provider: connection.provider, providerName: providers.find(provider => provider.id === connection.provider).name,
         email: connection.email || "", enabled: connection.isActive !== false,
         ...getAccountQualityMetadata(connection),
-        appealHistory: appeals[connection.id] || null,
+        appealHistory: connection.provider === "codex" ? appeals[connection.id] || null : null,
         results, result: results[0] || null,
       };
     }),
@@ -82,16 +87,21 @@ export async function listTrials() {
 export async function startTrials(input) {
   initialize();
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > CODEX_TRIAL_PROMPT_LIMIT) throw fail(`请输入 1–${CODEX_TRIAL_PROMPT_LIMIT} 字的提示词。`);
-  const models = input.models ?? [{ model: input.model, effort: input.effort }];
-  if (!Array.isArray(models) || !models.length || models.length > CODEX_TRIAL_MODELS.length
-    || models.some(item => !item || !CODEX_TRIAL_MODELS.some(model => model.id === item.model)
-      || !getThinkingLevels("codex", item.model)?.includes(item.effort))) throw fail("请选择有效的模型和推理强度。");
+  const provider = input.provider ?? "codex";
+  const connections = (await getProviderConnections()).filter(connection => connection.provider === provider);
+  const catalog = (await getTrialProviders(connections)).find(item => item.id === provider);
+  if (!catalog) throw fail("请选择已配置账号的文本模型供应商。");
+  const selected = input.models ?? [{ model: input.model, effort: input.effort }];
+  if (!Array.isArray(selected) || !selected.length || selected.length > 20
+    || selected.some(item => !item || typeof item.model !== "string" || !/^[^\s()[\]\x00-\x1f\x7f]{1,256}$/.test(item.model)
+      || (!catalog.allowCustomModel && !catalog.models.some(model => model.id === item.model))
+      || (item.effort && !getThinkingLevels(provider, item.model)?.includes(item.effort)))) throw fail("请选择有效的文本模型和推理强度。");
+  const models = selected.map(item => ({ model: item.model, effort: item.effort || null }));
   if (new Set(models.map(item => item.model)).size !== models.length) throw fail("请勿重复选择同一模型。");
   const parallel = Number(input.parallel ?? CODEX_TRIAL_PARALLEL);
   if (!Number.isInteger(parallel) || parallel < 1 || parallel > CODEX_TRIAL_MAX_PARALLEL) throw fail(`并发数必须为 1–${CODEX_TRIAL_MAX_PARALLEL}。`);
-  const connections = await getProviderConnections({ provider: "codex" });
   const ids = input.all === true ? connections.map(connection => connection.id) : [...new Set(Array.isArray(input.ids) ? input.ids : [])];
-  if (!ids.length || ids.some(id => !connections.some(connection => connection.id === id))) throw fail("请选择有效的 Codex 账号。");
+  if (!ids.length || ids.some(id => !connections.some(connection => connection.id === id))) throw fail("请选择属于该供应商的有效账号。");
   state.cli = await getCliVersion();
   if (!state.cli.available) throw fail(state.cli.error, 503);
   // Check each account/model after asynchronous validation so two tabs cannot overwrite an active run.
@@ -110,7 +120,7 @@ export async function startTrials(input) {
       // Keep legacy artifact URLs; new account/model pairs have independent persistent records.
       const id = previous?.id || createHash("sha256").update(JSON.stringify([connectionId, model])).digest("hex");
       save({
-        id, connectionId, runId: randomUUID(), status: "queued", prompt: input.prompt.trim(), model, effort,
+        id, connectionId, provider, runId: randomUUID(), status: "queued", prompt: input.prompt.trim(), model, effort,
         cliVersion: state.cli.version, queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
         attempts: (previous?.attempts || 0) + 1, failures: previous?.failures || 0,
         html: null, htmlLines: 0, log: "", output: "", activity: "等待测试位置", lastOutputAt: null, error: null, usage: null, elapsedMs: null, tokensPerSecond: null,
@@ -142,7 +152,7 @@ async function runTrial(batch, id) {
     save({ ...record, status: "cancelled", error: "已取消排队。", finishedAt: new Date().toISOString() });
     return;
   }
-  const session = createTrialSession(record.connectionId, record.model, record.effort);
+  const session = createTrialSession(record.connectionId, record.model, record.effort, record.provider);
   batch.sessions.set(id, session.session);
   let progressTimer;
   const onProgress = progress => {

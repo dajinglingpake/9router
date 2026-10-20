@@ -59,7 +59,7 @@ export async function handleChat(request, clientRawRequest = null) {
     // the provider/account work begins. It must not be held during upstream
     // work, otherwise a per-provider limit of 1 serializes every request and
     // prevents account concurrency limits from ever filling up.
-    const providerScope = await resolveRequestProviderScope(request);
+    const providerScope = trial?.provider || await resolveRequestProviderScope(request);
     try {
       admissionPermit = await acquireConcurrencySlot({
         scope: "providerAdmission",
@@ -118,8 +118,11 @@ async function handleChatInternal(request, clientRawRequest = null) {
   const trial = getTrialSession(request);
   if (trial) {
     if (body.model !== trial.model) return rejectChatRequest(400, "试用模型与任务配置不一致。", clientRawRequest);
-    body.model = `codex/${trial.model}`;
-    body.reasoning = { ...body.reasoning, effort: trial.effort };
+    body.model = `${trial.provider || "codex"}/${trial.model}`;
+    // The CLI may supply a default effort even for models without reasoning.
+    if (trial.effort) body.reasoning = { ...body.reasoning, effort: trial.effort };
+    else delete body.reasoning;
+    delete body.reasoning_effort;
   }
 
   // Build clientRawRequest for logging (if not provided)

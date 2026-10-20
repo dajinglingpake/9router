@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set() }));
 vi.mock("@/lib/dataDir", () => ({ get DATA_DIR() { return fixture.directory; } }));
-vi.mock("@/lib/localDb", () => ({ getProviderConnections: async () => Array.from({ length: 10 }, (_, i) => ({ id: `account-${i}`, provider: "codex", isActive: i !== 9 })) }));
+vi.mock("@/lib/localDb", () => ({
+  getProviderConnections: async () => [
+    ...Array.from({ length: 10 }, (_, i) => ({ id: `account-${i}`, provider: "codex", isActive: i !== 9 })),
+    { id: "compatible-account", provider: "openai-compatible-fixture", isActive: false },
+    { id: "claude-account", provider: "claude", isActive: true },
+  ],
+  getProviderNodes: async () => [{ id: "openai-compatible-fixture", type: "openai-compatible", name: "Fixture", prefix: "fixture" }],
+  getCustomModels: async () => [{ providerAlias: "fixture", id: "vendor/model", type: "llm" }],
+}));
 vi.mock("@/lib/accountAppeals/history", () => ({ getAppealSummaries: async () => ({}) }));
 vi.mock("@/sse/local/codexTrialSession", () => ({ createTrialSession: (id, model) => {
   const token = `${id}/${model}`;
@@ -101,5 +109,36 @@ describe("Codex trial scheduling", () => {
   it.each([0, 11, 1.5, "invalid"])("rejects invalid parallel limits without starting a process: %s", async parallel => {
     await expect(store.startTrials(input({ all: true, parallel }))).rejects.toMatchObject({ status: 400 });
     expect(fixture.jobs).toHaveLength(0);
+  });
+  it("runs a disabled compatible account alongside Codex and retains both providers' results", async () => {
+    await store.startTrials(input({ ids: ["account-0"] }));
+    await store.startTrials(input({ provider: "openai-compatible-fixture", all: true, models: [{ model: "vendor/model" }] }));
+    expect(fixture.jobs.map(job => [job.provider, job.connectionId, job.effort])).toEqual([
+      ["codex", "account-0", "xhigh"], ["openai-compatible-fixture", "compatible-account", null],
+    ]);
+    const batch = globalThis.__ninerouterCodexTrials.batch;
+    fixture.jobs.forEach(job => job.finish());
+    await batch.promise;
+    expect((await records()).map(record => record.provider).sort()).toEqual(["codex", "openai-compatible-fixture"]);
+    const data = await store.listTrials();
+    expect(data.accounts.find(account => account.id === "compatible-account")).toMatchObject({ enabled: false, providerName: "Fixture", result: { status: "success" } });
+    expect(data.providers.find(provider => provider.id === "openai-compatible-fixture").models).toEqual([{ id: "vendor/model", name: "vendor/model", efforts: [] }]);
+    // The on-disk records also survive a fresh server load.
+    globalThis.__ninerouterCodexTrials.records.clear();
+    globalThis.__ninerouterCodexTrials.loaded = false;
+    expect((await records()).filter(record => record.status === "success")).toHaveLength(2);
+  });
+  it("rejects cross-provider account selections and invalid model reasoning", async () => {
+    await expect(store.startTrials(input({ provider: "openai-compatible-fixture", ids: ["account-0"], models: [{ model: "vendor/model" }] }))).rejects.toMatchObject({ status: 400 });
+    await expect(store.startTrials(input({ provider: "openai-compatible-fixture", all: true, models: [{ model: "vendor/model", effort: "xhigh" }] }))).rejects.toMatchObject({ status: 400 });
+    await expect(store.startTrials(input({ provider: "claude", all: true }))).rejects.toMatchObject({ status: 400 });
+    expect(fixture.jobs).toHaveLength(0);
+  });
+  it("reads legacy Codex records without replacing their saved HTML or URLs", async () => {
+    fs.mkdirSync(path.join(fixture.directory, "codex-trials"), { recursive: true });
+    fs.writeFileSync(path.join(fixture.directory, "codex-trials", "account-0.json"), JSON.stringify({
+      id: "account-0", model: models[0].model, status: "success", html: "<html>old</html>",
+    }));
+    expect(store.getTrialRecord("account-0")).toMatchObject({ provider: "codex", connectionId: "account-0", html: "<html>old</html>" });
   });
 });

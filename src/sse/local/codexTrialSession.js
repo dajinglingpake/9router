@@ -9,10 +9,10 @@ import { extractClientApiKey } from "../services/keyAccess.js";
 const sessions = globalThis.__ninerouterCodexTrialSessions ||= new Map();
 const PREFIX = "9r-trial-";
 
-export function createTrialSession(connectionId, model, effort) {
+export function createTrialSession(connectionId, model, effort, provider = "codex") {
   for (const [token, session] of sessions) if (session.expiresAt <= Date.now()) sessions.delete(token);
   const token = PREFIX + randomBytes(32).toString("hex");
-  const session = { connectionId, model, effort, expiresAt: Date.now() + 20 * 60_000, requests: 0, errors: 0, models: new Set() };
+  const session = { connectionId, provider, model, effort, expiresAt: Date.now() + 20 * 60_000, requests: 0, errors: 0, models: new Set() };
   sessions.set(token, session);
   return { token, session, revoke: () => sessions.delete(token) };
 }
@@ -28,10 +28,11 @@ export function isTrialToken(request) {
 
 export async function getTrialCredentials(session) {
   const connection = await getProviderConnectionById(session.connectionId);
-  if (!connection || connection.provider !== "codex") return null;
+  if (!connection || connection.provider !== (session.provider || "codex")) return null;
   const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
   return {
     ...connection,
+    copilotToken: connection.providerSpecificData?.copilotToken,
     connectionId: connection.id,
     connectionName: connection.displayName || connection.name || connection.email || connection.id,
     routingModel: session.model,

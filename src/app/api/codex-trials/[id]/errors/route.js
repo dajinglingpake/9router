@@ -17,7 +17,7 @@ export async function GET(request, { params }) {
     options = parseDiagnosticsQuery(new URLSearchParams({
       start: record.startedAt || record.queuedAt,
       end: new Date((record.finishedAt ? Date.parse(record.finishedAt) : Date.now()) + 1000).toISOString(),
-      provider: "codex", model: record.model, focusConnectionId: record.connectionId,
+      provider: record.provider || "codex", model: record.model, focusConnectionId: record.connectionId,
       apiKeyId: CODEX_TRIAL_IDENTITY.id,
       issue: query.get("issue") || "error", page: query.get("page") || "1",
     }));

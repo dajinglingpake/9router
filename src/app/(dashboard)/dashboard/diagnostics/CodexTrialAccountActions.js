@@ -42,9 +42,9 @@ export default function CodexTrialAccountActions({ account, onUpdated }) {
       <AccountDegradedMarker connection={account} onUpdated={onUpdated} />
       <Button size="sm" variant="ghost" icon="edit" loading={loading} onClick={edit}
         aria-label={`编辑账号：${account.name}`}>编辑账号</Button>
-      <AccountAppealLink account={account} />
+      {account.provider === "codex" && <AccountAppealLink account={account} />}
     </div>
-    <AccountAppealHistory connectionId={account.id} accountName={account.name} summary={account.appealHistory} onUpdated={onUpdated} />
+    {account.provider === "codex" && <AccountAppealHistory connectionId={account.id} accountName={account.name} summary={account.appealHistory} onUpdated={onUpdated} />}
     {error && <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
     {connection && createPortal(<EditConnectionModal isOpen connection={connection}
       onSave={save} onClose={() => setConnection(null)} />, document.body)}

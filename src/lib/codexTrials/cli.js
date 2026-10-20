@@ -31,7 +31,7 @@ export async function runCodexCli({ directory, token, model, effort, prompt, sig
   await fs.mkdir(home, { recursive: true, mode: 0o700 });
   const config = {
     model_provider: '"nine-router-trial"',
-    model_reasoning_effort: JSON.stringify(effort),
+    ...(effort ? { model_reasoning_effort: JSON.stringify(effort) } : {}),
     'model_providers.nine-router-trial': `{ name="9router", base_url="http://127.0.0.1:${Number(process.env.PORT) || 20128}/v1", wire_api="responses", env_key="CODEX_GATEWAY_API_KEY", request_max_retries=0, stream_max_retries=2 }`,
     approval_policy: '"never"',
     ...(!UNSANDBOXED ? {
