@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ connection: vi.fn(), settings: vi.fn(), refresh: vi.fn(), proxy: vi.fn(), launch: vi.fn(), auth: vi.fn() }));
+const mocks = vi.hoisted(() => ({ connection: vi.fn(), settings: vi.fn(), refresh: vi.fn(), proxy: vi.fn(), launch: vi.fn(), auth: vi.fn(), saveHistory: vi.fn() }));
+vi.mock("@/lib/accountAppeals/history", () => ({ saveAppealMessages: mocks.saveHistory }));
 vi.mock("@/lib/localDb", () => ({ getProviderConnectionById: mocks.connection, getSettings: mocks.settings }));
 vi.mock("@/lib/providerUsage", () => ({ refreshAndUpdateCredentials: mocks.refresh }));
 vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: mocks.proxy }));
@@ -25,6 +26,7 @@ beforeEach(async () => {
   mocks.proxy.mockResolvedValue({ connectionProxyEnabled: true, connectionProxyUrl: "http://proxy.test:8080", strictProxy: true });
   mocks.launch.mockResolvedValue(browser);
   mocks.auth.mockImplementation(async token => token === "valid-dashboard-session");
+  mocks.saveHistory.mockResolvedValue();
   api = await import("@/lib/accountAppeals/sessions.js");
 });
 
@@ -86,6 +88,29 @@ async function start(requestId = "request-one", currentOwner = owner) {
 }
 
 describe("isolated account appeals", () => {
+  it("flushes captured replies when closing without keeping the browser alive", async () => {
+    const { id } = await start();
+    const { onMessage } = mocks.launch.mock.calls[0][0];
+    const message = { id: "msg-one", threadId: "thread-one", role: "support", text: "已记录您的反馈", complete: true };
+    onMessage(message);
+    const result = await api.appealAction(id, owner, { type: "close" });
+    expect(mocks.saveHistory).toHaveBeenCalledWith(connection.id, [message]);
+    expect(result.historySavedAt).toBeTruthy();
+    expect(result.historyError).toBeNull();
+    expect(browser.close).toHaveBeenCalled();
+    expect(saved(id)).toBeUndefined();
+  });
+
+  it("reports storage failures instead of claiming the conversation was saved", async () => {
+    mocks.saveHistory.mockRejectedValue(new Error("disk full"));
+    const { id } = await start();
+    mocks.launch.mock.calls[0][0].onMessage({ id: "m", threadId: "t", role: "user", text: "申诉" });
+    const result = await api.appealAction(id, owner, { type: "close" });
+    expect(result.historyError).toContain("保存失败");
+    expect(result.historySavedAt).toBeNull();
+    expect(browser.close).toHaveBeenCalled();
+  });
+
   it("uses a disabled account through its configured proxy without returning credentials", async () => {
     const result = await start();
     expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ proxyUrl: "http://proxy.test:8080" }));

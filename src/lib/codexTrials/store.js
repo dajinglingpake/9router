@@ -7,6 +7,7 @@ import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { CODEX_TRIAL_MODELS, CODEX_TRIAL_PROMPT_LIMIT, CODEX_TRIAL_PARALLEL, CODEX_TRIAL_MAX_PARALLEL, countTrialHtmlLines } from "@/shared/utils/codexTrial";
 import { getOutputThroughput } from "@/shared/utils/outputThroughput";
 import { getAccountQualityMetadata } from "@/shared/utils/accountQuality.js";
+import { getAppealSummaries } from "@/lib/accountAppeals/history";
 import { createTrialSession } from "@/sse/local/codexTrialSession";
 import { getCliVersion, runCodexCli } from "./cli";
 
@@ -51,6 +52,7 @@ export function getTrialRecord(id) {
 export async function listTrials() {
   initialize();
   const connections = await getProviderConnections({ provider: "codex" });
+  const appeals = await getAppealSummaries();
   if (!state.cli) state.cli = await getCliVersion();
   return {
     serverNow: Date.now(),
@@ -70,6 +72,7 @@ export async function listTrials() {
         id: connection.id, name: connection.displayName || connection.name || connection.email || connection.id,
         email: connection.email || "", enabled: connection.isActive !== false,
         ...getAccountQualityMetadata(connection),
+        appealHistory: appeals[connection.id] || null,
         results, result: results[0] || null,
       };
     }),

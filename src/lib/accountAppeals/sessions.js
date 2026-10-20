@@ -4,6 +4,7 @@ import { refreshAndUpdateCredentials } from "@/lib/providerUsage";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
 import { launchAppealBrowser, VIEWPORT } from "./browser.mjs";
+import { saveAppealMessages } from "./history";
 
 export const IDLE_MS = 15 * 60_000;
 export const DISCONNECTED_MS = 60_000;
@@ -13,10 +14,37 @@ export const appealError = (message, status = 400) => Object.assign(new Error(me
 export const ownerFor = token => createHash("sha256").update(token).digest("hex");
 export const shouldExpire = (session, now) => now - session.lastSeen > DISCONNECTED_MS || now - session.lastInput > IDLE_MS;
 
+async function flushHistory(session) {
+  clearTimeout(session.historyTimer);
+  session.historyTimer = null;
+  if (session.historyWriting) { await session.historyWriting; return flushHistory(session); }
+  const pending = [...session.historyPending.entries()];
+  if (!pending.length) return;
+  session.historyWriting = saveAppealMessages(session.connectionId, pending.map(([, message]) => message)).then(() => {
+    for (const [key, message] of pending) if (session.historyPending.get(key) === message) session.historyPending.delete(key);
+    session.historySavedAt = new Date().toISOString(); session.historyError = "";
+  }).catch(() => { session.historyError = "客服对话保存失败，请检查存储后再关闭窗口。"; })
+    .finally(() => { session.historyWriting = null; });
+  await session.historyWriting;
+  if (session.historyPending.size && session.status === "closed" && !session.historyError) return flushHistory(session);
+  if (session.historyPending.size && !["closed", "error"].includes(session.status)) {
+    session.historyTimer = setTimeout(() => flushHistory(session), session.historyError ? 5000 : 1000);
+    session.historyTimer.unref();
+  }
+}
+
+function recordMessage(session, message) {
+  session.historyPending.set(`${message.threadId}:${message.id}`, message);
+  if (!session.historyTimer && !session.historyWriting) {
+    session.historyTimer = setTimeout(() => { session.historyTimer = null; flushHistory(session); }, 500);
+    session.historyTimer.unref();
+  }
+}
+
 async function close(session, message = "申诉窗口已关闭。") {
   if (session.closing) return session.closing;
   session.status = "closed"; session.message = message; session.user = null;
-  session.closing = (async () => { await session.starting; await session.browser?.close(); session.browser = null; })();
+  session.closing = (async () => { await session.starting; await session.browser?.close(); session.browser = null; await flushHistory(session); })();
   return session.closing;
 }
 
@@ -54,10 +82,11 @@ async function prepare(session, connection) {
     if (session.status === "closed") return;
     // Verify identity once, inside the isolated browser using the same account proxy.
     session.user = { email: connection.email, accessToken: token };
-    const browser = await launchAppealBrowser({ proxyUrl, onExit: () => {
+    const browser = await launchAppealBrowser({ proxyUrl, onMessage: message => recordMessage(session, message), onCaptureError: message => { session.historyCaptureError = message; }, onExit: () => {
       if (session.status !== "closed" && session.status !== "error") {
         session.status = "error"; session.message = "申诉浏览器已退出，请重新打开。"; session.user = null;
         session.browser?.close().catch(() => {});
+        flushHistory(session);
       }
     } });
     session.browser = browser;
@@ -82,7 +111,7 @@ export async function startAppeal(connectionId, owner, requestId) {
   if (existing) return { id: existing.id, account: existing.account };
   // Reserve a slot before asynchronous startup, including disabled accounts.
   if ([...state.sessions.values()].filter(s => !["closed", "error"].includes(s.status)).length >= MAX_BROWSERS) throw appealError("已有两个申诉窗口，请先关闭其中一个再打开。", 409);
-  const session = { id: randomUUID(), requestId, owner, account: connection.email || connection.name, connectionId, status: "starting", message: "正在验证账号并启动独立浏览器…", lastSeen: Date.now(), lastInput: Date.now(), browser: null, user: null, authenticating: false, capturing: null };
+  const session = { id: randomUUID(), requestId, owner, account: connection.email || connection.name, connectionId, status: "starting", message: "正在验证账号并启动独立浏览器…", lastSeen: Date.now(), lastInput: Date.now(), browser: null, user: null, authenticating: false, capturing: null, historyPending: new Map() };
   state.sessions.set(session.id, session);
   session.starting = prepare(session, connection);
   return { id: session.id, account: session.account };
@@ -111,7 +140,7 @@ async function authenticate(session) {
 
 export async function appealFrame(id, owner, capture = true) {
   const session = lookup(id, owner);
-  const result = () => ({ id, account: session.account, status: session.status, message: session.message, ...VIEWPORT });
+  const result = () => ({ id, account: session.account, status: session.status, message: session.message, historySavedAt: session.historySavedAt || null, historyError: session.historyError || session.historyCaptureError || null, ...VIEWPORT });
   if (!session.browser || ["closed", "error"].includes(session.status) || !capture) return result();
   authenticate(session);
   // One capture at a time even if the client reconnects or retries a slow frame.
@@ -134,7 +163,7 @@ export function validateAppealAction(action) {
 export async function appealAction(id, owner, action) {
   validateAppealAction(action);
   const session = lookup(id, owner);
-  if (action.type === "close") { await close(session); state.sessions.delete(id); return { closed: true }; }
+  if (action.type === "close") { await close(session); state.sessions.delete(id); return { closed: true, historyError: session.historyError || session.historyCaptureError || null, historySavedAt: session.historySavedAt || null }; }
   if (!session.browser || ["closed", "error"].includes(session.status)) throw appealError("申诉浏览器尚未就绪。", 409);
   session.lastInput = Date.now();
   const browser = session.browser;

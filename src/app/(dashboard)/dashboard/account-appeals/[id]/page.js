@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Button from "@/shared/components/Button";
 import AccountActions from "./AccountActions";
+import AccountAppealHistory from "@/shared/components/AccountAppealHistory";
 
 const DEFAULT_APPEAL_DRAFT = `I've been using GPT for a long time, and only recently started noticing what feels like a real drop in quality or intelligence.I've always trusted you guys to provide the level of service and quality users should be able to expect. I also genuinely believe that better collaboration between people and AI can help us do better work and, in some small way, make the world a better place.So, if there's any chance you can press the "back to normal effort/model" button on your side, I'd be incredibly grateful.`;
 
@@ -72,7 +73,7 @@ function AppealWorkspace({ connectionId }) {
 
   const act = useCallback(async action => {
     if (!sessionRef.current) return;
-    try { await request(`/api/account-appeals/${sessionRef.current.id}`, post(action)); setError(""); }
+    try { const result = await request(`/api/account-appeals/${sessionRef.current.id}`, post(action)); setError(""); return result; }
     catch (cause) { setError(cause.message); throw cause; }
   }, []);
   const point = event => {
@@ -101,7 +102,7 @@ function AppealWorkspace({ connectionId }) {
   }
   async function stop() {
     setBusy(true);
-    try { await act({ type: "close" }); sessionRef.current = null; setFrame({ status: "closed", message: "申诉窗口已关闭，浏览器资源已释放。" }); }
+    try { const receipt = await act({ type: "close" }); sessionRef.current = null; setFrame({ status: "closed", message: "申诉窗口已关闭，浏览器资源已释放。", historySavedAt: receipt?.historySavedAt, historyError: receipt?.historyError }); }
     catch { /* The action displays its own error. */ }
     finally { setBusy(false); }
   }
@@ -115,6 +116,10 @@ function AppealWorkspace({ connectionId }) {
         : <Button variant="secondary" onClick={stop} disabled={!session} loading={busy} icon="close">结束申诉</Button>}
     </div>
     <AccountActions connectionId={connectionId} />
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <AccountAppealHistory connectionId={connectionId} accountName={session?.account} />
+      <p role="status" className={`text-xs ${frame?.historyError ? "text-red-600" : "text-text-muted"}`}>{frame?.historyError || (frame?.historySavedAt ? `客服对话已自动保存 · ${new Date(frame.historySavedAt).toLocaleTimeString("zh-CN", { hour12: false })}` : "自动保存客服对话，未发送的草稿不会记录。")}</p>
+    </div>
     <p className="text-sm text-text-muted">独立浏览器会话，与日常浏览器登录互不影响。关闭此页面后释放资源，15 分钟无操作也会自动关闭。</p>
     <p role="status" className={`text-sm ${frame?.status === "error" ? "text-red-600" : "text-text-muted"}`}>{frame?.message || "正在打开独立申诉窗口…"}</p>
     {error && <p role="alert" className="text-sm text-red-600">{error}</p>}

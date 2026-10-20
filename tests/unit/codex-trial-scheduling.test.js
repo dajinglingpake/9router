@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set() }));
 vi.mock("@/lib/dataDir", () => ({ get DATA_DIR() { return fixture.directory; } }));
 vi.mock("@/lib/localDb", () => ({ getProviderConnections: async () => Array.from({ length: 10 }, (_, i) => ({ id: `account-${i}`, provider: "codex", isActive: i !== 9 })) }));
+vi.mock("@/lib/accountAppeals/history", () => ({ getAppealSummaries: async () => ({}) }));
 vi.mock("@/sse/local/codexTrialSession", () => ({ createTrialSession: (id, model) => {
   const token = `${id}/${model}`;
   fixture.sessions.add(token);

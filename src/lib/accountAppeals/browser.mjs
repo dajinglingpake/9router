@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { installAppealCapture, createAppealCollector } from "./capture.mjs";
 
 export const HELP_URL = "https://help.openai.com/zh-hans-cn";
 export const VIEWPORT = { width: 1280, height: 900 };
@@ -47,7 +48,7 @@ export async function applyHelpIdentity(user) {
   return { ready: false };
 }
 
-export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) {
+export async function launchAppealBrowser({ proxyUrl, onExit = () => {}, onMessage = () => {}, onCaptureError = () => {} } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "9router-appeal-"));
   const binary = process.env.ACCOUNT_APPEAL_CHROMIUM || "/usr/bin/chromium";
   const displayRunner = process.env.ACCOUNT_APPEAL_XVFB;
@@ -61,6 +62,7 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) 
   }
   let child, stopped = false, nextId = 0, sessionId, pending = Buffer.alloc(0);
   const requests = new Map();
+  const capture = createAppealCollector(onMessage, onCaptureError);
   const failPending = () => { for (const task of requests.values()) { clearTimeout(task.timer); task.reject(new Error("申诉浏览器已关闭。")); } requests.clear(); };
   const send = (method, params = {}, target = sessionId) => new Promise((resolve, reject) => {
     if (stopped || !child?.stdio[3]?.writable) return reject(new Error("申诉浏览器已关闭。"));
@@ -104,6 +106,8 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) 
           if (!task) continue;
           clearTimeout(task.timer); requests.delete(event.id);
           if (event.error) task.reject(new Error("申诉浏览器操作失败。")); else task.resolve(event.result);
+        } else if (event.method === "Runtime.bindingCalled" && event.params.name === "__nineRouterAppealCapture") {
+          try { capture(JSON.parse(event.params.payload)); } catch { onCaptureError("客服对话保存失败，请稍后重新打开对话同步。"); }
         } else if (event.method === "Fetch.requestPaused") {
           send("Fetch.continueRequest", { requestId: event.params.requestId }, event.sessionId).catch(() => {});
         } else if (event.method === "Fetch.authRequired") {
@@ -121,6 +125,9 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {} } = {}) 
       || (await send("Target.createTarget", { url: "about:blank" }, null)).targetId;
     sessionId = (await send("Target.attachToTarget", { targetId, flatten: true }, null)).sessionId;
     await send("Page.enable");
+    await send("Runtime.enable");
+    await send("Runtime.addBinding", { name: "__nineRouterAppealCapture" });
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installAppealCapture.toString()})()` });
     await send("Emulation.setDeviceMetricsOverride", { ...VIEWPORT, deviceScaleFactor: 1, mobile: false });
     if (proxy?.username || proxy?.password) await send("Fetch.enable", { handleAuthRequests: true });
     const evaluate = async expression => {

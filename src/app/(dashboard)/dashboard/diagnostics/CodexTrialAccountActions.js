@@ -6,6 +6,7 @@ import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import EditConnectionModal from "@/shared/components/EditConnectionModal";
 import Button from "@/shared/components/Button";
 import AccountAppealLink from "@/shared/components/AccountAppealLink";
+import AccountAppealHistory from "@/shared/components/AccountAppealHistory";
 
 async function requestJson(url, options) {
   const response = await fetch(url, options);
@@ -43,6 +44,7 @@ export default function CodexTrialAccountActions({ account, onUpdated }) {
         aria-label={`编辑账号：${account.name}`}>编辑账号</Button>
       <AccountAppealLink account={account} />
     </div>
+    <AccountAppealHistory connectionId={account.id} accountName={account.name} summary={account.appealHistory} onUpdated={onUpdated} />
     {error && <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
     {connection && createPortal(<EditConnectionModal isOpen connection={connection}
       onSave={save} onClose={() => setConnection(null)} />, document.body)}

@@ -5,7 +5,7 @@ import { ownerFor, appealError } from "./sessions";
 
 const OWNER_COOKIE = "9router_appeal_session";
 
-export async function appealOwner(request, mutation = false, create = false) {
+export async function authorizeAppealRequest(request, mutation = false) {
   const token = request.cookies.get("auth_token")?.value;
   const authenticated = await verifyDashboardAuthToken(token);
   if (!authenticated && (await getSettings())?.requireLogin !== false) throw appealError("请先登录 9router 后再打开申诉窗口。", 401);
@@ -15,6 +15,12 @@ export async function appealOwner(request, mutation = false, create = false) {
     if (!["http:", "https:"].includes(origin.protocol) || origin.host !== request.headers.get("host")) throw appealError("请求来源无效。", 403);
     if (!request.headers.get("content-type")?.startsWith("application/json")) throw appealError("请求必须使用 JSON。", 415);
   }
+  return authenticated ? token : null;
+}
+
+export async function appealOwner(request, mutation = false, create = false) {
+  const token = await authorizeAppealRequest(request, mutation);
+  const authenticated = !!token;
   if (authenticated) return { owner: ownerFor(token) };
   const existing = request.cookies.get(OWNER_COOKIE)?.value;
   if (/^[a-f0-9]{64}$/.test(existing || "")) return { owner: ownerFor(`guest:${existing}`) };
