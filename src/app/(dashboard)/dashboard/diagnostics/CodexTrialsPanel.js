@@ -55,6 +55,9 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
         {degraded && <span data-trial-degradation className="rounded-md bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-300" title="任意一项低于本页自定规则的阈值">降智表现 · 规则命中</span>}
       </div>
     </div>
+    {result?.hasHtml && result.status !== "success" && <p className="border-t border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
+      {result.error || "本次执行未完成。"} 已保留当前作品，可预览或下载，内容可能尚未完成。
+    </p>}
     <div className="relative h-80 border-y border-border bg-surface-2">
       {result?.hasHtml ? <CodexTrialPreview key={result.runId} title={`${account.name} 的 HTML 作品`} src={artifactUrl(account)} className="h-full w-full" />
         : result?.status === "running" ? <CodexTrialOutput key={result.runId} result={result} text={result.outputTail} now={now} className="h-full" />
@@ -235,7 +238,7 @@ export default function CodexTrialsPanel() {
       <p id="codex-trial-parallel-help" className={`mt-3 text-xs ${validParallel ? "text-text-muted" : "text-red-600 dark:text-red-400"}`}>
         {validParallel ? `最多同时执行 ${data?.running ? data.parallel ?? parallel : parallel} 项，完成一项后自动补下一项。其他测试可随时加入，满额时排队；同一账号仍遵守已有的并发限制。` : `请输入 1–${CODEX_TRIAL_MAX_PARALLEL} 之间的整数。`}
       </p>
-      <p className="mt-4 text-xs leading-5 text-text-muted">每行可选择不同供应商，同时测试各自的全部账号（含禁用账号）。已有作品始终一起展示，每个账号、模型分别保存，重测失败直接显示错误。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
+      <p className="mt-4 text-xs leading-5 text-text-muted">每行可选择不同供应商，同时测试各自的全部账号（含禁用账号）。测试不设固定总时限，可随时手动停止；停止或报错时，已写出的作品仍可预览和下载，并标记为未完成。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
     </section>
     {(error || readError || data?.cli?.error) && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">{error || readError || data.cli.error}</p>}
     <div className="flex flex-wrap items-center justify-between gap-4">

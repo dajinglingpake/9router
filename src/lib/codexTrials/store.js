@@ -186,15 +186,15 @@ async function runTrial(batch, id) {
     const result = await runCodexCli({
       ...record, token: session.token,
       directory: path.join(ROOT, "jobs", record.runId),
-      signal: AbortSignal.any([batch.controller.signal, AbortSignal.timeout(15 * 60_000)]),
+      signal: batch.controller.signal,
       onProgress,
     });
     clearTimeout(progressTimer);
     const status = batch.controller.signal.aborted ? "cancelled" : result.error ? "error" : "success";
     const rate = getOutputThroughput({ kind: status, outputTokens: result.usage?.output_tokens, latencyMs: result.elapsedMs });
     save({
-      ...state.records.get(id), ...result, html: status === "success" ? result.html : null,
-      htmlLines: status === "success" ? countTrialHtmlLines(result.html) : 0,
+      ...state.records.get(id), ...result, html: result.html || null,
+      htmlLines: countTrialHtmlLines(result.html || ""),
       status, error: result.error || null, finishedAt: new Date().toISOString(), tokensPerSecond: rate?.totalTps ?? null,
       failures: record.failures + (status === "error" ? 1 : 0),
       routerErrors: session.session.errors, requests: session.session.requests, reportedModels: [...session.session.models],

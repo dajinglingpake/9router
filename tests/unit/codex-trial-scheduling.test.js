@@ -58,6 +58,46 @@ afterEach(async () => {
 });
 
 describe("Codex trial scheduling", () => {
+  it("keeps a long-running trial alive beyond fifteen minutes until explicitly stopped", async () => {
+    vi.useFakeTimers();
+    // Make any native AbortSignal timeout observable under the fake clock.
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("expired", "TimeoutError")), ms);
+      return controller.signal;
+    });
+    try {
+      await store.startTrials(input({ ids: ["account-0"] }));
+      const batch = globalThis.__ninerouterCodexTrials.batch;
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect((await records())[0].status).toBe("running");
+      expect(fixture.jobs[0].signal.aborted).toBe(false);
+      store.stopTrials();
+      await batch.promise;
+      expect((await records())[0].status).toBe("cancelled");
+      expect(fixture.sessions.size).toBe(0);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+  it("preserves unfinished artifacts for preview and download without marking failed runs successful", async () => {
+    await store.startTrials(input({ ids: ["account-0"] }));
+    const batch = globalThis.__ninerouterCodexTrials.batch;
+    const html = "<html>\n<body>unfinished preview</body>\n</html>";
+    fixture.jobs[0].finish({ error: "stream failed", html });
+    await batch.promise;
+    const record = (await records())[0];
+    expect(record).toMatchObject({ status: "error", hasHtml: true, htmlLines: 3, error: "stream failed" });
+    const { GET } = await import("@/app/api/codex-trials/[id]/route.js");
+    const response = await GET(new Request(`http://localhost/api/codex-trials/${record.id}?format=download`), { params: Promise.resolve({ id: record.id }) });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(html);
+    expect(response.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
+    globalThis.__ninerouterCodexTrials.records.clear();
+    globalThis.__ninerouterCodexTrials.loaded = false;
+    expect(store.getTrialRecord(record.id)).toMatchObject({ status: "error", html, error: "stream failed" });
+  });
   it("discovers CodeBuddy models on page entry without probing accounts during status polling", async () => {
     fixture.codebuddyModels = [{ id: "space-bunny", name: "Space-Bunny" }];
     const { GET } = await import("@/app/api/codex-trials/route.js");

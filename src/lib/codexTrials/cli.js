@@ -12,6 +12,17 @@ const UNSANDBOXED = process.env.CODEX_TRIAL_UNSANDBOXED !== "false";
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const LOG_LIMIT = 64 * 1024;
 
+async function readTrialHtml(workspace) {
+  const file = await fs.open(path.join(workspace, "index.html"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || info.size === 0 || info.size > MAX_HTML_BYTES) throw new Error("index.html 为空、不是普通文件或超过 2 MB。");
+    const html = await file.readFile("utf8");
+    if (!/<(?:!doctype\s+html|html|svg|body)\b/i.test(html)) throw new Error("生成的 index.html 不包含可预览的 HTML 或 SVG。");
+    return html;
+  } finally { await file.close(); }
+}
+
 export async function getCliVersion() {
   try {
     const { stdout } = await exec(CLI, ["--version"], { timeout: 5000, maxBuffer: 4096 });
@@ -122,25 +133,21 @@ export async function runCodexCli({ directory, token, model, effort, provider = 
       child.once("error", reject);
       child.once("close", (code, terminationSignal) => resolve({ code, terminationSignal }));
     });
-    child.stdin.end(`${prompt}\n\n请将最终作品实际写入当前工作目录的 index.html，所有 SVG、CSS 和 JavaScript 内嵌，不引用外部资源。不要运行任何测试。完成后简短说明即可。\n`);
+    child.stdin.end(`${prompt}\n\n请将最终作品实际写入当前工作目录的 index.html，所有 SVG、CSS 和 JavaScript 内嵌，不引用外部资源。优先完成可预览的作品；不要运行测试、启动浏览器、截图或进行图像检查。文件写好后简短说明并结束。\n`);
     const { code, terminationSignal } = await exited;
     if (pending) onLine(pending);
     signal.throwIfAborted();
     if (code !== 0 || !completed || failure) throw new Error(failure || `Codex CLI 未完成（退出码 ${code ?? terminationSignal}）。${log.slice(-1600)}`);
-    const file = await fs.open(path.join(workspace, "index.html"), constants.O_RDONLY | constants.O_NOFOLLOW);
-    let html;
-    try {
-      const info = await file.stat();
-      if (!info.isFile() || info.size === 0 || info.size > MAX_HTML_BYTES) throw new Error("index.html 为空、不是普通文件或超过 2 MB。" );
-      html = await file.readFile("utf8");
-      if (!/<(?:!doctype\s+html|html|svg|body)\b/i.test(html)) throw new Error("生成的 index.html 不包含可预览的 HTML 或 SVG。" );
-    } finally { await file.close(); }
+    const html = await readTrialHtml(workspace);
     return { ...snapshot(), html, activity: "执行完成", elapsedMs: Date.now() - startedAt };
   } catch (error) {
     const message = signal.aborted
-      ? (signal.reason?.name === "TimeoutError" ? "测试超过 15 分钟，CLI 已终止。" : "测试已取消，CLI 已终止。")
+      ? "测试已停止，CLI 已终止。"
       : error.code === "ENOENT" ? "Codex 未生成 index.html，或 CLI 不可用。" : error.message;
-    return { ...snapshot(), error: message.replaceAll(token, "[trial-token]"), activity: "执行结束", cliErrors: Math.max(1, cliErrors), elapsedMs: Date.now() - startedAt };
+    // Stop remaining writers before preserving the latest artifact and removing the private workspace.
+    if (child?.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* Already exited. */ } }
+    const html = await readTrialHtml(workspace).catch(() => null);
+    return { ...snapshot(), html, error: message.replaceAll(token, "[trial-token]"), activity: html ? "执行结束，已保留未完成作品" : "执行结束", cliErrors: Math.max(1, cliErrors), elapsedMs: Date.now() - startedAt };
   } finally {
     signal.removeEventListener("abort", stop);
     clearTimeout(killTimer);

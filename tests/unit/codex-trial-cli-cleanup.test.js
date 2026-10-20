@@ -54,7 +54,7 @@ describe.skipIf(process.platform !== "linux")("Codex CLI resource cleanup", () =
     if (mode === "timeout") controller.abort(new DOMException("fixture timeout", "TimeoutError"));
     const result = await promise;
     expect(!!result.error).toBe(mode !== "success");
-    if (mode === "success") expect(result.html).toBe("<html>fixture</html>");
+    if (mode === "success" || mode === "error") expect(result.html).toBe("<html>fixture</html>");
     expect(fs.existsSync(job)).toBe(false);
     await vi.waitFor(() => {
       let status;
@@ -64,5 +64,24 @@ describe.skipIf(process.platform !== "linux")("Codex CLI resource cleanup", () =
       expect(!status || /^State:\s+Z/m.test(status)).toBe(true);
       if (status) expect(status).not.toMatch(/^VmRSS:/m);
     });
+  });
+  it.each(["html", "symlink", "oversized", "not-html"])("preserves only valid generated HTML when stopped: %s", async kind => {
+    const controller = new AbortController();
+    const job = path.join(directory, "job");
+    const promise = runCodexCli({ directory: job, token: "fixture-token", model: "cancel", prompt: "fixture", signal: controller.signal });
+    await vi.waitFor(() => expect(fs.existsSync(path.join(directory, "child.pid"))).toBe(true));
+    const artifact = path.join(job, "workspace", "index.html");
+    if (kind === "symlink") {
+      const outside = path.join(directory, "outside.html");
+      fs.writeFileSync(outside, "<html>private</html>");
+      fs.symlinkSync(outside, artifact);
+    } else {
+      fs.writeFileSync(artifact, kind === "html" ? "<html>unfinished preview</html>" : kind === "oversized" ? "<html>" + "x".repeat(2 * 1024 * 1024) : "not an HTML document");
+    }
+    controller.abort();
+    const result = await promise;
+    expect(result.error).toBe("测试已停止，CLI 已终止。");
+    expect(result.html).toBe(kind === "html" ? "<html>unfinished preview</html>" : null);
+    expect(fs.existsSync(job)).toBe(false);
   });
 });
