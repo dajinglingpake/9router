@@ -1,3 +1,10 @@
+export const CODEBUDDY_MODELS_CONFIG = {
+  url: "https://copilot.tencent.com/v3/config",
+  agent: "cli",
+  timeoutMs: 10000,
+  cacheTtlMs: 5 * 60 * 1000,
+};
+
 export default {
   id: "codebuddy-cn",
   // Short model prefix (cbcn/glm-5.2). "cbcn" = CodeBuddy CN; reserve "cbai"

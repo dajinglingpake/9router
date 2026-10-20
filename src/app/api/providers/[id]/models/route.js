@@ -15,6 +15,7 @@ import { resolveCursorModels } from "open-sse/services/cursorModels.js";
 import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { resolveClineModels, resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
+import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -179,6 +180,15 @@ function buildQoderModelsResolver(providerId) {
 
 // Provider models endpoints configuration
 const PROVIDER_MODELS_CONFIG = {
+  "codebuddy-cn": {
+    customResolver: async (connection) => {
+      const result = await resolveCodebuddyModels(connection, { forceRefresh: true });
+      return result.models.length ? result : {
+        ...result,
+        models: getStaticProviderModels("codebuddy-cn"),
+      };
+    },
+  },
   "muse": {
     url: "https://api.meta.ai/v1/models",
     method: "GET",

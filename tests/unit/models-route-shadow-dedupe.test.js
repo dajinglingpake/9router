@@ -18,6 +18,7 @@ vi.mock("@/models", () => ({
   getModelAliases: vi.fn(async () => ({})),
   setModelAlias: vi.fn(),
   getCustomModels: vi.fn(async () => []),
+  getProviderConnections: vi.fn(async () => []),
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({
   getDisabledModels: vi.fn(async () => ({})),

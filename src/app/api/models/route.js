@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getModelAliases, setModelAlias, getCustomModels } from "@/models";
+import { getModelAliases, setModelAlias, getCustomModels, getProviderConnections } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 
 // GET /api/models - Get models with aliases
 export async function GET() {
@@ -11,7 +12,25 @@ export async function GET() {
     const modelAliases = await getModelAliases();
     const disabled = await getDisabledModels();
 
-    const models = AI_MODELS
+    let catalog = AI_MODELS;
+    const connections = await getProviderConnections({ provider: "codebuddy-cn", isActive: true });
+    if (connections.length) {
+      const live = await resolveCodebuddyModels(connections[0]);
+      if (live.models.length) {
+        const providerAlias = getProviderAlias("codebuddy-cn");
+        catalog = [
+          ...AI_MODELS.filter((model) => model.provider !== "codebuddy-cn" && model.provider !== providerAlias),
+          ...live.models.map((model) => ({
+            provider: providerAlias,
+            model: model.id,
+            name: model.name,
+            capabilities: model.capabilities,
+          })),
+        ];
+      }
+    }
+
+    const models = catalog
       .filter((m) => {
         const alias = getProviderAlias(m.provider) || m.provider;
         const list = disabled[alias] || disabled[m.provider] || [];
@@ -21,7 +40,7 @@ export async function GET() {
         const fullModel = `${m.provider}/${m.model}`;
         const providerAlias = getProviderAlias(m.provider) || m.provider;
         const routedModel = `${providerAlias}/${m.model}`;
-        const c = getCapabilitiesForModel(m.provider, m.model);
+        const c = { ...getCapabilitiesForModel(m.provider, m.model), ...m.capabilities };
         return {
           ...m,
           fullModel,

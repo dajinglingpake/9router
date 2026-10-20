@@ -77,7 +77,7 @@ export default function ProviderDetailPage() {
   const [scheduleConnection, setScheduleConnection] = useState(null);
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [liveModels, setLiveModels] = useState([]);
-  // Live-catalog fetch warning/error (surfaced for zed only; cursor behavior unchanged).
+  // Live-catalog fetch warning/error; Cursor behavior stays unchanged.
   const [liveModelsError, setLiveModelsError] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
@@ -161,7 +161,7 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = (providerId === "cursor" || providerId === "zed") && liveModels.length > 0
+  const models = (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn") && liveModels.length > 0
     ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
@@ -180,10 +180,16 @@ export default function ProviderDetailPage() {
     : providerId === "kimi" ? "Kimi API Key"
     : (providerId === "qoder" || providerId === "qoder-cn") ? "PAT"
     : "API Key";
+  const modelThinkingLevels = (modelId) => {
+    const liveLevels = providerId === "codebuddy-cn"
+      ? models.find((model) => model.id === modelId)?.supportedEffortLevels
+      : undefined;
+    return liveLevels ?? getThinkingLevels(providerId, modelId);
+  };
   // Resolve suffix "(level)" for a model when a thinking level is picked and the model supports it.
   const resolveThinkingSuffix = (modelId) => {
     if (!thinkingMode || thinkingMode === "auto") return null;
-    const levels = getThinkingLevels(providerId, modelId);
+    const levels = modelThinkingLevels(modelId);
     return levels && levels.includes(thinkingMode) ? thinkingMode : null;
   };
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
@@ -195,7 +201,7 @@ export default function ProviderDetailPage() {
     const addLevels = (modelId) => {
       if (!modelId || seen.has(modelId)) return;
       seen.add(modelId);
-      const lv = getThinkingLevels(providerId, modelId);
+      const lv = modelThinkingLevels(modelId);
       if (lv) lv.forEach((l) => { if (l !== "none") set.add(l); });
     };
     for (const m of models) addLevels(m.id);
@@ -479,44 +485,42 @@ export default function ProviderDetailPage() {
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
-  // Live per-connection catalogs (cursor, zed): the static registry carries
-  // no usable list, so resolve from the active connection. Fires only when
-  // the provider id or connection list changes — no polling, no loop.
-  // Cursor path is statement-identical to before; zed adds error surfacing.
+  // Resolve the active account's catalog on entry or connection changes.
+  // CodeBuddy keeps its built-in list as a fallback when discovery fails.
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed";
+    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn";
+    const showWarning = providerId === "zed" || providerId === "codebuddy-cn";
+    const catalogName = providerId === "codebuddy-cn" ? "CodeBuddy" : "Zed";
+    setLiveModels([]);
+    setLiveModelsError(null);
     if (!isLiveCatalog) {
-      setLiveModels([]);
       return;
     }
 
     const connection = connections.find((item) => item.isActive !== false);
     if (!connection?.id) {
-      setLiveModels([]);
-      if (providerId === "zed") setLiveModelsError(null);
       return;
     }
 
     let cancelled = false;
-    if (providerId === "zed") setLiveModelsError(null);
     fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" })
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
         if (cancelled) return;
         if (ok && Array.isArray(data?.models) && data.models.length > 0) {
           setLiveModels(data.models);
-          if (providerId === "zed" && data?.warning) setLiveModelsError(data.warning);
+          if (showWarning && data?.warning) setLiveModelsError(data.warning);
           return;
         }
-        if (providerId === "zed") {
+        if (showWarning) {
           setLiveModels([]);
-          setLiveModelsError(data?.warning || data?.error || "Zed returned no live models.");
+          setLiveModelsError(data?.warning || data?.error || `${catalogName} returned no live models.`);
         }
       })
       .catch(() => {
-        if (!cancelled && providerId === "zed") {
+        if (!cancelled && showWarning) {
           setLiveModels([]);
-          setLiveModelsError("Failed to reach the Zed model catalog.");
+          setLiveModelsError(`Failed to reach the ${catalogName} model catalog.`);
         }
       });
 
@@ -1264,7 +1268,7 @@ export default function ProviderDetailPage() {
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
               onDisable={() => handleDisableModel(model.id)}
-              caps={getCaps(`${providerId}/${model.id}`)}
+              caps={{ ...getCaps(`${providerId}/${model.id}`), ...model.capabilities }}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
             />
           );
@@ -1858,7 +1862,7 @@ export default function ProviderDetailPage() {
             })()}
           </div>
         )}
-        {providerId === "zed" && !!liveModelsError && (
+        {(providerId === "zed" || providerId === "codebuddy-cn") && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {renderModelsSection()}
