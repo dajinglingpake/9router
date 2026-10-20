@@ -52,8 +52,8 @@ export default function AccountActions({ connectionId }) {
           <span className={`rounded-full px-2.5 py-1 text-xs ${active ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-surface-2 text-text-muted"}`}>{active ? "已启用" : "已禁用"}</span>
           <Button size="sm" variant="secondary" icon={active ? "pause" : "play_arrow"} loading={saving} onClick={toggleActive}>{active ? "禁用账号" : "启用账号"}</Button>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="text-sm font-semibold">标签备注</span>
+        <div className="min-w-0 space-y-1">
+          <span className="block text-sm font-semibold">标签备注</span>
           <AccountDegradedMarker connection={account} disabled={saving} onUpdated={updates => {
             setAccount(previous => ({ ...previous, ...updates }));
             setNotice("标签备注已保存。");

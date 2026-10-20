@@ -8,6 +8,7 @@ export function installAppealCapture() {
   };
   window.fetch = async function(input, init) {
     const account = window.__nineRouterAppealAccount;
+    const startedAt = Date.now();
     let body;
     try {
       const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url, location.href);
@@ -24,7 +25,7 @@ export function installAppealCapture() {
       const requestType = request.type;
       if (!/^(threads\.|items\.list$)/.test(requestType || "")) return response;
       let threadId = request.params?.thread_id;
-      const record = payload => { threadId = payload.thread?.id || threadId; if (window.__nineRouterAppealAccount === account) report({ requestType, threadId, payload }); };
+      const record = payload => { threadId = payload.thread?.id || threadId; if (window.__nineRouterAppealAccount === account) report({ requestType, threadId, startedAt, after: request.params?.after, order: request.params?.order, payload }); };
       const copy = response.clone();
       const capture = async () => {
         const reader = copy.body?.getReader();
@@ -83,6 +84,7 @@ export function normalizeAppealMessage(item, fallbackThreadId, complete = true) 
 
 export function createAppealCollector(onMessage, onError = () => {}) {
   const pending = new Map();
+  let snapshotId = 0;
   const accept = (item, threadId, complete = true) => {
     const message = normalizeAppealMessage(item, threadId, complete);
     if (message?.text) onMessage(message);
@@ -108,11 +110,17 @@ export function createAppealCollector(onMessage, onError = () => {}) {
         if (part?.type === "output_text") { const text = part.text + update.delta; part.text = text.slice(0, 100_000); item.captureTruncated ||= text.length > 100_000; }
       }
       accept(item, threadId, false);
-    } else if (packet.requestType === "threads.get_by_id") {
-      const thread = value.thread || value;
-      for (const item of thread.items?.data || []) accept(item, thread.id || threadId);
-    } else if (packet.requestType === "items.list") {
-      for (const item of value.data || []) accept(item, threadId);
+    } else if (["threads.get_by_id", "items.list"].includes(packet.requestType)) {
+      const thread = value.thread || value, page = packet.requestType === "threads.get_by_id" ? thread.items : value;
+      const id = thread.id || threadId;
+      if (!validId(id) || !Array.isArray(page?.data)) return;
+      const messages = page.data.map(item => normalizeAppealMessage(item, id)).filter(message => message?.text);
+      if (packet.order === "desc") messages.reverse();
+      // Help Center regenerates history IDs and timestamps on each read. Keep each
+      // response together so repeated text is matched by occurrence, not discarded.
+      onMessage({ kind: "snapshot", id: `snapshot_${++snapshotId}`, threadId: id, messages,
+        startedAt: Number.isFinite(packet.startedAt) ? packet.startedAt : Date.now(),
+        full: !packet.after && page.has_more === false });
     }
   };
 }

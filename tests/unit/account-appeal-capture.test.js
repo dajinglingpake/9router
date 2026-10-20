@@ -28,9 +28,20 @@ describe("appeal message capture", () => {
     capture({ requestType: "threads.get_by_id", payload: { id: "thread-one", items: { data: [item("u", "user_message", "请帮我检查")] } } });
     capture({ requestType: "items.list", threadId: "thread-two", payload: { data: [{ ...item("s"), thread_id: undefined }] } });
     expect(messages.map(message => message.threadId)).toEqual(["thread-one", "thread-two"]);
-    expect(messages[0]).toMatchObject({ role: "user", complete: true });
+    expect(messages[0]).toMatchObject({ kind: "snapshot", full: false, messages: [{ role: "user", complete: true }] });
     capture({ requestType: "threads.create", payload: { error: "request rejected" } });
     expect(messages).toHaveLength(2);
+  });
+
+  it("keeps repeated text as separate occurrences within a full history response", () => {
+    const messages = [], capture = createAppealCollector(message => messages.push(message));
+    capture({ requestType: "threads.get_by_id", startedAt: 123, payload: { id: "thread-one", items: { has_more: false, data: [item("first", "user_message", "谢谢"), item("second", "user_message", "谢谢")] } } });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ kind: "snapshot", full: true, startedAt: 123 });
+    expect(messages[0].messages.map(message => message.id)).toEqual(["first", "second"]);
+    capture({ requestType: "items.list", threadId: "thread-one", after: "cursor", order: "desc", payload: { has_more: false, data: [item("second"), item("first")] } });
+    expect(messages[1].full).toBe(false);
+    expect(messages[1].messages.map(message => message.id)).toEqual(["first", "second"]);
   });
 
   it("marks oversized messages as truncated", () => {

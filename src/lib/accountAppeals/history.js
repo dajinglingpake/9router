@@ -11,27 +11,74 @@ const keyFor = (account, thread) => `${validateHistoryId(account)}:${validateHis
 const read = (db, scope, key) => { const row = db.get("SELECT value FROM kv WHERE scope = ? AND key = ?", [scope, key]); return row ? JSON.parse(row.value) : null; };
 const write = (db, scope, key, value) => db.run("INSERT INTO kv(scope, key, value) VALUES(?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value", [scope, key, JSON.stringify(value)]);
 
+function saveMessage(db, connectionId, message) {
+  const key = keyFor(connectionId, message.threadId), messageKey = `${key}:${validateHistoryId(message.id)}`;
+  if (!["user", "support"].includes(message.role) || typeof message.text !== "string" || !message.text) return;
+  const previous = read(db, MESSAGES, messageKey);
+  if (previous?.complete && !message.complete || previous?.text === message.text && previous?.complete === message.complete) return;
+  const now = new Date().toISOString();
+  const entry = { id: message.id, role: message.role, text: message.text, complete: !!message.complete, truncated: !!message.truncated,
+    createdAt: message.createdAt || previous?.createdAt || now, capturedAt: now };
+  write(db, MESSAGES, messageKey, entry);
+  const thread = read(db, THREADS, key) || { id: message.threadId, connectionId, createdAt: entry.createdAt, messageCount: 0, userMessageCount: 0, result: null, note: "" };
+  // A late event for a message superseded by a full history must not resurrect it.
+  if (previous && thread.messageIds && !thread.messageIds.includes(entry.id)) return;
+  thread.createdAt = thread.createdAt < entry.createdAt ? thread.createdAt : entry.createdAt;
+  thread.updatedAt = now;
+  if (!previous) { thread.messageCount++; if (entry.role === "user") thread.userMessageCount++; thread.messageIds?.push(entry.id); }
+  if (entry.role === "support" && (!thread.lastReplyAt || entry.createdAt >= thread.lastReplyAt)) {
+    thread.lastReply = entry.text.slice(0, 300); thread.lastReplyAt = entry.createdAt;
+  }
+  write(db, THREADS, key, thread);
+}
+
+function threadMessages(db, key, thread) {
+  const rows = rowsFor(db, MESSAGES, `${key}:`);
+  if (thread?.messageIds) {
+    const byId = new Map(rows.map(message => [message.id, message]));
+    return thread.messageIds.map(id => byId.get(id)).filter(Boolean);
+  }
+  return rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.capturedAt.localeCompare(b.capturedAt) || a.id.localeCompare(b.id));
+}
+
+function saveSnapshot(db, connectionId, snapshot) {
+  const key = keyFor(connectionId, snapshot.threadId), thread = read(db, THREADS, key);
+  if (thread?.historyStartedAt > snapshot.startedAt) return;
+  const previous = threadMessages(db, key, thread), used = new Set(), matched = [];
+  for (const message of snapshot.messages) {
+    // Match each occurrence at most once. Two actual "thank you" messages stay two.
+    const existing = previous.find(row => !used.has(row.id) && row.id === message.id)
+      || (snapshot.full && previous.find(row => !used.has(row.id) && row.role === message.role && row.text === message.text));
+    const id = existing?.id || message.id;
+    if (used.has(id)) continue;
+    used.add(id);
+    saveMessage(db, connectionId, { ...message, id, createdAt: existing?.createdAt || message.createdAt });
+    matched.push(id);
+  }
+  const record = read(db, THREADS, key);
+  if (!record) return;
+  // Only a full response can supersede old records. Keep messages received after
+  // this request began, since a concurrent send may not be in its response yet.
+  const retained = previous.filter(row => !used.has(row.id) && (!snapshot.full || Date.parse(row.capturedAt) >= snapshot.startedAt));
+  record.messageIds = snapshot.full ? [...matched, ...retained.map(row => row.id)]
+    : [...previous.map(row => row.id), ...matched.filter(id => !previous.some(row => row.id === id))];
+  record.historyStartedAt = snapshot.startedAt;
+  record.updatedAt = new Date().toISOString();
+  const messages = threadMessages(db, key, record), reply = messages.findLast(message => message.role === "support");
+  record.messageCount = messages.length;
+  record.userMessageCount = messages.filter(message => message.role === "user").length;
+  record.lastReply = reply?.text.slice(0, 300) || null;
+  record.lastReplyAt = reply?.createdAt || null;
+  write(db, THREADS, key, record);
+}
+
 export async function saveAppealMessages(connectionId, messages) {
   validateHistoryId(connectionId);
   const db = await getAdapter();
   return db.transaction(() => {
     for (const message of messages) {
-      const key = keyFor(connectionId, message.threadId), messageKey = `${key}:${validateHistoryId(message.id)}`;
-      if (!["user", "support"].includes(message.role) || typeof message.text !== "string" || !message.text) continue;
-      const previous = read(db, MESSAGES, messageKey);
-      if (previous?.complete && !message.complete || previous?.text === message.text && previous?.complete === message.complete) continue;
-      const now = new Date().toISOString();
-      const entry = { id: message.id, role: message.role, text: message.text, complete: !!message.complete, truncated: !!message.truncated,
-        createdAt: message.createdAt || previous?.createdAt || now, capturedAt: now };
-      write(db, MESSAGES, messageKey, entry);
-      const thread = read(db, THREADS, key) || { id: message.threadId, connectionId, createdAt: entry.createdAt, messageCount: 0, userMessageCount: 0, result: null, note: "" };
-      thread.createdAt = thread.createdAt < entry.createdAt ? thread.createdAt : entry.createdAt;
-      thread.updatedAt = now;
-      if (!previous) { thread.messageCount++; if (entry.role === "user") thread.userMessageCount++; }
-      if (entry.role === "support" && (!thread.lastReplyAt || entry.createdAt >= thread.lastReplyAt)) {
-        thread.lastReply = entry.text.slice(0, 300); thread.lastReplyAt = entry.createdAt;
-      }
-      write(db, THREADS, key, thread);
+      if (message.kind === "snapshot") saveSnapshot(db, connectionId, message);
+      else saveMessage(db, connectionId, message);
     }
   });
 }
@@ -61,7 +108,7 @@ export async function getAppealHistory(connectionId, threadId) {
   const key = keyFor(connectionId, threadId), db = await getAdapter();
   const record = read(db, THREADS, key);
   if (!record) throw fail("申诉记录不存在。", 404);
-  const messages = rowsFor(db, MESSAGES, `${key}:`).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.capturedAt.localeCompare(b.capturedAt) || a.id.localeCompare(b.id));
+  const messages = threadMessages(db, key, record);
   return { ...record, messages };
 }
 

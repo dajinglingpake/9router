@@ -7,6 +7,7 @@ vi.mock("@/lib/auth/dashboardSession", () => ({ verifyDashboardAuthToken: async 
 const originalDataDir = process.env.DATA_DIR;
 let directory, history, db, listeners;
 const message = (extra = {}) => ({ id: "msg-one", threadId: "thread-one", role: "user", text: "请帮我检查账号", createdAt: "2026-10-20T01:00:00.000Z", complete: true, ...extra });
+const snapshot = (messages, extra = {}) => ({ kind: "snapshot", id: "snapshot_1", threadId: "thread-one", messages, full: true, startedAt: Date.now() + 100, ...extra });
 
 beforeEach(async () => {
   listeners = Object.fromEntries(["beforeExit", "exit", "SIGINT", "SIGTERM"].map(event => [event, new Set(process.rawListeners(event))]));
@@ -24,6 +25,48 @@ afterEach(() => {
 });
 
 describe("durable appeal history", () => {
+  it("reconciles regenerated history IDs, repairs legacy duplicates and preserves notes", async () => {
+    await history.saveAppealMessages("a", [message(), message({ id: "old-copy" }), message({ id: "reply", role: "support", text: "已转人工" }), message({ id: "reply-copy", role: "support", text: "已转人工" })]);
+    await history.updateAppealResult("a", "thread-one", { result: "follow_up", note: "等待邮件" });
+    const page = [message({ id: "regenerated-user" }), message({ id: "regenerated-reply", role: "support", text: "已转人工" })];
+    await history.saveAppealMessages("a", [snapshot(page)]);
+    await history.saveAppealMessages("a", [snapshot(page.map((m, i) => ({ ...m, id: `new-id-${i}`, createdAt: "2026-10-20T02:00:00Z" })))]);
+    const record = await history.getAppealHistory("a", "thread-one");
+    expect(record).toMatchObject({ messageCount: 2, userMessageCount: 1, result: "follow_up", note: "等待邮件" });
+    expect(record.messages.map(m => m.id)).toEqual(["msg-one", "reply"]);
+    expect((await history.listAppealHistory("a")).items[0].messageCount).toBe(2);
+    expect((await history.getAppealSummaries()).a.latest.messageCount).toBe(2);
+    // Repeated loads do not add rows. Original captured records remain recoverable.
+    expect(global._dbAdapter.instance.all("SELECT key FROM kv WHERE scope = 'accountAppealMessages'")).toHaveLength(4);
+  });
+
+  it("preserves intentional repetitions, conversation order and separate accounts", async () => {
+    const page = [message({ id: "first", text: "谢谢" }), message({ id: "reply", role: "support", text: "请稍等" }), message({ id: "second", text: "谢谢" })];
+    await history.saveAppealMessages("a", [snapshot(page)]);
+    await history.saveAppealMessages("a", [snapshot(page.map(m => ({ ...m, id: `changed-${m.id}` })))]);
+    await history.saveAppealMessages("b", [snapshot([message({ id: "other" })])]);
+    const record = await history.getAppealHistory("a", "thread-one");
+    expect(record).toMatchObject({ messageCount: 3, userMessageCount: 2 });
+    expect(record.messages.map(m => m.text)).toEqual(["谢谢", "请稍等", "谢谢"]);
+    expect((await history.getAppealHistory("b", "thread-one")).messageCount).toBe(1);
+  });
+
+  it("does not lose concurrent live messages, partial history or newer snapshots", async () => {
+    await history.saveAppealMessages("a", [message(), message({ id: "new-live", text: "还有一个问题" })]);
+    await history.saveAppealMessages("a", [snapshot([message({ id: "fresh-id" })], { startedAt: Date.now() - 1000 })]);
+    expect((await history.getAppealHistory("a", "thread-one")).messageCount).toBe(2);
+    await history.saveAppealMessages("a", [snapshot([message()], { full: false })]);
+    expect((await history.getAppealHistory("a", "thread-one")).messageCount).toBe(2);
+    await history.saveAppealMessages("a", [snapshot([], { startedAt: 1 })]);
+    expect((await history.getAppealHistory("a", "thread-one")).messageCount).toBe(2);
+  });
+
+  it("does not collapse identical messages from different partial history pages", async () => {
+    await history.saveAppealMessages("a", [snapshot([message()], { full: false })]);
+    await history.saveAppealMessages("a", [snapshot([message({ id: "earlier-repeat" })], { full: false })]);
+    expect((await history.getAppealHistory("a", "thread-one")).userMessageCount).toBe(2);
+  });
+
   it("isolates accounts, deduplicates messages and preserves results when new replies arrive", async () => {
     await history.saveAppealMessages("account-one", [message(), message()]);
     await history.updateAppealResult("account-one", "thread-one", { result: "follow_up", note: "等待邮件" });
@@ -49,6 +92,7 @@ describe("durable appeal history", () => {
   it("retains messages and notes across a database restart without storing credential fields", async () => {
     await history.saveAppealMessages("a", [message({ accessToken: "private", headers: { Authorization: "private" } })]);
     await history.updateAppealResult("a", "thread-one", { result: "resolved", note: "恢复正常" });
+    await history.saveAppealMessages("a", [snapshot([message({ id: "regenerated" })])]);
     expect(JSON.stringify(global._dbAdapter.instance.all("SELECT value FROM kv WHERE scope IN ('accountAppealThreads', 'accountAppealMessages')"))).not.toContain("private");
     global._dbAdapter.instance.close(); delete global._dbAdapter; vi.resetModules();
     db = await import("@/lib/db/index.js"); await db.initDb();

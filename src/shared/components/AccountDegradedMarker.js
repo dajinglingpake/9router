@@ -63,7 +63,7 @@ export default function AccountDegradedMarker({ connection, disabled = false, on
 
   return (
     <>
-      <div className="group/quality mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div translate="no" className="notranslate group/quality mt-1 flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1">
         <button
           ref={triggerRef}
           type="button"
@@ -81,7 +81,7 @@ export default function AccountDegradedMarker({ connection, disabled = false, on
           <span aria-hidden="true" className={`shrink-0 material-symbols-outlined text-[16px] ${saving ? "animate-spin" : ""}`}>
             {saving ? "progress_activity" : icons[status] || "label"}
           </span>
-          <span className="min-w-0 break-all text-left font-semibold">{qualityLabel || "标记账号"}</span>
+          <span className="min-w-0 whitespace-pre-wrap break-words text-left font-semibold [overflow-wrap:anywhere]">{qualityLabel || "标记账号"}</span>
           <span aria-hidden="true" className="shrink-0 material-symbols-outlined text-[16px]">edit</span>
         </button>
         {status && <p className="text-xs text-text-muted">
@@ -99,7 +99,7 @@ export default function AccountDegradedMarker({ connection, disabled = false, on
         {error && !editing && <p role="alert" className="w-full text-xs text-red-600 dark:text-red-400">{error}</p>}
       </div>
       {editing && createPortal(
-        <Modal isOpen onClose={closeEditor} title="编辑账号标记" showTrafficLights={false} closeOnOverlay={!saving}>
+        <Modal isOpen onClose={closeEditor} title="编辑账号标记" showTrafficLights={false} blurBackdrop={false} closeOnOverlay={!saving}>
           <form
             role="dialog"
             aria-modal="true"
@@ -161,7 +161,7 @@ export default function AccountDegradedMarker({ connection, disabled = false, on
             </fieldset>
             <div className="space-y-2">
               <p className="text-xs text-text-muted">标签预览</p>
-              <span data-account-quality-preview className="inline-flex max-w-full break-all rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-inset ring-black/15 dark:ring-white/25" style={{ backgroundColor: draftColor, color: getAccountQualityTextColor(draftColor) }}>{draft.trim() || "标签预览"}</span>
+              <span translate="no" data-account-quality-preview className="notranslate inline-block max-w-full whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-inset ring-black/15 [overflow-wrap:anywhere] dark:ring-white/25" style={{ backgroundColor: draftColor, color: getAccountQualityTextColor(draftColor) }}>{draft.trim() || "标签预览"}</span>
             </div>
             {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border-subtle pt-4">
