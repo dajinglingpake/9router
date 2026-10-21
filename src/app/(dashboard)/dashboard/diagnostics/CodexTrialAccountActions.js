@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import EditConnectionModal from "@/shared/components/EditConnectionModal";
 import Button from "@/shared/components/Button";
+import Toggle from "@/shared/components/Toggle";
 import AccountAppealLink from "@/shared/components/AccountAppealLink";
 import AccountAppealHistory from "@/shared/components/AccountAppealHistory";
 
@@ -52,13 +53,18 @@ export default function CodexTrialAccountActions({ account, onUpdated }) {
   }
 
   return <>
-    <div className="mt-2 flex flex-wrap items-center gap-x-2">
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+      <div className="flex items-center gap-2">
+        <Toggle size="sm" checked={account.enabled} disabled={loading || saving}
+          onChange={toggleActive} ariaLabel={`账号启用状态：${account.name}`} />
+        <span role="status" className={account.enabled ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>
+          {saving ? "正在保存…" : account.enabled ? "已启用" : "已禁用 · 仍可测试"}
+        </span>
+      </div>
+      <span className="truncate" title={account.id}>{account.email !== account.name ? account.email : account.id.slice(0, 8)}</span>
+    </div>
+    <div className="mt-2 flex flex-wrap items-center gap-2">
       <AccountDegradedMarker connection={account} onUpdated={onUpdated} />
-      <Button size="sm" variant="secondary" icon={account.enabled ? "pause" : "play_arrow"}
-        loading={saving} disabled={loading} onClick={toggleActive}
-        aria-label={`${account.enabled ? "禁用" : "启用"}账号：${account.name}`}>
-        {account.enabled ? "禁用账号" : "启用账号"}
-      </Button>
       <Button size="sm" variant="ghost" icon="edit" loading={loading} disabled={saving} onClick={edit}
         aria-label={`编辑账号：${account.name}`}>编辑账号</Button>
       {account.provider === "codex" && <AccountAppealLink account={account} />}

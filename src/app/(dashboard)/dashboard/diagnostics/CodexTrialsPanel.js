@@ -44,10 +44,6 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
         <h2 className="truncate text-sm font-semibold" title={account.name}>{account.name}</h2>
         <p className="mt-1 text-xs font-medium text-text-muted">{account.providerName}</p>
         {result && <p className="mt-1 break-all text-sm font-medium text-primary">{result.model} · {effortLabels[result.effort] || result.effort || "模型默认"}</p>}
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-          <span className={account.enabled ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>{account.enabled ? "已启用" : "已禁用 · 仍可测试"}</span>
-          <span className="truncate" title={account.id}>{account.email !== account.name ? account.email : account.id.slice(0, 8)}</span>
-        </div>
         <CodexTrialAccountActions account={account} onUpdated={onUpdated} />
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">
