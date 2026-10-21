@@ -18,6 +18,7 @@ async function requestJson(url, options) {
 export default function CodexTrialAccountActions({ account, onUpdated }) {
   const [connection, setConnection] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const url = `/api/providers/${encodeURIComponent(account.id)}`;
 
@@ -37,10 +38,28 @@ export default function CodexTrialAccountActions({ account, onUpdated }) {
     onUpdated();
   }
 
+  async function toggleActive() {
+    if (saving) return;
+    setSaving(true); setError("");
+    try {
+      await requestJson(url, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !account.enabled }),
+      });
+      await onUpdated();
+    } catch (cause) { setError(cause.message); }
+    finally { setSaving(false); }
+  }
+
   return <>
     <div className="mt-2 flex flex-wrap items-center gap-x-2">
       <AccountDegradedMarker connection={account} onUpdated={onUpdated} />
-      <Button size="sm" variant="ghost" icon="edit" loading={loading} onClick={edit}
+      <Button size="sm" variant="secondary" icon={account.enabled ? "pause" : "play_arrow"}
+        loading={saving} disabled={loading} onClick={toggleActive}
+        aria-label={`${account.enabled ? "禁用" : "启用"}账号：${account.name}`}>
+        {account.enabled ? "禁用账号" : "启用账号"}
+      </Button>
+      <Button size="sm" variant="ghost" icon="edit" loading={loading} disabled={saving} onClick={edit}
         aria-label={`编辑账号：${account.name}`}>编辑账号</Button>
       {account.provider === "codex" && <AccountAppealLink account={account} />}
     </div>
