@@ -44,11 +44,12 @@ export async function handleTrialRequest(session, request, handleRequest) {
   async function pump() {
     let reader;
     try {
-      // Comments keep the CLI's stream alive without creating model output or replaying tool calls.
+      // The CLI ignores comment-only heartbeats for its idle timeout. A ping event resets it
+      // without creating model output or replaying tool calls.
       heartbeat = setInterval(() => {
         if (heartbeatPending) return;
         heartbeatPending = true;
-        writer.write(encode(": account trial waiting\n\n"))
+        writer.write(encode('event: ping\ndata: {"type":"ping"}\n\n'))
           .catch(() => controller.abort()).finally(() => { heartbeatPending = false; });
       }, 10_000);
       let waitMs;

@@ -61,7 +61,7 @@ describe("trial overload recovery", () => {
     const reader = response.body.getReader();
     const heartbeat = reader.read();
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(new TextDecoder().decode((await heartbeat).value)).toContain(": account trial waiting");
+    expect(new TextDecoder().decode((await heartbeat).value)).toContain('event: ping\ndata: {"type":"ping"}');
     controller.abort();
     await expect(reader.read()).rejects.toBeDefined();
     await vi.advanceTimersByTimeAsync(3_600_000);
