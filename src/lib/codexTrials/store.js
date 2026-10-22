@@ -79,6 +79,8 @@ export async function listTrials({ discoverModels = false } = {}) {
           const { html, log, output, prompt, ...summary } = record;
           const session = state.batch?.sessions.get(record.id);
           return { ...summary, hasHtml: !!html, outputTail: active(record) ? output?.slice(-12000) || "" : undefined,
+            cooldownUntil: session?.cooldown?.until || null,
+            cooldownRetries: session?.cooldownRetries || record.cooldownRetries || 0,
             requests: session?.requests ?? record.requests, routerErrors: session?.errors ?? record.routerErrors };
         });
       return {
@@ -141,7 +143,7 @@ export async function startTrials(input) {
         cliVersion: state.cli.version, queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
         attempts: (previous?.attempts || 0) + 1, failures: previous?.failures || 0,
         html: null, htmlLines: 0, log: "", output: "", activity: "等待测试位置", lastOutputAt: null, error: null, usage: null, elapsedMs: null, tokensPerSecond: null,
-        routerErrors: 0, routerStatsVersion: 3, cliErrors: 0, requests: 0, reportedModels: [],
+        routerErrors: 0, routerStatsVersion: 3, cliErrors: 0, requests: 0, reportedModels: [], cooldownRetries: 0,
       });
       batch.queue.push(id);
     }
@@ -200,6 +202,7 @@ async function runTrial(batch, id) {
       status, error: result.error || null, finishedAt: new Date().toISOString(), tokensPerSecond: rate?.totalTps ?? null,
       failures: record.failures + (status === "error" ? 1 : 0),
       routerErrors: session.session.errors, requests: session.session.requests, reportedModels: [...session.session.models],
+      cooldownRetries: session.session.cooldownRetries || 0,
     });
   } catch (error) {
     save({ ...state.records.get(id), html: null, status: "error", error: error.message, failures: record.failures + 1, finishedAt: new Date().toISOString() });

@@ -36,7 +36,9 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
   const active = result => ["queued", "running"].includes(result?.status);
   const selectedModels = models.filter(item => item.provider === account.provider);
   const selectedActive = account.results?.some(result => active(result) && selectedModels.some(item => item.model === result.model));
-  const [status, color] = states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
+  const cooling = result?.status === "running" && result.cooldownUntil > now;
+  const [status, color] = cooling ? ["冷却中", "text-amber-700 bg-amber-500/10 dark:text-amber-300"]
+    : states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
   const duration = result?.status === "running" && result.startedAt ? Math.max(0, now - new Date(result.startedAt).getTime()) : result?.elapsedMs;
   return <article className={`${panel} min-w-0 overflow-hidden`}>
     <div className="flex items-start justify-between gap-3 p-4">
@@ -51,6 +53,9 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
         {degraded && <span data-trial-degradation className="rounded-md bg-red-500/10 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-300" title="任意一项低于本页自定规则的阈值">降智表现 · 规则命中</span>}
       </div>
     </div>
+    {cooling && <p role="status" className="border-t border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
+      上游过载，{Math.max(1, Math.ceil((result.cooldownUntil - now) / 1000))} 秒后自动重试当前账号和模型。已等待冷却 {result.cooldownRetries} 次，可随时停止测试。
+    </p>}
     {result?.hasHtml && result.status !== "success" && <p className="border-t border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
       {result.error || "本次执行未完成。"} 已保留当前作品，可预览或下载，内容可能尚未完成。
     </p>}

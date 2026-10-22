@@ -14,7 +14,8 @@ import { getRequestId, rejectChatRequest, resolveRequestProviderScope } from "./
 import { handleSingleModelChat } from "./modelRouting.js";
 import { getModelInfo } from "../services/model.js";
 import { extractClientApiKey as extractApiKey, getKeyAccessContext, enforceKeyAccess } from "../services/keyAccess.js";
-import { getTrialSession, isTrialToken, trackTrialResponse } from "./codexTrialSession.js";
+import { getTrialSession, isTrialToken } from "./codexTrialSession.js";
+import { handleTrialRequest } from "./codexTrialRetry.js";
 import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
 
 /**
@@ -93,8 +94,10 @@ export async function handleChat(request, clientRawRequest = null) {
       releaseAdmission();
     }
 
-    const response = await handleChatInternal(request, requestContext);
-    return trial ? trackTrialResponse(trial, response) : response;
+    if (trial) return handleTrialRequest(trial, request, attempt => handleChatInternal(attempt, {
+      ...requestContext, requestId: getRequestId(attempt), startedAt: Date.now(),
+    }));
+    return await handleChatInternal(request, requestContext);
   } catch (error) {
     throw error;
   } finally {

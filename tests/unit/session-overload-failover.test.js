@@ -124,6 +124,41 @@ describe("credits policy during account routing", () => {
 });
 
 describe("stable account bindings during overload", () => {
+  it("continues a trial request after cooldown without changing its account, model or conversation", async () => {
+    const connection = await account("trial-account");
+    await db.updateProviderConnection(connection.id, { isActive: false, accountCooldownMinMs: 1000, accountCooldownMaxMs: 1000 });
+    await account("other-account");
+    const { createTrialSession } = await import("@/sse/local/codexTrialSession.js");
+    const { handleChat } = await import("@/sse/local/chat.js");
+    const job = createTrialSession(connection.id, MODEL, "xhigh");
+    const input = [{ type: "function_call_output", call_id: "existing-work", output: "index.html already written; continue the animation" }];
+    upstream.mockResolvedValueOnce(overloaded()).mockImplementationOnce(async args => {
+      await args.onRequestSuccess();
+      return { success: true, response: new Response('event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","model":"gpt-6.1-sol"}}\n\n', {
+        headers: { "Content-Type": "text/event-stream" },
+      }) };
+    });
+    try {
+      const response = await handleChat(new Request("http://localhost/v1/responses", {
+        method: "POST", headers: { Authorization: `Bearer ${job.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: MODEL, input, stream: true }),
+      }));
+      expect(job.session.cooldown.until).toBeGreaterThan(Date.now());
+      expect(loads.getAccountActiveCount(connection.id)).toBe(0);
+      expect(await response.text()).toContain("response.completed");
+      expect(upstream).toHaveBeenCalledTimes(2);
+      for (const [args] of upstream.mock.calls) {
+        expect(args.connectionId).toBe(connection.id);
+        expect(args.modelInfo).toEqual({ provider: "codex", model: MODEL });
+        expect(args.body.input).toEqual(input);
+        expect(args.body.reasoning.effort).toBe("xhigh");
+      }
+      expect(job.session).toMatchObject({ requests: 2, errors: 1, cooldownRetries: 1, cooldown: null });
+      expect(loads.getAccountActiveCount(connection.id)).toBe(0);
+      expect((await db.getProviderConnectionById(connection.id)).isActive).toBe(false);
+    } finally { job.revoke(); }
+  });
+
   it.each(["inherit", "quota-priority", "fill-first", "least-loaded", "round-robin"])("balances new sessions but preserves busy bindings with %s", async accountStrategy => {
     const busy = await account("busy-high-quota", 0), idle = await account("idle-overload-history", 0);
     await db.updateSettings({ localCodexRouting: { accountStrategy, quotaFailover: false } });
