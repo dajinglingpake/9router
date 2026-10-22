@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), settings: vi.fn(), updateSettings: vi.fn() }));
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: mocks.fetch }));
 vi.mock("@/lib/providerUsage.js", () => ({ loadConnectionUsage: vi.fn() }));
+vi.mock("@/lib/codexModels", () => ({ resolveCodexCatalog: async () => ({ models: [{ id: "gpt-6-luna", name: "Luna" }], accounts: [] }) }));
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.settings, updateSettings: mocks.updateSettings,
+  getProviderConnections: async () => [],
   getProviderConnectionById: vi.fn(), updateProviderConnection: vi.fn(),
 }));
 

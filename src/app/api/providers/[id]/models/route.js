@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
-import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
+import { refreshGoogleToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
-import { CODEX_CLI_VERSION } from "open-sse/providers/registry/codex.js";
+import { resolveCodexModels } from "@/lib/codexModels";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
@@ -19,8 +19,6 @@ import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
-// Keep the live catalog's version in sync with the Codex request identity.
-const CODEX_MODELS_URL = `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`;
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -50,26 +48,6 @@ const parseGeminiCliModels = (data) => {
   return [];
 };
 
-const appendCodexReviewModels = (models) => models.flatMap((model) => {
-  const id = model?.id || model?.slug || model?.model || model?.name;
-  if (!id) return [];
-  const name = model?.display_name || model?.displayName || model?.name || id;
-  const normalized = { ...model, id, name };
-  const isChatModel = (model?.type || "llm") !== "image" && !id.toLowerCase().includes("embed");
-  if (!isChatModel || id.endsWith("-review")) return [normalized];
-  return [
-    normalized,
-    {
-      ...normalized,
-      id: `${id}-review`,
-      name: `${name} Review`,
-      upstreamModelId: id,
-      quotaFamily: "review",
-    },
-  ];
-});
-
-const parseCodexModels = (data) => appendCodexReviewModels(parseOpenAIStyleModels(data));
 
 const createOpenAIModelsConfig = (url) => ({
   url,
@@ -215,20 +193,7 @@ const PROVIDER_MODELS_CONFIG = {
     parseResponse: (data) => data.models || []
   },
   codex: {
-    customResolver: buildOAuthResolver({
-      refreshFn: (conn) => refreshCodexToken(conn.refreshToken),
-      fetchFn: (token) => fetch(CODEX_MODELS_URL, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "originator": "codex_cli_rs"
-        }
-      }),
-      parseFn: parseCodexModels,
-      errorLabel: "Failed to fetch Codex models"
-    })
+    customResolver: resolveCodexModels,
   },
   antigravity: {
     url: "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:models",

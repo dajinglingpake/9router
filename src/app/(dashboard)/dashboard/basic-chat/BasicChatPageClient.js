@@ -135,7 +135,7 @@ function normalizeLiveModel(model, connection) {
 
   let requestModel = rawId;
   const isCompatible = isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider);
-  if (isCompatible && !rawId.includes("/")) {
+  if ((isCompatible || connection.provider === "codex") && !rawId.includes("/")) {
     requestModel = `${connection.provider}/${rawId}`;
   }
 
@@ -258,7 +258,7 @@ export default function BasicChatPageClient() {
           group.providerType = group.providerType || providerType;
           group.connections.push(connection);
 
-          const staticModels = getModelsByProviderId(providerId)
+          const staticModels = (providerId === "codex" ? [] : getModelsByProviderId(providerId))
             .map((model) => normalizeStaticModel(model, connection))
             .filter(Boolean);
           group.models.push(...staticModels);
@@ -269,13 +269,16 @@ export default function BasicChatPageClient() {
             try {
               const response = await fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" });
               const data = await response.json().catch(() => ({}));
-              if (!response.ok) return { connection, models: [] };
+              if (!response.ok) throw new Error("模型列表查询失败");
+              const enabled = connection.providerSpecificData?.enabledModels;
               const models = parseProviderModelsPayload(data)
+                .filter(model => connection.provider !== "codex" || !Array.isArray(enabled) || !enabled.length
+                  || enabled.some(id => [model.id, `cx/${model.id}`, `codex/${model.id}`].includes(id)))
                 .map((model) => normalizeLiveModel(model, connection))
                 .filter(Boolean);
-              return { connection, models };
+              return { connection, models, warning: data.warning };
             } catch {
-              return { connection, models: [] };
+              return { connection, models: [], warning: "模型列表查询失败，请稍后刷新。" };
             }
           })
         );
@@ -299,6 +302,9 @@ export default function BasicChatPageClient() {
           setProviderGroups(normalized);
           if (normalized.length === 0) {
             setLoadError("Providers connected but no models available.");
+          } else {
+            setLoadError(liveResults.filter(result => result.connection.provider === "codex" && result.warning)
+              .map(result => `${getProviderLabel(result.connection)}：${result.warning}`).join("；"));
           }
         }
       } catch (error) {

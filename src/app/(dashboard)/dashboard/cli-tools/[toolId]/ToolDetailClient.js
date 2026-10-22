@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 import {
   ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard,
   HermesToolCard, DefaultToolCard, OpenCodeToolCard, CoworkToolCard,
@@ -25,6 +26,7 @@ export default function ToolDetailClient({ toolId, machineId }) {
   const [tailscaleEnabled, setTailscaleEnabled] = useState(false);
   const [tailscaleUrl, setTailscaleUrl] = useState("");
   const [apiKeys, setApiKeys] = useState([]);
+  const codexCatalog = useCodexModels(connections, { respectEnabledModels: true });
 
   useEffect(() => {
     let mounted = true;
@@ -73,7 +75,8 @@ export default function ToolDetailClient({ toolId, machineId }) {
     const seenModels = new Set();
     activeProviders.forEach(conn => {
       const alias = PROVIDER_ID_TO_ALIAS[conn.provider] || conn.provider;
-      const providerModels = getModelsByProviderId(conn.provider);
+      const providerModels = conn.provider === "codex"
+        ? codexCatalog.models.filter(model => model.connectionIds.includes(conn.id)) : getModelsByProviderId(conn.provider);
       providerModels.forEach(m => {
         const modelValue = `${alias}/${m.id}`;
         if (!seenModels.has(modelValue)) {
@@ -88,7 +91,7 @@ export default function ToolDetailClient({ toolId, machineId }) {
       // request path uses the connection's own model config, but `hasActiveProviders`
       // below would flip to false and disable the Apply button. Fall back to the
       // connection's own models so these providers are usable from CLI tool pages.
-      if (providerModels.length === 0) {
+      if (conn.provider !== "codex" && providerModels.length === 0) {
         const prefix = conn.providerSpecificData?.prefix || alias;
         const fallbackModels = [];
         if (conn.defaultModel) fallbackModels.push({ id: conn.defaultModel, name: conn.defaultModel });

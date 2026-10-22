@@ -8,6 +8,7 @@ import { rememberEndpoint } from "./cliEndpointPresets";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 
 export default function GenericCliToolCard({
   tool,
@@ -45,6 +46,7 @@ export default function GenericCliToolCard({
   const [modalOpen, setModalOpen] = useState(false);
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const codexCatalog = useCodexModels(activeProviders, { enabled: isExpanded && tool.id === "pi", respectEnabledModels: true });
 
   const endpointUrl = `/api/cli-tools/${tool.id}-settings`;
 
@@ -202,8 +204,10 @@ export default function GenericCliToolCard({
   const handleAddAllActiveModels = () => {
     const allModels = [];
     activeProviders.forEach((conn) => {
+      if (conn.isActive === false) return;
       const alias = PROVIDER_ID_TO_ALIAS[conn.provider] || conn.provider;
-      const providerModels = getModelsByProviderId(conn.provider);
+      const providerModels = conn.provider === "codex"
+        ? codexCatalog.models.filter(model => model.connectionIds.includes(conn.id)) : getModelsByProviderId(conn.provider);
       providerModels.forEach((m) => {
         const val = `${alias}/${m.id}`;
         if (!allModels.includes(val)) allModels.push(val);
@@ -511,6 +515,7 @@ export default function GenericCliToolCard({
                             size="sm"
                             variant="ghost"
                             onClick={handleAddAllActiveModels}
+                            disabled={codexCatalog.loading}
                             className="text-xs text-primary hover:text-primary-hover"
                           >
                             + Add All Active Models
@@ -526,6 +531,7 @@ export default function GenericCliToolCard({
                           </button>
                         )}
                       </div>
+                      {codexCatalog.warning && <p role="status" className="text-xs text-red-500">{codexCatalog.warning}</p>}
                     </div>
                   </div>
                 )}

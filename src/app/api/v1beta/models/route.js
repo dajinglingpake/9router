@@ -1,4 +1,9 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
+import { getProviderConnections } from "@/lib/localDb";
+import { resolveCodexCatalog } from "@/lib/codexModels";
+import { filterAccountPoolForRequest } from "@/sse/services/accountApiKeyAccess.js";
+
+export const dynamic = "force-dynamic";
 
 /**
  * Handle CORS preflight
@@ -17,7 +22,7 @@ export async function OPTIONS() {
  * GET /v1beta/models - Gemini compatible models list
  * Returns models in Gemini API format
  */
-export async function GET() {
+export async function GET(request) {
   try {
     const models = [];
     const seen = new Set();
@@ -35,7 +40,12 @@ export async function GET() {
       });
     }
     
-    for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
+    const connections = (await getProviderConnections({ provider: "codex", isActive: true }))
+      .filter(connection => connection.provider === "codex" && connection.isActive !== false);
+    const codex = await resolveCodexCatalog(await filterAccountPoolForRequest(connections, request), { respectEnabledModels: true });
+    const catalog = { ...PROVIDER_MODELS, cx: codex.models };
+    delete catalog.codex;
+    for (const [provider, providerModels] of Object.entries(catalog)) {
       for (const model of providerModels) {
         addModel({
           name: `models/${provider}/${model.id}`,

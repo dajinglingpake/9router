@@ -13,6 +13,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
@@ -161,7 +162,8 @@ export default function ProviderDetailPage() {
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
-  const models = (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn") && liveModels.length > 0
+  const codexCatalog = useCodexModels(connections, { enabled: providerId === "codex" });
+  const models = providerId === "codex" ? codexCatalog.models : (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn") && liveModels.length > 0
     ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
@@ -1204,7 +1206,7 @@ export default function ProviderDetailPage() {
     const disabledSet = new Set(disabledModelIds);
     const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
     const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
-    const customModelRows = getProviderCustomModelRows({
+    const customModelRows = providerId === "codex" ? [] : getProviderCustomModelRows({
       customModels,
       modelAliases,
       providerAlias: providerStorageAlias,
@@ -1269,13 +1271,13 @@ export default function ProviderDetailPage() {
         })}
 
         {/* Add model button — inline, same style as model chips */}
-        <button
+        {providerId !== "codex" && <button
           onClick={() => setShowAddCustomModel(true)}
           className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2 text-xs text-primary transition-colors hover:border-primary hover:bg-primary/5 sm:w-auto"
         >
           <span className="material-symbols-outlined text-sm">add</span>
           Add Model
-        </button>
+        </button>}
 
         {/* Import Qoder models button — only show for qoder/qoder-cn provider */}
         {(providerId === "qoder" || providerId === "qoder-cn") && connections.some((conn) => conn.isActive !== false) && (
@@ -1856,6 +1858,8 @@ export default function ProviderDetailPage() {
             })()}
           </div>
         )}
+        {providerId === "codex" && <p className="text-xs text-text-muted mb-3">{codexCatalog.loading ? "正在按账号获取可用模型…" : "以下为启用账号实际可用模型的并集。"}</p>}
+        {providerId === "codex" && codexCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{codexCatalog.warning}</p>}
         {(providerId === "zed" || providerId === "codebuddy-cn") && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}

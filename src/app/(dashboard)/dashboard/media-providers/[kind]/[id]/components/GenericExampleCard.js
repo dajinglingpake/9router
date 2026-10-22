@@ -5,6 +5,7 @@ import { Card } from "@/shared/components";
 import { MEDIA_PROVIDER_KINDS, getProviderAlias, resolveProviderId } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 import { Row, KIND_EXAMPLE_CONFIG } from "./exampleShared";
 
 const CLOUDFLARE_TEST_IMAGE_URL = "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog.png";
@@ -41,14 +42,20 @@ export function GenericExampleCard({ providerId, kind }) {
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const exConfig = KIND_EXAMPLE_CONFIG[kind];
   const safeExConfig = exConfig || {};
+  const [connections, setConnections] = useState([]);
+  const [pinnedConnectionId, setPinnedConnectionId] = useState("");
+  const codexCatalog = useCodexModels(connections.filter(connection => !pinnedConnectionId || connection.id === pinnedConnectionId), {
+    enabled: providerId === "codex", respectEnabledModels: true,
+  });
 
   // Get models for this kind (e.g., type="image")
-  const kindModels = getModelsByProviderId(providerId).filter((m) => getModelKind(m) === kind);
+  const kindModels = (providerId === "codex" ? codexCatalog.models : getModelsByProviderId(providerId)).filter((m) => getModelKind(m) === kind);
   // Kinds that need a model identifier in the request (image/video/music/systemone)
   const KIND_NEEDS_MODEL = new Set(["image", "video", "music", "imageToText", "systemone"]);
   const needsModel = KIND_NEEDS_MODEL.has(kind);
-  const allowManualModel = needsModel && kindModels.length === 0;
-  const [selectedModel, setSelectedModel] = useState(kindModels[0]?.id ?? "");
+  const allowManualModel = providerId !== "codex" && needsModel && kindModels.length === 0;
+  const [modelChoice, setSelectedModel] = useState(kindModels[0]?.id ?? "");
+  const selectedModel = providerId === "codex" ? kindModels.find(model => model.id === modelChoice)?.id || kindModels[0]?.id || "" : modelChoice;
   const selectedModelObj = kindModels.find((m) => m.id === selectedModel);
   const supportsEdit = !!selectedModelObj?.capabilities?.includes("edit");
   const supportsMask = !!selectedModelObj?.capabilities?.includes("mask");
@@ -71,8 +78,6 @@ export function GenericExampleCard({ providerId, kind }) {
   const [binaryImageUrl, setBinaryImageUrl] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
-  const [connections, setConnections] = useState([]);
-  const [pinnedConnectionId, setPinnedConnectionId] = useState("");
   const { copied: copiedCurl, copy: copyCurl } = useCopyToClipboard();
   const { copied: copiedRes, copy: copyRes } = useCopyToClipboard();
 
@@ -87,7 +92,7 @@ export function GenericExampleCard({ providerId, kind }) {
       .then((d) => { if (d.publicUrl) setTunnelEndpoint(d.publicUrl); })
       .catch(() => {});
     // Load active connections of this provider for pinning
-    fetch("/api/providers/client")
+    fetch(providerId === "codex" ? "/api/providers" : "/api/providers/client")
       .then((r) => r.json())
       .then((d) => {
         const conns = (d.connections || []).filter((c) => c.provider === providerId && c.isActive !== false);
@@ -98,6 +103,9 @@ export function GenericExampleCard({ providerId, kind }) {
 
   // Safe to early-return now that all hooks are declared
   if (!kindConfig || !exConfig) return null;
+  if (providerId === "codex" && !kindModels.length) return <Card><p role="status" className="text-sm text-text-muted">
+    {codexCatalog.loading ? "正在按账号获取可用模型…" : codexCatalog.warning || "当前账号接口未提供此类可用模型。"}
+  </p></Card>;
 
   const endpoint = useTunnel ? tunnelEndpoint : localEndpoint;
   const apiPath = kindConfig.endpoint.path;

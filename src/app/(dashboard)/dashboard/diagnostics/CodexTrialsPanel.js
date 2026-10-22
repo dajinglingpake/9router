@@ -29,7 +29,7 @@ function Metric({ label, children, danger }) {
   return <div><dt className="text-[11px] text-text-muted">{label}</dt><dd className={`mt-1 text-base font-semibold tabular-nums ${danger ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>{children}</dd></div>;
 }
 
-function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, onInspect, onUpdated }) {
+function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, onInspect, onUpdated, canRetest }) {
   const result = account.result;
   const lowMetrics = getTrialDegradationMetrics(result);
   const degraded = lowMetrics.length > 0;
@@ -90,7 +90,7 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
       {result?.finishedAt && <p className="mt-1 text-[11px] text-text-muted">{new Date(result.finishedAt).toLocaleString("zh-CN")}</p>}
       {result && result.routerStatsVersion !== 3 && <p className="mt-1 text-[11px] text-text-muted">旧记录的中转错误计数需重新测试后更新。</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" disabled={busy || active(result)} icon="play_arrow" onClick={() => onRun(account, result)}>{result ? "重测此模型" : "测试此账号"}</Button>
+        <Button size="sm" variant="secondary" disabled={busy || active(result) || !canRetest} title={!canRetest ? "此账号当前未开放该模型" : undefined} icon="play_arrow" onClick={() => onRun(account, result)}>{result ? "重测此模型" : "测试此账号"}</Button>
         {result && account.firstResult && selectedModels.length > 0 && <Button size="sm" variant="ghost" disabled={busy || selectedActive} onClick={() => onRun(account)}>测试所选模型</Button>}
         {result?.hasHtml && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "preview")}>放大</Button>}
         {result && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "log")}>执行输出</Button>}
@@ -121,9 +121,9 @@ export default function CodexTrialsPanel() {
   const providers = data?.providers || [];
   const initialProvider = providers.find(item => item.id === "codex") || providers[0];
   const models = modelSelections || (initialProvider ? [{ provider: initialProvider.id, model: initialProvider.defaultModel,
-    effort: trialDefaultEffort(initialProvider.id, initialProvider.defaultModel) }] : []);
+    effort: trialDefaultEffort(initialProvider.id, initialProvider.defaultModel, initialProvider.models.find(item => item.id === initialProvider.defaultModel)?.efforts) }] : []);
   const validParallel = Number.isInteger(parallel) && parallel >= 1 && parallel <= CODEX_TRIAL_MAX_PARALLEL;
-  const busy = submitting || data?.stopping || !data?.cli?.available || !validParallel;
+  const busy = submitting || data?.stopping || !data?.cli?.available || !validParallel || !models.length || models.some(item => !item.model);
   const load = useCallback(async (signal, refreshModels = false) => {
     const current = ++sequence.current;
     try {
@@ -195,11 +195,13 @@ export default function CodexTrialsPanel() {
   }
   const run = (account, result) => submit({ prompt, parallel: data?.parallel ?? parallel,
     models: result ? [{ provider: account.provider, model: result.model, effort: result.effort }]
-      : models.filter(item => !account || item.provider === account.provider), ...(account ? { ids: [account.id] } : { all: true }) });
+      : models.filter(item => !account || supportsModel(account, item)), ...(account ? { ids: [account.id] } : { all: true }) });
   const inspect = (account, mode) => { setDetail(null); setInspector({ account, mode }); };
   const accounts = data?.accounts || [];
-  const selectedAccounts = accounts.filter(account => models.some(item => item.provider === account.provider));
-  const jobCount = models.reduce((count, item) => count + accounts.filter(account => account.provider === item.provider).length, 0);
+  const supportsModel = (account, item) => item.provider === account.provider && (item.provider !== "codex"
+    || providers.find(provider => provider.id === "codex")?.models.find(model => model.id === item.model)?.connectionIds?.includes(account.id));
+  const selectedAccounts = accounts.filter(account => models.some(item => supportsModel(account, item)));
+  const jobCount = models.reduce((count, item) => count + accounts.filter(account => supportsModel(account, item)).length, 0);
   const cards = accounts.filter(account => selectedAccounts.includes(account) || account.results?.length).flatMap(account => (account.results?.length ? account.results : [account.result || null])
     .map((result, index) => ({ ...account, result, firstResult: index === 0 })));
   const success = cards.filter(account => account.result?.status === "success").length;
@@ -245,7 +247,7 @@ export default function CodexTrialsPanel() {
       <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
       <p>速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。</p>
     </div>
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} deleting={submitting} models={models} now={now} onRun={run} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy || !models.some(item => supportsModel(account, item))} deleting={submitting} models={models.filter(item => supportsModel(account, item))} canRetest={!account.result || supportsModel(account, { provider: account.provider, model: account.result.model })} now={now} onRun={run} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加可测试的供应商账号。"}</div>}
     {["errors", "requests"].includes(inspector?.mode) && <CodexTrialErrors key={`${inspector.account.result.runId}:${inspector.mode}`}
       initialIssue={inspector.mode === "requests" ? "all" : "error"}

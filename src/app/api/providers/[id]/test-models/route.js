@@ -4,6 +4,7 @@ import { getProviderModels, PROVIDER_ID_TO_ALIAS } from "open-sse/config/provide
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { pingModelByKind } from "@/app/api/models/test/ping";
+import { resolveCodexModels } from "@/lib/codexModels";
 
 /**
  * POST /api/providers/[id]/test-models
@@ -22,7 +23,7 @@ export async function POST(request, { params }) {
     const isCompatible = isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
     const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
 
-    let models = getProviderModels(alias);
+    let models = providerId === "codex" ? (await resolveCodexModels(connection)).models : getProviderModels(alias);
 
     const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
 

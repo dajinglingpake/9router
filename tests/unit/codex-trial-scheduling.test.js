@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [] }));
+const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [], codexModels: null }));
 vi.mock("@/lib/dataDir", () => ({ get DATA_DIR() { return fixture.directory; } }));
 vi.mock("@/lib/localDb", () => ({
   getProviderConnections: async () => [
@@ -19,6 +19,10 @@ vi.mock("@/lib/codebuddyModels", () => ({
   resolveCodebuddyModels: vi.fn(async () => ({ models: fixture.codebuddyModels })),
 }));
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+vi.mock("@/lib/codexModels", () => ({ resolveCodexCatalog: vi.fn(async connections => ({
+  models: fixture.codexModels ?? ["gpt-6.1-sol", "gpt-5.6-terra"].map(id => ({ id, name: id, supportedEffortLevels: ["xhigh"],
+    connectionIds: connections.filter(connection => connection.provider === "codex").map(connection => connection.id) })), accounts: [],
+})) }));
 vi.mock("@/lib/accountAppeals/history", () => ({ getAppealSummaries: async () => ({}) }));
 vi.mock("@/sse/local/codexTrialSession", () => ({ createTrialSession: (id, model) => {
   const token = `${id}/${model}`;
@@ -43,6 +47,7 @@ beforeEach(async () => {
   fixture.directory = fs.mkdtempSync(path.join(os.tmpdir(), "9router-trial-queue-"));
   fixture.jobs = [];
   fixture.codebuddyModels = [];
+  fixture.codexModels = null;
   vi.mocked(resolveCodebuddyModels).mockClear();
   fixture.sessions.clear();
   delete globalThis.__ninerouterCodexTrials;
@@ -58,6 +63,19 @@ afterEach(async () => {
 });
 
 describe("Codex trial scheduling", () => {
+  it("starts trials only on accounts entitled to the selected live model", async () => {
+    fixture.codexModels = [{ id: "gpt-6.1-sol", supportedEffortLevels: ["xhigh"], connectionIds: ["account-0"] }];
+    const result = await store.startTrials(input({ ids: ["account-0", "account-1"] }));
+    expect(result.count).toBe(1);
+    expect(fixture.jobs.map(job => job.connectionId)).toEqual(["account-0"]);
+  });
+  it("rejects a model unavailable to the selected account before starting the CLI", async () => {
+    fixture.codexModels = [{ id: "gpt-6.1-sol", supportedEffortLevels: ["xhigh"], connectionIds: ["account-0"] }];
+    await expect(store.startTrials(input({ ids: ["account-1"] }))).rejects.toMatchObject({ status: 400 });
+    expect(fixture.jobs).toHaveLength(0);
+    fixture.codexModels = [];
+    await expect(store.startTrials(input({ ids: ["account-0"] }))).rejects.toMatchObject({ status: 400 });
+  });
   it("keeps a long-running trial alive beyond fifteen minutes until explicitly stopped", async () => {
     vi.useFakeTimers();
     // Make any native AbortSignal timeout observable under the fake clock.

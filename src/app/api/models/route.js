@@ -5,6 +5,7 @@ import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+import { resolveCodexCatalog } from "@/lib/codexModels";
 
 // GET /api/models - Get models with aliases
 export async function GET() {
@@ -12,14 +13,21 @@ export async function GET() {
     const modelAliases = await getModelAliases();
     const disabled = await getDisabledModels();
 
-    let catalog = AI_MODELS;
+    const codexAlias = getProviderAlias("codex");
+    const codexConnections = (await getProviderConnections({ provider: "codex", isActive: true }))
+      .filter(connection => connection.provider === "codex" && connection.isActive !== false);
+    const codex = await resolveCodexCatalog(codexConnections, { respectEnabledModels: true });
+    let catalog = [
+      ...AI_MODELS.filter(model => !["codex", codexAlias].includes(model.provider)),
+      ...codex.models.map(model => ({ provider: codexAlias, model: model.id, name: model.name, capabilities: model.capabilities })),
+    ];
     const connections = await getProviderConnections({ provider: "codebuddy-cn", isActive: true });
     if (connections.length) {
       const live = await resolveCodebuddyModels(connections[0]);
       if (live.models.length) {
         const providerAlias = getProviderAlias("codebuddy-cn");
         catalog = [
-          ...AI_MODELS.filter((model) => model.provider !== "codebuddy-cn" && model.provider !== providerAlias),
+          ...catalog.filter((model) => model.provider !== "codebuddy-cn" && model.provider !== providerAlias),
           ...live.models.map((model) => ({
             provider: providerAlias,
             model: model.id,
@@ -69,6 +77,7 @@ export async function GET() {
     const seenRouted = new Set(models.map((m) => m.routedModel));
     const customModels = (await getCustomModels()).filter((m) => {
       if (!m?.id || (m.kind || m.type || "llm") !== "llm") return false;
+      if (["codex", codexAlias].includes(m.providerAlias)) return false;
       if (seenRouted.has(`${m.providerAlias}/${m.id}`)) return false;
       return !seenFull.has(`${m.providerAlias}/${m.id}`);
     });

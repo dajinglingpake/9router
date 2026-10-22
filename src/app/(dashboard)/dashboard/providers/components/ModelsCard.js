@@ -6,6 +6,7 @@ import { Card, Button, Modal } from "@/shared/components";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getProviderAlias } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 
 // ── ModelRow ───────────────────────────────────────────────────
 export function ModelRow({ model, fullModel, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting }) {
@@ -116,6 +117,8 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   const [testingModelId, setTestingModelId] = useState(null);
   const [testError, setTestError] = useState("");
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
+  const [connections, setConnections] = useState([]);
+  const codexCatalog = useCodexModels(connections, { enabled: providerId === "codex" });
 
   const providerAlias = providerAliasOverride || getProviderAlias(providerId);
   const effectiveType = kindFilter || "llm";
@@ -130,8 +133,13 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
       const customData = await customRes.json();
       if (aliasRes.ok) setModelAliases(aliasData.aliases || {});
       if (customRes.ok) setCustomModels(customData.models || []);
+      if (providerId === "codex") {
+        const response = await fetch("/api/providers?provider=codex", { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok) setConnections(data.connections || []);
+      }
     } catch (e) { console.log("ModelsCard fetch error:", e); }
-  }, []);
+  }, [providerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -198,7 +206,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   };
 
   // Built-in models — filter by kindFilter if provided
-  const allBuiltIn = getModelsByProviderId(providerId);
+  const allBuiltIn = providerId === "codex" ? codexCatalog.models : getModelsByProviderId(providerId);
   const builtInModels = kindFilter
     ? allBuiltIn.filter((m) => {
         if (m.kinds) return m.kinds.includes(kindFilter);
@@ -207,7 +215,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
     : allBuiltIn;
 
   // Custom models for this provider + kind, dedupe vs built-in
-  const myCustomModels = customModels.filter(
+  const myCustomModels = providerId === "codex" ? [] : customModels.filter(
     (m) => m.providerAlias === providerAlias
       && getModelKind(m, "llm") === effectiveType
       && !builtInModels.some((b) => b.id === m.id)
@@ -222,6 +230,8 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
           <h2 className="text-lg font-semibold">Models{kindFilter ? ` — ${kindFilter.toUpperCase()}` : ""}</h2>
         </div>
         {testError && <p className="text-xs text-red-500 mb-3 break-words">{testError}</p>}
+        {providerId === "codex" && codexCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3">{codexCatalog.warning}</p>}
+        {providerId === "codex" && !builtInModels.length && <p className="text-xs text-text-muted mb-3">{codexCatalog.loading ? "正在获取账号可用模型…" : "当前账号未返回此类型的可用模型。"}</p>}
 
         <div className="flex flex-wrap gap-3">
           {displayModels.map((model) => {
@@ -261,13 +271,13 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
             />
           ))}
 
-          <button
+          {providerId !== "codex" && <button
             onClick={() => setShowAddCustomModel(true)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-black/15 dark:border-white/15 text-xs text-text-muted hover:text-primary hover:border-primary/40 transition-colors"
           >
             <span className="material-symbols-outlined text-sm">add</span>
             Add Model
-          </button>
+          </button>}
         </div>
       </Card>
 

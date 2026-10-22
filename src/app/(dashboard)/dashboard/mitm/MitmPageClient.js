@@ -3,11 +3,13 @@
 import { useState, useEffect } from "react";
 import { MITM_TOOLS } from "@/shared/constants/cliTools";
 import { getModelsByProviderId } from "@/shared/constants/models";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { MitmServerCard, MitmToolCard } from "@/app/(dashboard)/dashboard/cli-tools/components";
 
 export default function MitmPageClient() {
   const [connections, setConnections] = useState([]);
+  const codexCatalog = useCodexModels(connections, { respectEnabledModels: true });
   const [apiKeys, setApiKeys] = useState([]);
   const [modelAliases, setModelAliases] = useState({});
   const [cloudEnabled, setCloudEnabled] = useState(false);
@@ -66,7 +68,7 @@ export default function MitmPageClient() {
   const hasActiveProviders = () => {
     const active = getActiveProviders();
     return active.some(conn =>
-      getModelsByProviderId(conn.provider).length > 0 ||
+      (conn.provider === "codex" ? codexCatalog.models.some(model => model.connectionIds.includes(conn.id)) : getModelsByProviderId(conn.provider).length > 0) ||
       isOpenAICompatibleProvider(conn.provider) ||
       isAnthropicCompatibleProvider(conn.provider)
     );

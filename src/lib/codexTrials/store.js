@@ -106,7 +106,7 @@ export async function startTrials(input) {
     const catalog = providers.find(provider => provider.id === item.provider);
     if (!catalog) throw fail("请选择已配置账号的文本模型供应商。");
     if ((!catalog.allowCustomModel && !catalog.models.some(model => model.id === item.model))
-      || (item.effort && !getThinkingLevels(item.provider, item.model)?.includes(item.effort))) throw fail("请选择有效的文本模型和推理强度。");
+      || (item.effort && !(catalog.models.find(model => model.id === item.model)?.efforts || getThinkingLevels(item.provider, item.model))?.includes(item.effort))) throw fail("请选择有效的文本模型和推理强度。");
   }
   if (new Set(models.map(item => JSON.stringify([item.provider, item.model]))).size !== models.length) throw fail("请勿重复选择同一供应商的同一模型。");
   const parallel = Number(input.parallel ?? CODEX_TRIAL_PARALLEL);
@@ -115,6 +115,8 @@ export async function startTrials(input) {
   const ids = input.all === true ? eligible.map(connection => connection.id) : [...new Set(Array.isArray(input.ids) ? input.ids : [])];
   if (!ids.length || ids.some(id => !eligible.some(connection => connection.id === id))) throw fail("请选择属于所选供应商的有效账号。");
   const targets = models.flatMap(item => eligible.filter(connection => connection.provider === item.provider && ids.includes(connection.id))
+    .filter(connection => item.provider !== "codex" || providers.find(provider => provider.id === "codex")?.models
+      .find(model => model.id === item.model)?.connectionIds?.includes(connection.id))
     .map(connection => ({ ...item, connectionId: connection.id })));
   if (models.some(item => !targets.some(target => target.provider === item.provider))) throw fail("所选供应商没有对应的待测试账号。");
   state.cli = await getCliVersion();

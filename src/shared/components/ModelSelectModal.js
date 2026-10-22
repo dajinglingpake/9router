@@ -10,6 +10,7 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
 import { getDeactivatedProviderIds } from "@/shared/utils/connectionStatus";
+import { useCodexModels } from "@/shared/hooks/useCodexModels";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -193,6 +194,7 @@ export default function ModelSelectModal({
   const clineModels = useLiveProviderModels(isOpen, clineConnectionIds, "Cline");
   const clinepassModels = useLiveProviderModels(isOpen, clinepassConnectionIds, "ClinePass");
   const zedModels = useLiveProviderModels(isOpen, zedConnectionIds, "Zed");
+  const codexCatalog = useCodexModels(filteredActiveProviders, { enabled: isOpen, respectEnabledModels: true });
 
   const fetchCombos = async () => {
     try {
@@ -444,8 +446,8 @@ export default function ModelSelectModal({
           hasModels: mergedModels.length > 0,
         };
       } else {
-        const liveModels = providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : [];
-        const hardcodedModels = liveModels.length > 0
+        const liveModels = providerId === "codex" ? codexCatalog.models : providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : [];
+        const hardcodedModels = providerId === "codex" || liveModels.length > 0
           ? liveModels
           : getModelsByProviderId(providerId);
         const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
@@ -472,8 +474,8 @@ export default function ModelSelectModal({
 
         const merged = [
           ...hardcodedModels.map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) })),
-          ...customAliasModels,
-          ...customRegisteredModels,
+          ...(providerId === "codex" ? [] : customAliasModels),
+          ...(providerId === "codex" ? [] : customRegisteredModels),
         ];
         // Dedupe by value (alias may equal hardcoded id, causing React key collision)
         const seen = new Set();
@@ -485,7 +487,7 @@ export default function ModelSelectModal({
 
         // Provider-as-model fallback: providers that support the kind but have no hardcoded models
         // can still be picked (value = providerAlias). Skips embedding (always needs model).
-        if (allModels.length === 0 && kindFilter && ALLOW_PROVIDER_FALLBACK_KINDS.has(kindFilter)) {
+        if (providerId !== "codex" && allModels.length === 0 && kindFilter && ALLOW_PROVIDER_FALLBACK_KINDS.has(kindFilter)) {
           const supports = (providerInfo.serviceKinds || ["llm"]).includes(kindFilter);
           if (supports) {
             allModels = [{ id: providerId, name: providerInfo.name, value: alias }];
@@ -517,6 +519,7 @@ export default function ModelSelectModal({
 
     // Filter by enabledModels if explicitly configured on any active connection for this provider
     Object.entries(groups).forEach(([providerId, group]) => {
+      if (providerId === "codex") return;
       const providerConns = filteredActiveProviders.filter((p) => p.provider === providerId);
       const explicitEnabled = [];
       for (const conn of providerConns) {
@@ -538,7 +541,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, providerFilter]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, codexCatalog.models, providerFilter]);
 
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);
@@ -667,6 +670,8 @@ export default function ModelSelectModal({
       className="p-4!"
       footer={null}
     >
+      {codexCatalog.loading && <p role="status" className="mb-3 text-xs text-text-muted">正在按账号获取 Codex 可用模型…</p>}
+      {codexCatalog.warning && <p role="status" className="mb-3 text-xs text-red-500">{codexCatalog.warning}</p>}
       {/* Info bar */}
       <div className="flex items-center gap-2 mb-3 px-2.5 py-2 bg-primary/8 border border-primary/20 rounded-lg text-xs text-text-muted">
         <span className="material-symbols-outlined text-primary shrink-0" style={{ fontSize: "14px" }}>info</span>

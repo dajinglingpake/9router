@@ -24,6 +24,7 @@ import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+import { resolveCodexCatalog } from "@/lib/codexModels";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 
 // Qoder shares one live resolver across intl (qoder) and CN (qoder-cn); the
@@ -435,6 +436,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     // DB unavailable -> return static models, filtered by per-model kind
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
+      if (providerId === "codex") continue;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
@@ -454,6 +456,7 @@ export async function buildModelsList(kindFilter, options = {}) {
       if (!kindFilter.includes(LLM_KIND)) continue;
       const providerAlias = customModel.providerAlias;
       if (!providerAlias) continue;
+      if (["codex", "cx"].includes(providerAlias)) continue;
 
       const modelId = String(customModel.id).trim();
       if (!modelId) continue;
@@ -497,6 +500,13 @@ export async function buildModelsList(kindFilter, options = {}) {
             ),
           )
         : providerModels.map((model) => model.id);
+
+      if (providerId === "codex") {
+        const catalog = await resolveCodexCatalog(connections.filter(connection => connection.provider === "codex"), { respectEnabledModels: true });
+        rawModelIds = catalog.models.map(model => model.id);
+        liveModelKindById = new Map(catalog.models.map(model => [model.id, modelKind(model)]));
+        liveCapabilitiesById = new Map(catalog.models.map(model => [model.id, model.capabilities]));
+      }
 
       if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
         rawModelIds = await fetchCompatibleModelIds(conn);
@@ -583,7 +593,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         })
         .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "");
 
-      const mergedModelIds = Array.from(new Set([...modelIds, ...customModelIds, ...aliasModelIds]));
+      const mergedModelIds = Array.from(new Set(providerId === "codex" ? modelIds : [...modelIds, ...customModelIds, ...aliasModelIds]));
 
       for (const modelId of mergedModelIds) {
         // Resolve kind: prefer custom/live metadata, then static, then ID heuristics.
