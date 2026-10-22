@@ -125,6 +125,14 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
     const reviewRateLimit = getCodexReviewRateLimit(data);
     const sparkRateLimit = getCodexSparkRateLimit(data);
     const availableResetCredits = Math.max(0, toFiniteNumber(data.rate_limit_reset_credits?.available_count, 0));
+    const creditBalance = toFiniteNumber(data.credits?.balance, null);
+    const credits = data.credits && typeof data.credits === "object" && !Array.isArray(data.credits)
+      ? {
+        hasCredits: data.credits.has_credits === true,
+        unlimited: data.credits.unlimited === true,
+        balance: creditBalance === null ? null : Math.max(0, creditBalance),
+      }
+      : null;
     const quotas = {};
 
     appendCodexQuotaWindows(quotas, "", normalRateLimit);
@@ -137,6 +145,7 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
       limitReached: getCodexRateLimitBody(normalRateLimit)?.limit_reached || false,
       reviewLimitReached: getCodexRateLimitBody(reviewRateLimit)?.limit_reached || false,
       sparkLimitReached: getCodexRateLimitBody(sparkRateLimit)?.limit_reached || false,
+      credits,
       resetCredits: { availableCount: availableResetCredits },
       quotas,
     };

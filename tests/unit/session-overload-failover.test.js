@@ -90,6 +90,39 @@ function success() {
   return { success: true, response: Response.json({ ok: true }) };
 }
 
+describe("credits policy during account routing", () => {
+  it.each([false, true])("enforces the credits opt-in with the inherited strategy (allowed: %s)", async allowCredits => {
+    const connection = await account("credits-account", 0);
+    await db.updateSettings({ localCodexRouting: { accountStrategy: "inherit", allowCredits } });
+    const { loadConnectionUsage } = await import("@/lib/providerUsage.js");
+    loadConnectionUsage.mockResolvedValue({
+      limitReached: true,
+      credits: { hasCredits: true, unlimited: false, balance: 10 },
+      quotas: { session: { used: 100, total: 100, resetAt: "2030-01-01T00:00:00Z" } },
+    });
+    upstream.mockResolvedValue(success());
+    const response = await send(null);
+    expect(response.status).toBe(allowCredits ? 200 : 429);
+    if (allowCredits) expect(upstream).toHaveBeenCalledWith(expect.objectContaining({ credentials: expect.objectContaining({ connectionId: connection.id }) }));
+    else expect(upstream).not.toHaveBeenCalled();
+    loadConnectionUsage.mockResolvedValue(null);
+  });
+
+  it("selects an account with included quota when credits are disabled", async () => {
+    const spent = await account("spent", 0), fresh = await account("fresh", 0);
+    await db.updateSettings({ localCodexRouting: { accountStrategy: "inherit", allowCredits: false } });
+    const { loadConnectionUsage } = await import("@/lib/providerUsage.js");
+    loadConnectionUsage.mockImplementation(async connection => ({
+      credits: { hasCredits: true, unlimited: false, balance: 10 },
+      quotas: { session: { used: connection.id === spent.id ? 100 : 10, total: 100, resetAt: "2030-01-01T00:00:00Z" } },
+    }));
+    const selected = await selection.getProviderCredentials("codex", null, MODEL);
+    expect(selected.connectionId).toBe(fresh.id);
+    selected.releaseSelection?.();
+    loadConnectionUsage.mockResolvedValue(null);
+  });
+});
+
 describe("stable account bindings during overload", () => {
   it.each(["inherit", "quota-priority", "fill-first", "least-loaded", "round-robin"])("balances new sessions but preserves busy bindings with %s", async accountStrategy => {
     const busy = await account("busy-high-quota", 0), idle = await account("idle-overload-history", 0);

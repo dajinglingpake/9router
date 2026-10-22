@@ -52,10 +52,18 @@ export function getAccountQuotaState(connection, model, usage, policy, now = Dat
   const locked = new Date(lockUntil).getTime() > now;
   const limitReached = family === "normal" ? usage?.limitReached : usage?.[`${family}LimitReached`];
   const hasWindowData = ["session", "weekly"].some(name => usage?.quotas?.[`${prefix}${name}`]);
+  const credits = usage?.credits;
+  const hasCredits = credits?.unlimited === true || (credits?.hasCredits === true
+    && (credits.balance === null || (Number.isFinite(credits.balance) && credits.balance > 0)));
+  // Credits extend the normal pool only. Upstream quota locks still take precedence.
+  const canUseCredits = family === "normal" && policy.allowCredits === true && hasCredits;
+  const creditsOnly = family === "normal" && !hasWindowData && hasCredits;
+  const quotaExhausted = exhaustedWindows.length > 0
+    || (limitReached === true && (windows.length > 0 || !hasWindowData)) || creditsOnly;
   const selectedWindows = windows.filter(window => policy.quotaWindow === "any" || window.name === policy.quotaWindow);
   return {
-    exhausted: locked || exhaustedWindows.length > 0 || (limitReached === true && (windows.length > 0 || !hasWindowData)),
-    retryAt: [locked ? lockUntil : null, ...exhaustedWindows.map(window => window.resetAt)].filter(Boolean).sort().at(-1) || null,
+    exhausted: locked || (quotaExhausted && !canUseCredits),
+    retryAt: [locked ? lockUntil : null, ...(canUseCredits ? [] : exhaustedWindows.map(window => window.resetAt))].filter(Boolean).sort().at(-1) || null,
     usedPercent: selectedWindows.length ? Math.max(...selectedWindows.map(window => window.used)) : null,
   };
 }

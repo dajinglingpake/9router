@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/localDb", () => ({ getProviderConnectionById: vi.fn() }));
+vi.mock("@/lib/localDb", () => ({ getProviderConnectionById: vi.fn(), getSettings: vi.fn().mockResolvedValue({}) }));
+vi.mock("@/sse/local/quotaRouting.js", () => ({ loadCodexQuotaSnapshot: vi.fn(), getAccountQuotaState: vi.fn() }));
 vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: async () => ({ connectionProxyEnabled: true, connectionProxyUrl: "http://proxy.test", strictProxy: true }) }));
 vi.mock("@/sse/services/concurrencyLimiter.js", () => ({ waitForAccountRequest: vi.fn() }));
 import { getProviderConnectionById } from "@/lib/localDb";
+import { getAccountQuotaState, loadCodexQuotaSnapshot } from "@/sse/local/quotaRouting.js";
 import { createTrialSession, getTrialSession, getTrialCredentials } from "@/sse/local/codexTrialSession";
 
 afterEach(() => vi.clearAllMocks());
@@ -45,5 +47,17 @@ describe("account trial pinning", () => {
     const job = createTrialSession("account", "gpt-6.1-sol", "xhigh");
     expect(job.session.provider).toBe("codex");
     job.revoke();
+  });
+  it("applies the credits policy to pinned Codex trials", async () => {
+    const job = createTrialSession("account", "gpt-6.1-sol");
+    getProviderConnectionById.mockResolvedValue({ id: "account", provider: "codex", isActive: false });
+    loadCodexQuotaSnapshot.mockResolvedValue({ credits: { hasCredits: true, balance: 5 } });
+    getAccountQuotaState.mockReturnValue({ exhausted: true, retryAt: null });
+    try {
+      expect(await getTrialCredentials(job.session)).toMatchObject({ sessionUnavailable: true, lastErrorCode: 429 });
+      expect(getAccountQuotaState).toHaveBeenCalledWith(expect.anything(), "gpt-6.1-sol", expect.anything(), expect.objectContaining({ allowCredits: false }));
+      getAccountQuotaState.mockReturnValue({ exhausted: false });
+      expect(await getTrialCredentials(job.session)).toMatchObject({ connectionId: "account" });
+    } finally { job.revoke(); }
   });
 });

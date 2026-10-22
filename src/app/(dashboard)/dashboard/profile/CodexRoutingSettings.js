@@ -48,6 +48,11 @@ export default function CodexRoutingSettings() {
         onChange={event => setConfig({ ...config, accountStrategy: event.target.value })} />
       {config.accountStrategy === "quota-priority" && <p className="text-xs text-text-muted">先选择空闲账号；都忙时选择排队较少、运行请求较少的账号。负载相同时优先无过载记录的账号，再比较剩余额度，额度相同时轮询。额度全部未知时回退到轮询。</p>}
       <label className="flex items-center justify-between gap-4">
+        <div><p className="text-sm font-medium">允许使用 credits</p><p className="text-xs text-text-muted">默认关闭。关闭时跳过已查询到套餐额度耗尽的账号；开启后，普通 Codex 请求可在有可用点数时继续使用，可能消耗购买或赠送的 credits。重置券仍需手动使用，Spark 与审查额度不受此开关放宽。</p></div>
+        <Toggle disabled={disabled} checked={config.allowCredits}
+          onChange={() => setConfig({ ...config, allowCredits: !config.allowCredits })} />
+      </label>
+      <label className="flex items-center justify-between gap-4">
         <div><p className="text-sm font-medium">额度耗尽后迁移会话</p><p className="text-xs text-text-muted">控制按会话路由的额度迁移。按 API Key 固定账号时，额度耗尽始终自动迁移，不受此开关影响；繁忙或过载不触发换号。</p></div>
         <Toggle disabled={disabled} checked={config.quotaFailover}
           onChange={() => setConfig({ ...config, quotaFailover: !config.quotaFailover })} />

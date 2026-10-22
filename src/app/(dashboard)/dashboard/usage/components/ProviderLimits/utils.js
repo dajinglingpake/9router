@@ -535,6 +535,19 @@ export function parseQuotaData(provider, data) {
             });
           });
         }
+        if (data.credits) {
+          const { balance, hasCredits, unlimited } = data.credits;
+          normalizedQuotas.push({
+            name: "Credits",
+            quotaType: "credits",
+            used: 0,
+            total: Number.isFinite(balance) ? balance : 0,
+            isCreditBalance: true,
+            balanceLabel: unlimited ? "Unlimited credits"
+              : Number.isFinite(balance) ? `${balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} credits`
+              : hasCredits ? "Available · balance unavailable" : "Balance unavailable",
+          });
+        }
         break;
 
       case "kiro":

@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { getProviderConnectionById } from "@/lib/localDb";
+import { getProviderConnectionById, getSettings } from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { DEFAULT_ACCOUNT_COOLDOWN_MIN_MS, DEFAULT_ACCOUNT_COOLDOWN_MAX_MS } from "open-sse/config/errorConfig.js";
 import { waitForAccountRequest } from "../services/concurrencyLimiter.js";
 import { extractClientApiKey } from "../services/keyAccess.js";
+import { getCodexRoutingPolicy } from "./routingPolicy.js";
+import { getAccountQuotaState, loadCodexQuotaSnapshot } from "./quotaRouting.js";
 
 // Only dashboard-created jobs can pin an account. Never trust a client-supplied account id.
 const sessions = globalThis.__ninerouterCodexTrialSessions ||= new Map();
@@ -28,6 +30,15 @@ export function isTrialToken(request) {
 export async function getTrialCredentials(session) {
   const connection = await getProviderConnectionById(session.connectionId);
   if (!connection || connection.provider !== (session.provider || "codex")) return null;
+  if (connection.provider === "codex") {
+    const policy = getCodexRoutingPolicy(await getSettings());
+    const quota = getAccountQuotaState(connection, session.model, await loadCodexQuotaSnapshot(connection), policy);
+    if (quota.exhausted) return {
+      sessionUnavailable: true, lastErrorCode: 429,
+      lastError: "试用账号套餐额度已用尽，且未允许使用可用 credits，或账号仍处于额度冷却期。",
+      retryAfter: quota.retryAt,
+    };
+  }
   const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
   return {
     ...connection,

@@ -2,6 +2,7 @@
 export const CODEX_ROUTING_DEFAULTS = Object.freeze({
   accountStrategy: "inherit",
   apiKeyAffinity: false,
+  allowCredits: false,
   quotaFailover: false,
   quotaModelSwitch: false,
   quotaUsedPercent: 90,
@@ -13,7 +14,8 @@ export const QUOTA_CACHE_TTL_MS = 60_000;
 export const QUOTA_FETCH_TIMEOUT_MS = 5_000;
 
 export function usesQuotaRouting(policy) {
-  return policy.accountStrategy === "quota-priority" || policy.apiKeyAffinity || policy.quotaFailover || policy.quotaModelSwitch;
+  // Both credits policies require snapshots, including with the inherited strategy.
+  return typeof policy.allowCredits === "boolean" || policy.accountStrategy === "quota-priority" || policy.apiKeyAffinity || policy.quotaFailover || policy.quotaModelSwitch;
 }
 
 export function normalizeCodexRouting(input = {}, previous = CODEX_ROUTING_DEFAULTS) {
@@ -23,7 +25,7 @@ export function normalizeCodexRouting(input = {}, previous = CODEX_ROUTING_DEFAU
     if (Object.hasOwn(input, key)) result[key] = input[key];
   }
   if (!["inherit", "quota-priority", "least-loaded", "round-robin", "fill-first"].includes(result.accountStrategy)) throw new Error("账号分配策略无效");
-  for (const key of ["apiKeyAffinity", "quotaFailover", "quotaModelSwitch"]) {
+  for (const key of ["apiKeyAffinity", "allowCredits", "quotaFailover", "quotaModelSwitch"]) {
     if (typeof result[key] !== "boolean") throw new Error("自动切换开关无效");
   }
   if (!Number.isFinite(result.quotaUsedPercent) || result.quotaUsedPercent < 1 || result.quotaUsedPercent > 99) throw new Error("已用额度阈值须为 1–99%");
