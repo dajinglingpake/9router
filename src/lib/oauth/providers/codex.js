@@ -6,7 +6,7 @@ const codex = {
   flowType: "authorization_code_pkce",
   fixedPort: CODEX_CONFIG.fixedPort,
   callbackPath: CODEX_CONFIG.callbackPath,
-  buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+  buildAuthUrl: (config, redirectUri, state, codeChallenge, meta = {}) => {
     const params = {
       response_type: "code",
       client_id: config.clientId,
@@ -15,6 +15,7 @@ const codex = {
       code_challenge: codeChallenge,
       code_challenge_method: config.codeChallengeMethod,
       ...config.extraParams,
+      ...(meta.loginHint ? { login_hint: meta.loginHint } : {}),
       state: state,
     };
     const queryString = Object.entries(params)

@@ -91,6 +91,48 @@ function expectPreserved(connection) {
 }
 
 describe("Codex account relogin", () => {
+  it.each([true, false])("restores the pre-logout enabled state (%s) only after a verified relogin", async isActive => {
+    await db.updateProviderConnection(account.id, { isActive: false, providerSpecificData: {
+      ...account.providerSpecificData, logoutResumeActive: isActive, loggedOutAt: "2026-10-22T00:00:00.000Z",
+    } });
+    tokens.email = "other@example.com";
+    expect((await exchangeCode()).status).toBe(409);
+    expect((await db.getProviderConnectionById(account.id)).isActive).toBe(false);
+    tokens.email = account.email;
+    expect((await exchangeCode()).status).toBe(200);
+    const saved = await db.getProviderConnectionById(account.id);
+    expect(saved.isActive).toBe(isActive);
+    expect(saved.providerSpecificData).not.toHaveProperty("logoutResumeActive");
+    expect(saved.providerSpecificData).toMatchObject({ proxyPoolId: "original-proxy", custom: "keep" });
+    expect(saved.exclusiveApiKeyIds).toEqual([key.id]);
+  });
+
+  it("prefills the saved email on authorization without trusting a caller supplied login hint", async () => {
+    const query = new URLSearchParams({ redirect_uri: "http://localhost:1455/auth/callback", connection_id: account.id, loginHint: "other@example.com" });
+    const response = await api.GET(new Request(`http://localhost/api/oauth/codex/authorize?${query}`),
+      { params: Promise.resolve({ provider: "codex", action: "authorize" }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    const url = new URL(data.authUrl);
+    expect(url.searchParams.get("login_hint")).toBe(account.email);
+    expect(url.searchParams.get("connection_id")).toBeNull();
+    expect(url.searchParams.get("state")).toBe(data.state);
+    expect(url.searchParams.get("code_challenge")).toBe(data.codeChallenge);
+    expect((await db.getProviderConnectionById(account.id)).accessToken).toBe("old-access");
+  });
+
+  it("does not add an email hint for ordinary add-account authorization", async () => {
+    const response = await api.GET(new Request("http://localhost/api/oauth/codex/authorize?redirect_uri=http://localhost:1455/auth/callback"),
+      { params: Promise.resolve({ provider: "codex", action: "authorize" }) });
+    expect(new URL((await response.json()).authUrl).searchParams.has("login_hint")).toBe(false);
+  });
+
+  it.each(["", "deleted-id"])("rejects an invalid relogin target during authorization: %s", async connectionId => {
+    const response = await api.GET(new Request(`http://localhost/api/oauth/codex/authorize?connection_id=${connectionId}`),
+      { params: Promise.resolve({ provider: "codex", action: "authorize" }) });
+    expect(response.status).toBe(connectionId ? 404 : 400);
+  });
+
   it("shows the newly authorized plan after relogin instead of the old stored plan", async () => {
     const { getAccountPlan } = await import("@/lib/accountPlan.js");
     await db.updateProviderConnection(account.id, { providerSpecificData: { ...account.providerSpecificData, chatgptPlanType: "plus" } });

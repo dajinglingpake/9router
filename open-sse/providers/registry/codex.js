@@ -8,6 +8,12 @@ export const CODEX_MODELS_CONFIG = {
   timeoutMs: 10000,
   cacheTtlMs: 60000,
 };
+export const CODEX_SESSIONS_CONFIG = {
+  listUrl: "https://chatgpt.com/backend-api/accounts/sessions?include_trusted_devices=true",
+  logoutAllUrl: "https://chatgpt.com/backend-api/accounts/logout_all",
+  settingsUrl: "https://chatgpt.com/settings/security?view=sessions",
+  timeoutMs: 15000,
+};
 const GPT_6_LITE_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 
 export default {

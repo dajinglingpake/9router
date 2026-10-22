@@ -30,7 +30,8 @@ export async function reloginCodexConnection(connectionId, data) {
     throw loginError("登录账号或工作空间与原账号不一致，请使用原账号重新登录。", 409);
   }
 
-  // Patch credentials only, preserving routing, bindings and the enabled state.
+  // Preserve configuration; undo the temporary pause after a confirmed logout.
+  const { logoutResumeActive, ...providerSpecificData } = existing.providerSpecificData || {};
   const patch = {};
   for (const field of ["authType", "accessToken", "email", "expiresIn", "tokenType", "scope"]) {
     if (data[field] !== undefined) patch[field] = data[field];
@@ -40,10 +41,11 @@ export async function reloginCodexConnection(connectionId, data) {
     idToken: data.idToken ?? null,
     expiresAt: data.expiresAt ?? null,
     lastRefreshAt: data.lastRefreshAt || new Date().toISOString(),
-    providerSpecificData: { ...existing.providerSpecificData, ...data.providerSpecificData,
+    providerSpecificData: { ...providerSpecificData, ...data.providerSpecificData,
       authMethod: data.authType === "access_token" ? "access_token" : "oauth" },
     testStatus: "active",
   });
+  if (typeof logoutResumeActive === "boolean") patch.isActive = logoutResumeActive;
   const connection = await updateProviderConnection(existing.id, patch);
   if (!connection) throw loginError("账号已被删除，请刷新页面。", 404);
   return connection;

@@ -375,6 +375,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       // Build authorize URL first to get codeVerifier/state for codex server-side mode
       const authorizeUrl = new URL(`/api/oauth/${provider}/authorize`, window.location.origin);
       authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+      if (reloginConnectionId) authorizeUrl.searchParams.set("connection_id", reloginConnectionId);
       if (oauthMeta) {
         Object.entries(oauthMeta).forEach(([k, v]) => { if (v) authorizeUrl.searchParams.set(k, v); });
       }

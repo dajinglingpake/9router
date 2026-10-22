@@ -125,9 +125,15 @@ export async function GET(request, { params }) {
 
       const redirectUri = searchParams.get("redirect_uri") || "http://localhost:8080/callback";
       // Collect provider-specific meta params (e.g. gitlab passes baseUrl, clientId, clientSecret)
-      const reservedParams = new Set(["redirect_uri"]);
+      const reservedParams = new Set(["redirect_uri", "connection_id"]);
       const meta = {};
       searchParams.forEach((value, key) => { if (!reservedParams.has(key)) meta[key] = value; });
+      const reloginConnectionId = searchParams.get("connection_id");
+      if (reloginConnectionId !== null) {
+        if (provider !== "codex") return NextResponse.json({ error: "当前仅支持 Codex 重新登录。" }, { status: 400 });
+        const connection = await getCodexReloginTarget(reloginConnectionId);
+        meta.loginHint = connection.email?.trim() || "";
+      }
       // Zed: derive native_app_port from the local callback URL so the RSA keypair
       // is bound to the port the proxy is actually listening on.
       if (provider === "zed") {
