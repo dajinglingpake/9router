@@ -113,7 +113,7 @@ else
 fi
 
 echo "[4/7] Loading image on remote host..."
-REMOTE_IMAGE_TAR="/tmp/9router-image-$(date +%s).tar"
+REMOTE_IMAGE_TAR="$REMOTE_DIR/.9router-image-$(date +%s).tar"
 docker save "$IMAGE_NAME" | ssh_remote "cat > $(shell_quote "$REMOTE_IMAGE_TAR")"
 sudo_remote "docker load -i $(shell_quote "$REMOTE_IMAGE_TAR") && rm -f $(shell_quote "$REMOTE_IMAGE_TAR")"
 
