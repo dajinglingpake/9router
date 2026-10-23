@@ -3,6 +3,7 @@ services:
     image: ${IMAGE_NAME:-9router:local}
     container_name: ${CONTAINER_NAME:-9router}
     restart: unless-stopped
+    init: true
     working_dir: /app
     command: ["node", "custom-server.js"]
     network_mode: host

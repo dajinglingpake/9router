@@ -21,6 +21,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-9router}"
 PORT="${PORT:-20128}"
 IMAGE_NAME="${IMAGE_NAME:-9router:local}"
 BUILD_NODE_IMAGE="${BUILD_NODE_IMAGE:-node:22-bookworm-slim}"
+SKIP_BUILD="${SKIP_BUILD:-false}"
 
 SSH_OPTIONS=(
   -o StrictHostKeyChecking=no
@@ -104,7 +105,12 @@ echo "[2/7] Checking remote deployment..."
 sudo_remote "mkdir -p $(shell_quote "$REMOTE_DIR/data")"
 
 echo "[3/7] Building local Docker image..."
-docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
+if [ "$SKIP_BUILD" = "true" ]; then
+  docker image inspect "$IMAGE_NAME" >/dev/null
+  echo "Using existing image: $IMAGE_NAME"
+else
+  docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
+fi
 
 echo "[4/7] Loading image on remote host..."
 REMOTE_IMAGE_TAR="/tmp/9router-image-$(date +%s).tar"
