@@ -12,15 +12,44 @@ const UNSANDBOXED = process.env.CODEX_TRIAL_UNSANDBOXED !== "false";
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const LOG_LIMIT = 64 * 1024;
 
-async function readTrialHtml(workspace) {
-  const file = await fs.open(path.join(workspace, "index.html"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const info = await file.stat();
-    if (!info.isFile() || info.size === 0 || info.size > MAX_HTML_BYTES) throw new Error("index.html 为空、不是普通文件或超过 2 MB。");
-    const html = await file.readFile("utf8");
-    if (!/<(?:!doctype\s+html|html|svg|body)\b/i.test(html)) throw new Error("生成的 index.html 不包含可预览的 HTML 或 SVG。");
-    return html;
-  } finally { await file.close(); }
+const isPreviewHtml = html => typeof html === "string" && Buffer.byteLength(html, "utf8") <= MAX_HTML_BYTES
+  && /<(?:!doctype\s+html|[a-z][a-z0-9:-]*)(?:\s|\/?>)/i.test(html);
+
+function readReplyHtml(text) {
+  for (const [, language, code] of text.matchAll(/```([^\r\n`]*)\r?\n([\s\S]*?)```/g)) {
+    if (/^(?:html?|svg|xml)?$/i.test(language.trim()) && isPreviewHtml(code)) return code.trim();
+  }
+  const raw = text.replace(/```[\s\S]*?```/g, "").match(/(?:<!doctype\s+html[^>]*>\s*)?<html\b[\s\S]*<\/html\s*>|<body\b[\s\S]*<\/body\s*>|<svg\b[\s\S]*<\/svg\s*>/i)?.[0];
+  return isPreviewHtml(raw) ? raw : null;
+}
+
+async function readTrialHtml(workspace, replyHtml) {
+  const root = await fs.realpath(workspace);
+  const directories = [root];
+  const candidates = [];
+  for (const directory of directories) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory() && !["node_modules", ".git"].includes(entry.name)) directories.push(file);
+      else if (entry.isFile() && /\.(?:html?|svg)$/i.test(entry.name)) candidates.push(file);
+    }
+  }
+  const index = path.join(root, "index.html");
+  candidates.sort((a, b) => Number(b === index) - Number(a === index) || a.localeCompare(b));
+  for (const candidate of candidates) {
+    let file;
+    try {
+      if (!(await fs.realpath(candidate)).startsWith(root + path.sep)) continue;
+      file = await fs.open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const info = await file.stat();
+      if (!info.isFile() || info.size === 0 || info.size > MAX_HTML_BYTES) continue;
+      const html = await file.readFile("utf8");
+      if (isPreviewHtml(html)) return html;
+    } catch { /* Try the remaining generated files or the assistant's reply. */ }
+    finally { await file?.close(); }
+  }
+  if (replyHtml) return replyHtml;
+  throw new Error("本次测试未生成可预览的 HTML 或 SVG 文件，回复中也没有可预览内容。");
 }
 
 export async function getCliVersion() {
@@ -67,6 +96,7 @@ export async function runCodexCli({ directory, token, model, effort, provider = 
   let cliErrors = 0;
   let failure = "";
   let completed = false;
+  let replyHtml = null;
   let output = "";
   let activity = "正在启动 Codex CLI";
   let lastOutputAt = null;
@@ -84,6 +114,9 @@ export async function runCodexCli({ directory, token, model, effort, provider = 
       if (event.type === "turn.completed") { usage = event.usage || null; completed = true; }
       if (event.type === "error") cliErrors++;
       if (event.type === "turn.failed") failure = event.error?.message || "Codex 执行失败。";
+      if (event.type === "item.completed" && event.item?.type === "agent_message") {
+        replyHtml = readReplyHtml(event.item.text || "") || replyHtml;
+      }
       const rendered = format(event);
       if (rendered) { appendOutput(rendered.text); activity = rendered.activity; }
     } catch { appendOutput(line); }
@@ -134,20 +167,20 @@ export async function runCodexCli({ directory, token, model, effort, provider = 
       child.once("error", reject);
       child.once("close", (code, terminationSignal) => resolve({ code, terminationSignal }));
     });
-    child.stdin.end(`${prompt}\n\n请将最终作品实际写入当前工作目录的 index.html，所有 SVG、CSS 和 JavaScript 内嵌，不引用外部资源。优先完成可预览的作品；不要运行测试、启动浏览器、截图或进行图像检查。文件写好后简短说明并结束。\n`);
+    child.stdin.end(prompt);
     const { code, terminationSignal } = await exited;
     if (pending) onLine(pending);
     signal.throwIfAborted();
     if (code !== 0 || !completed || failure) throw new Error(failure || `Codex CLI 未完成（退出码 ${code ?? terminationSignal}）。${log.slice(-1600)}`);
-    const html = await readTrialHtml(workspace);
+    const html = await readTrialHtml(workspace, replyHtml);
     return { ...snapshot(), html, activity: "执行完成", elapsedMs: Date.now() - startedAt };
   } catch (error) {
     const message = signal.aborted
       ? "测试已停止，CLI 已终止。"
-      : error.code === "ENOENT" ? "Codex 未生成 index.html，或 CLI 不可用。" : error.message;
+      : error.code === "ENOENT" ? "Codex CLI 不可用。" : error.message;
     // Stop remaining writers before preserving the latest artifact and removing the private workspace.
     if (child?.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* Already exited. */ } }
-    const html = await readTrialHtml(workspace).catch(() => null);
+    const html = await readTrialHtml(workspace, replyHtml).catch(() => null);
     return { ...snapshot(), html, error: message.replaceAll(token, "[trial-token]"), activity: html ? "执行结束，已保留未完成作品" : "执行结束", cliErrors: Math.max(1, cliErrors), elapsedMs: Date.now() - startedAt };
   } finally {
     if (trialSession) delete trialSession.logError;

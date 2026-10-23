@@ -100,3 +100,66 @@ describe.skipIf(process.platform !== "linux")("Codex CLI resource cleanup", () =
     expect(fs.existsSync(job)).toBe(false);
   });
 });
+
+describe("Codex CLI artifact previews", () => {
+  const html = "<!doctype html><html><body><svg><text>pelican</text></svg></body></html>";
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>';
+  it.each([
+    { name: "a differently named HTML file", files: { "pelican.html": html }, expected: html },
+    { name: "a nested HTML file", files: { "animation/scene.htm": html }, expected: html },
+    { name: "an SVG file", files: { "pelican.svg": svg }, expected: svg },
+    { name: "an HTML code block in the reply", message: `Here is the animation:\n\`\`\`html\n${html}\n\`\`\`\nSave it to preview.`, expected: html },
+    { name: "an unlabelled code block in the reply", message: `\`\`\`\n${html}\n\`\`\``, expected: html },
+    { name: "an HTML block after an unrelated code block", message: `\`\`\`javascript\nconst ready = true;\n\`\`\`\n\`\`\`html\n${html}\n\`\`\``, expected: html },
+    { name: "an HTML fragment in the reply", message: "```html\n<div>Animation</div>\n```", expected: "<div>Animation</div>" },
+    { name: "raw HTML in the reply", message: `Here is the animation:\n${html}\nDone.`, expected: html },
+    { name: "SVG in the reply", message: `\`\`\`svg\n${svg}\n\`\`\``, expected: svg },
+    { name: "raw SVG in the reply", message: `Animation:\n${svg}\nDone.`, expected: svg },
+    { name: "a generated file before reply content", files: { "pelican.html": html }, message: `\`\`\`svg\n${svg}\n\`\`\``, expected: html },
+    { name: "index.html before other files", files: { "a.html": svg, "index.html": html }, expected: html },
+    { name: "a valid file after an empty index.html", files: { "index.html": "", "pelican.html": html }, expected: html },
+    { name: "reply content when no valid file was generated", files: { "index.html": "not HTML" }, message: html, expected: html },
+    { name: "reply content retained after CLI failure", message: html, failed: true, expected: html },
+    { name: "a missing artifact", message: "No animation was generated.", expected: null },
+    { name: "HTML only in tool output", itemType: "command_execution", message: html, expected: null },
+    { name: "HTML only in reasoning", itemType: "reasoning", message: html, expected: null },
+    { name: "a non-HTML code block", message: `\`\`\`javascript\nconst example = '${html}';\n\`\`\``, expected: null },
+    { name: "an oversized reply", message: `\`\`\`html\n<html>${"x".repeat(2 * 1024 * 1024)}</html>\n\`\`\``, expected: null },
+    { name: "a linked directory outside the workspace", linkedDirectory: true, expected: null },
+  ])("previews $name without appending prompt instructions", async ({ files = {}, message = "", itemType = "agent_message", failed = false, expected, linkedDirectory }) => {
+    const capturedPrompt = path.join(directory, "prompt.txt");
+    const outside = path.join(directory, "outside");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, "private.html"), html);
+    const events = [
+      { type: "item.completed", item: { type: itemType, ...(itemType === "command_execution" ? { aggregated_output: message } : { text: message }) } },
+      failed ? { type: "turn.failed", error: { message: "fixture failed" } } : { type: "turn.completed", usage: { output_tokens: 1 } },
+    ];
+    fs.writeFileSync(path.join(directory, "fixture-cli"), `#!${process.execPath}
+const fs = require('fs');
+const path = require('path');
+let prompt = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => { prompt += chunk; });
+process.stdin.on('end', () => {
+  fs.writeFileSync(${JSON.stringify(capturedPrompt)}, prompt);
+  for (const [file, content] of Object.entries(${JSON.stringify(files)})) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+  ${linkedDirectory ? `fs.symlinkSync(${JSON.stringify(outside)}, 'linked', 'dir');` : ""}
+  for (const event of ${JSON.stringify(events)}) console.log(JSON.stringify(event));
+  process.exitCode = ${failed ? 1 : 0};
+});
+`, { mode: 0o700 });
+    const prompt = "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。\n只按这段提示词执行。";
+    const job = path.join(directory, "artifact-job");
+    const result = await runCodexCli({ directory: job, token: "fixture-token", model: "fixture", prompt, signal: new AbortController().signal });
+    expect(fs.readFileSync(capturedPrompt, "utf8")).toBe(prompt);
+    expect(result.html).toBe(expected);
+    if (failed) expect(result.error).toBe("fixture failed");
+    else if (expected) expect(result.error).toBeFalsy();
+    else expect(result.error).toContain("未生成可预览");
+    expect(fs.existsSync(job)).toBe(false);
+  });
+});
