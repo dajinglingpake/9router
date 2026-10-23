@@ -6,7 +6,7 @@ import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 const requestKeyIds = new WeakMap();
 
-async function getRequestKeyId(request) {
+export async function getRequestKeyId(request) {
   if (!request) return null;
   if (!requestKeyIds.has(request)) {
     requestKeyIds.set(request, (async () => {

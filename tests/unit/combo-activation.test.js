@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { upstream } = vi.hoisted(() => ({ upstream: vi.fn() }));
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: upstream }));
+vi.mock("@/sse/services/tokenRefresh.js", () => ({ checkAndRefreshToken: async (_p, c) => c, updateProviderCredentials: vi.fn() }));
+vi.mock("@/lib/providerUsage.js", () => ({ loadConnectionUsage: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/lib/alerts/wecom.js", () => ({ notifyRequestError: vi.fn().mockResolvedValue(undefined) }));
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir, db, models, originalListeners;
@@ -15,14 +18,15 @@ beforeEach(async () => {
   process.env.DATA_DIR = tempDir;
   delete global._dbAdapter;
   vi.resetModules();
-  upstream.mockReset();
+  upstream.mockReset().mockImplementation(async () => ({ success: true, response: Response.json({ ok: true }) }));
   db = await import("@/lib/db/index.js");
   await db.initDb();
   await db.updateSettings({ requireApiKey: false });
   models = await import("@/sse/services/model.js");
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await global._requestErrorWrites?.pending;
   global._dbAdapter?.instance?.close?.();
   delete global._dbAdapter;
   for (const [event, listeners] of Object.entries(originalListeners)) {
@@ -33,6 +37,149 @@ afterEach(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
+});
+
+async function whitelistFixture() {
+  const owner = await db.createApiKey("allowed-key", "test-machine");
+  const other = await db.createApiKey("other-key", "test-machine");
+  await db.createProviderConnection({ provider: "openai", authType: "apikey", apiKey: "upstream-test-key", name: "test-account" });
+  const combo = await db.createCombo({ name: "private-combo", models: ["openai/test-model"], isActive: false, allowedApiKeyIds: [owner.id] });
+  return { owner, other, combo };
+}
+
+async function send(model, key, { header = "Authorization", query = false, headers = {}, endpoint = "/v1/chat/completions" } = {}) {
+  if (key && !query) headers[header] = header === "Authorization" ? `Bearer ${key}` : key;
+  const url = `http://localhost${endpoint}${query && key ? `?key=${encodeURIComponent(key)}` : ""}`;
+  const { handleChat } = await import("@/sse/local/chat.js");
+  return handleChat(new Request(url, {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ model, stream: false, messages: [{ role: "user", content: "hello" }] }),
+  }));
+}
+
+describe("disabled combo API Key allowlist", () => {
+  it.each(["private-combo", "cc/private-combo", "cc/private-combo[1m]"])("allows %s only for its listed active key", async name => {
+    const { owner } = await whitelistFixture();
+    const response = await send(name, owner.key);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { header: "x-api-key" }, { header: "x-goog-api-key" }, { query: true }, { endpoint: "/v1/responses" },
+  ])("uses the authenticated key identity for %j", async options => {
+    const { owner, combo } = await whitelistFixture();
+    const response = await send(combo.name, owner.key, options);
+    expect(response.status).toBe(200);
+    await response.body.cancel();
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("blocks other, unknown, absent and disabled keys even when API Key authentication is optional", async () => {
+    const { owner, other, combo } = await whitelistFixture();
+    for (const key of [other.key, "invalid-key", null]) expect((await send(combo.name, key)).status).toBe(403);
+    await db.updateApiKey(owner.id, { isActive: false });
+    expect((await send(combo.name, owner.key)).status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("retains the key's IP and model restrictions", async () => {
+    const { owner, combo } = await whitelistFixture();
+    await db.updateApiKey(owner.id, { allowedIps: ["192.0.2.1"] });
+    expect((await send(combo.name, owner.key, { headers: { "x-real-ip": "192.0.2.2" } })).status).toBe(403);
+    await db.updateApiKey(owner.id, { allowedIps: [], access: { restricted: true, allow: ["openai/test-model"] } });
+    expect((await send(combo.name, owner.key)).status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+    await db.updateApiKey(owner.id, { access: { restricted: true, allow: [combo.name] } });
+    const allowed = await send(`cc/${combo.name}`, owner.key);
+    expect(allowed.status).toBe(200);
+    await allowed.body.cancel();
+    expect((await send("openai/test-model", owner.key)).status).toBe(403);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("checks nested disabled combos and applies allowlist removal immediately", async () => {
+    const { owner, other, combo } = await whitelistFixture();
+    await db.createCombo({ name: "outer", models: [`cc/${combo.name}`] });
+    expect((await send("outer", other.key)).status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+    const allowed = await send("outer", owner.key);
+    expect(allowed.status).toBe(200);
+    await allowed.body.cancel();
+    await db.updateCombo(combo.id, { allowedApiKeyIds: [] });
+    expect((await send("outer", owner.key)).status).toBe(403);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("publishes disabled combo names and cc aliases only for allowed callers", async () => {
+    const { owner, other, combo } = await whitelistFixture();
+    const { GET } = await import("@/app/api/v1/models/route.js");
+    const names = async key => {
+      const response = await GET(new Request("http://localhost/v1/models", { headers: key ? { Authorization: `Bearer ${key}` } : {} }));
+      expect(response.status).toBe(200);
+      return (await response.json()).data.map(model => model.id);
+    };
+    expect(await names(owner.key)).toEqual(expect.arrayContaining([combo.name, `cc/${combo.name}`]));
+    await db.updateApiKey(owner.id, { access: { restricted: true, allow: [combo.name] } });
+    expect(await names(owner.key)).toEqual(expect.arrayContaining([combo.name, `cc/${combo.name}`]));
+    for (const key of [other.key, null, "invalid-key"]) {
+      const listed = await names(key);
+      expect(listed).not.toContain(combo.name);
+      expect(listed).not.toContain(`cc/${combo.name}`);
+    }
+    await db.updateApiKey(owner.id, { isActive: false });
+    expect(await names(owner.key)).not.toContain(combo.name);
+  });
+
+  it("keeps enabled combos available to unlisted keys", async () => {
+    const { other, combo } = await whitelistFixture();
+    await db.updateCombo(combo.id, { isActive: true });
+    const response = await send(combo.name, other.key);
+    expect(response.status).toBe(200);
+    await response.body.cancel();
+  });
+
+  it("validates and updates the allowlist without enabling the combo", async () => {
+    const { owner, other, combo } = await whitelistFixture();
+    const { PUT } = await import("@/app/api/combos/[id]/route.js");
+    const update = allowedApiKeyIds => PUT(new Request(`http://localhost/api/combos/${combo.id}`, {
+      method: "PUT", body: JSON.stringify({ allowedApiKeyIds }),
+    }), { params: Promise.resolve({ id: combo.id }) });
+    for (const invalid of [null, "key-id", [1], [""], ["missing-id"]]) expect((await update(invalid)).status).toBe(400);
+    expect((await db.getComboById(combo.id)).allowedApiKeyIds).toEqual([owner.id]);
+    expect((await update([owner.id, other.id, owner.id])).status).toBe(200);
+    expect(await db.getComboById(combo.id)).toMatchObject({ isActive: false, allowedApiKeyIds: [owner.id, other.id] });
+    expect((await update([])).status).toBe(200);
+    expect(await db.getComboById(combo.id)).toMatchObject({ isActive: false, allowedApiKeyIds: [] });
+  });
+
+  it("creates combos with an allowlist through the management API", async () => {
+    const { owner } = await whitelistFixture();
+    const { POST } = await import("@/app/api/combos/route.js");
+    const response = await POST(new Request("http://localhost/api/combos", {
+      method: "POST", body: JSON.stringify({ name: "created-with-allowlist", models: ["openai/test-model"], isActive: false, allowedApiKeyIds: [owner.id] }),
+    }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ isActive: false, allowedApiKeyIds: [owner.id] });
+  });
+
+  it("preserves allowlists in backups and restarts, and accepts legacy backups", async () => {
+    const { owner, combo } = await whitelistFixture();
+    const backup = await db.exportDb();
+    await db.updateCombo(combo.id, { allowedApiKeyIds: [] });
+    await db.importDb(backup);
+    expect((await db.getComboById(combo.id)).allowedApiKeyIds).toEqual([owner.id]);
+    global._dbAdapter.instance.close();
+    delete global._dbAdapter;
+    vi.resetModules();
+    db = await import("@/lib/db/index.js");
+    await db.initDb();
+    expect(await db.getComboById(combo.id)).toMatchObject({ isActive: false, allowedApiKeyIds: [owner.id] });
+    for (const item of backup.combos) delete item.allowedApiKeyIds;
+    await db.importDb(backup);
+    expect(await db.getComboById(combo.id)).toMatchObject({ isActive: false, allowedApiKeyIds: [] });
+  });
 });
 
 describe("combo activation", () => {

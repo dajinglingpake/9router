@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getComboById, updateCombo, deleteCombo, getComboByName, getProviderConnectionById } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { getModelInfo } from "@/sse/services/model.js";
+import { validateComboApiKeyIds } from "@/lib/comboAccess.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -31,6 +32,10 @@ export async function PUT(request, { params }) {
 
     if (body.isActive !== undefined && typeof body.isActive !== "boolean") {
       return NextResponse.json({ error: "组合启用状态必须为布尔值。" }, { status: 400 });
+    }
+    if (body.allowedApiKeyIds !== undefined) {
+      const error = await validateComboApiKeyIds(body.allowedApiKeyIds);
+      if (error) return NextResponse.json({ error }, { status: 400 });
     }
 
     if (body.accountOverrides !== undefined) {

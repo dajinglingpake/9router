@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+import { validateComboApiKeyIds } from "@/lib/comboAccess.js";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +22,14 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, models, kind, isActive } = body;
+    const { name, models, kind, isActive, allowedApiKeyIds } = body;
 
     if (isActive !== undefined && typeof isActive !== "boolean") {
       return NextResponse.json({ error: "组合启用状态必须为布尔值。" }, { status: 400 });
+    }
+    if (allowedApiKeyIds !== undefined) {
+      const error = await validateComboApiKeyIds(allowedApiKeyIds);
+      if (error) return NextResponse.json({ error }, { status: 400 });
     }
 
     if (!name) {
@@ -42,7 +47,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
     }
 
-    const combo = await createCombo({ name, models: models || [], kind: kind || null, isActive });
+    const combo = await createCombo({ name, models: models || [], kind: kind || null, isActive, allowedApiKeyIds });
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {

@@ -2,6 +2,7 @@
 import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
+import { canUseCombo } from "@/lib/comboAccess.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -35,13 +36,13 @@ export async function resolveModelAlias(alias) {
 /**
  * Get full model info (parse or resolve)
  */
-export async function getModelInfo(modelStr) {
+export async function getModelInfo(modelStr, apiKeyId = null) {
   const comboName = typeof modelStr === "string" && modelStr.startsWith("cc/") ? modelStr.slice(3) : modelStr;
   if (typeof comboName === "string" && !comboName.includes("/")) {
     const combo = await getComboByName(comboName);
     if (combo) {
       // Disabled combo names must never fall through to provider inference.
-      return { provider: null, model: comboName, ...(combo.isActive === false ? { disabled: true } : {}) };
+      return { provider: null, model: comboName, ...(!canUseCombo(combo, apiKeyId) ? { disabled: true } : {}) };
     }
   }
   const parsed = parseModel(modelStr);
@@ -81,7 +82,7 @@ export async function getModelInfo(modelStr) {
  * Check if model is a combo and get models list
  * @returns {Promise<string[]|null>} Array of models or null if not a combo
  */
-export async function getComboModels(modelStr) {
+export async function getComboModels(modelStr, apiKeyId = null) {
   // Claude Code uses cc/<model> in settings. Keep that model name stable and
   // allow it to target an existing combo named <model>.
   const comboName = modelStr.startsWith("cc/") ? modelStr.slice(3) : modelStr;
@@ -89,7 +90,7 @@ export async function getComboModels(modelStr) {
   if (comboName.includes("/")) return null;
 
   const combo = await getComboByName(comboName);
-  if (combo?.isActive === false) return [];
+  if (combo && !canUseCombo(combo, apiKeyId)) return [];
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }

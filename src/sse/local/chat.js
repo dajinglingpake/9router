@@ -17,6 +17,7 @@ import { extractClientApiKey as extractApiKey, getKeyAccessContext, enforceKeyAc
 import { getTrialSession, isTrialToken } from "./codexTrialSession.js";
 import { handleTrialRequest } from "./codexTrialRetry.js";
 import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
+import { getRequestKeyId } from "../services/accountApiKeyAccess.js";
 
 /**
  * Handle chat completion request
@@ -178,7 +179,7 @@ async function handleChatInternal(request, clientRawRequest = null) {
     return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "Missing model", clientRawRequest);
   }
 
-  const modelInfo = await getModelInfo(modelStr);
+  const modelInfo = await getModelInfo(modelStr, await getRequestKeyId(request));
   if (modelInfo.disabled) return rejectChatRequest(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`, clientRawRequest, "router");
   const keyAccess = await getKeyAccessContext(request);
   const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);

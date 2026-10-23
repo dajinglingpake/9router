@@ -1082,6 +1082,9 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
   const [commonModels, setCommonModels] = useState(combo?.models || []);
+  const [allowedApiKeyIds, setAllowedApiKeyIds] = useState(combo?.allowedApiKeyIds || []);
+  const [apiKeys, setApiKeys] = useState(null);
+  const [apiKeysError, setApiKeysError] = useState("");
   const [scope, setScope] = useState(initialScope);
   const [baseComboId, setBaseComboId] = useState("");
   const [accountOverrides, setAccountOverrides] = useState(() => Object.fromEntries(
@@ -1135,6 +1138,26 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   useEffect(() => {
     if (isOpen) fetchModalData();
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const controller = new AbortController();
+    fetch("/api/keys", { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("API Key 列表加载失败，请重新打开编辑窗口。");
+        const data = await response.json();
+        setApiKeys((data.keys || []).map(key => ({ id: key.id, name: key.name, isActive: key.isActive })));
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setApiKeysError(error.message);
+      });
+    return () => controller.abort();
+  }, [isOpen]);
+
+  const keyOptions = (apiKeys || []).filter(key => key.isActive || allowedApiKeyIds.includes(key.id));
+  for (const id of allowedApiKeyIds) {
+    if (apiKeys && !apiKeys.some(key => key.id === id)) keyOptions.push({ id, name: `已删除 Key（${id.slice(0, 8)}）`, isActive: false });
+  }
 
   const validateName = (value) => {
     if (!value.trim()) {
@@ -1190,7 +1213,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
     setSaving(true);
     await onSave(creatingOverride
       ? { comboId: baseComboId, accountOverrides }
-      : { name: name.trim(), models: commonModels, ...(combo ? { accountOverrides } : {}) });
+      : { name: name.trim(), models: commonModels, ...(combo ? { accountOverrides } : {}), ...(!account ? { allowedApiKeyIds } : {}) });
     setSaving(false);
   };
 
@@ -1321,6 +1344,25 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               添加模型
             </button>
           </div>}
+
+          {!account && (
+            <fieldset disabled={saving || !apiKeys || !!apiKeysError} className="flex flex-col gap-2">
+              <legend className="mb-2 text-sm font-medium text-text-main">API Key 白名单（可多选）</legend>
+              <p className="text-xs text-text-muted">组合禁用后，仅白名单内的有效 Key 可继续使用；Key 自身的模型权限和 IP 限制仍然生效。</p>
+              <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-border p-3">
+                {keyOptions.map(key => (
+                  <label key={key.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={allowedApiKeyIds.includes(key.id)}
+                      onChange={event => setAllowedApiKeyIds(previous => event.target.checked
+                        ? [...previous, key.id] : previous.filter(id => id !== key.id))} />
+                    <span className="break-all">{key.name || key.id}{key.isActive ? "" : "（已停用）"}</span>
+                  </label>
+                ))}
+                {!keyOptions.length && <p className="text-xs text-text-muted">{apiKeys ? "暂无可选的 API Key" : "正在加载 API Key…"}</p>}
+              </div>
+              {apiKeysError && <p role="alert" className="text-xs text-red-500">{apiKeysError}</p>}
+            </fieldset>
+          )}
 
           {/* Actions */}
           <div className="flex flex-col gap-2 pt-1 sm:flex-row">

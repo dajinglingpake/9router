@@ -27,7 +27,7 @@ import { handleLocalCombo } from "./comboRouting.js";
 import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from "../services/keyAccess.js";
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
-import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
+import { filterAccountPoolForRequest, getRequestKeyId } from "../services/accountApiKeyAccess.js";
 import { appendChatErrorHint } from "../utils/errorHints.js";
 import { getTrialSession, getTrialCredentials } from "./codexTrialSession.js";
 import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
@@ -41,12 +41,13 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   seenModels.add(modelStr);
   const requestId = getRequestId(request);
   // Resolve combo aliases (including cc/<name>) before provider prefixes.
-  const comboModels = await getComboModels(modelStr);
+  const apiKeyId = await getRequestKeyId(request);
+  const comboModels = await getComboModels(modelStr, apiKeyId);
   if (comboModels?.length) {
     return handleLocalCombo(body, comboModels, modelStr, (_body, candidate) =>
       handleSingleModelChat(_body, candidate, clientRawRequest, request, apiKey, new Set(seenModels), new Set(excludedAccounts), deadline, retryCount, [...comboNames, modelStr]));
   }
-  const modelInfo = await getModelInfo(modelStr);
+  const modelInfo = await getModelInfo(modelStr, apiKeyId);
 
   if (modelInfo.disabled) {
     return rejectChatRequest(HTTP_STATUS.FORBIDDEN, `组合“${modelInfo.model}”已禁用。`, clientRawRequest, "router");

@@ -11,7 +11,8 @@ import {
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
-import { filterAccountPoolForRequest } from "@/sse/services/accountApiKeyAccess.js";
+import { filterAccountPoolForRequest, getRequestKeyId } from "@/sse/services/accountApiKeyAccess.js";
+import { canUseCombo } from "@/lib/comboAccess.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -347,7 +348,10 @@ export async function buildModelsList(kindFilter, options = {}) {
 
   let combos = [];
   try {
-    combos = (await getCombos()).filter(combo => combo.isActive !== false);
+    const allCombos = await getCombos();
+    const apiKeyId = allCombos.some(combo => combo.isActive === false && combo.allowedApiKeyIds?.length)
+      ? await getRequestKeyId(options.request) : null;
+    combos = allCombos.filter(combo => canUseCombo(combo, apiKeyId));
   } catch (e) {
     console.log("Could not fetch combos");
   }

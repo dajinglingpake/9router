@@ -133,7 +133,7 @@ export async function importDb(payload) {
     db.run(`DELETE FROM apiKeys`);
     db.run(`DELETE FROM combos`);
     db.run(`DELETE FROM clientIpAliases`);
-    db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing', 'comboAccountOverrides', 'comboEnabled')`);
+    db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing', 'comboAccountOverrides', 'comboEnabled', 'comboAllowedApiKeys')`);
 
     // Settings
     if (payload.settings) {
@@ -187,6 +187,7 @@ export async function importDb(payload) {
         db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('comboAccountOverrides', ?, ?)`, [c.id, stringifyJson(c.accountOverrides)]);
       }
       if (c.isActive === false) db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('comboEnabled', ?, 'false')`, [c.id]);
+      if (Array.isArray(c.allowedApiKeyIds)) db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('comboAllowedApiKeys', ?, ?)`, [c.id, stringifyJson(c.allowedApiKeyIds)]);
     }
     for (const a of payload.clientIpAliases || []) {
       db.run(

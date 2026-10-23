@@ -27,7 +27,10 @@ vi.mock("@/lib/localDb", () => ({
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: async () => ({}) }));
 vi.mock("@/lib/db/repos/combosRepo.js", () => ({ getCombos: async () => fx.combos }));
-vi.mock("@/lib/db/repos/apiKeysRepo.js", () => ({ getApiKeyByKey: async (k) => fx.keys[k] || null }));
+vi.mock("@/lib/db/repos/apiKeysRepo.js", () => ({
+  getApiKeyByKey: async (k) => fx.keys[k] || null,
+  getApiKeyByValue: async (k) => fx.keys[k] || null,
+}));
 vi.mock("@/lib/usageDb.js", () => ({ saveRequestUsage: vi.fn(), appendRequestLog: vi.fn(async () => {}) }));
 vi.mock("@/sse/services/auth.js", () => ({
   getProviderCredentials: mocks.getProviderCredentials,
@@ -218,8 +221,8 @@ describe("/v1/models routes filter by key", () => {
     const someModel = all.find((id) => id.startsWith("openai/"));
     expect(someModel).toBeTruthy();
     fx.keys["sk-mix"] = { id: "x", name: "mix", isActive: true, access: { restricted: true, allow: ["Main", someModel.toUpperCase()] } };
-    expect(await list("sk-mix")).toEqual(["Main", someModel]);
-    expect(await list("sk-combo")).toEqual(["Main"]);
+    expect(await list("sk-mix")).toEqual(["Main", "cc/Main", someModel]);
+    expect(await list("sk-combo")).toEqual(["Main", "cc/Main"]);
     expect(await list("sk-empty")).toEqual([]);
     expect(await list(null)).toEqual(all); // no key: unchanged (middleware governs remote access)
   });
