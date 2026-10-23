@@ -1561,12 +1561,12 @@ export default function ProviderDetailPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    icon="timer"
+                    icon="tune"
                     onClick={() => setShowBulkTimingModal(true)}
                     disabled={selectedConnectionIds.length === 0}
                     title={selectedConnectionIds.length === 0 ? translate("Select connections first") : undefined}
                   >
-                    {translate("Bulk edit timing")}
+                    {translate("Bulk edit settings")}
                   </Button>
                   {selectedConnectionIds.length > 0 && (
                     <Button

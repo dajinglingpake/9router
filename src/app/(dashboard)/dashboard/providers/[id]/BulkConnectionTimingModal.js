@@ -40,14 +40,23 @@ function commonSeconds(connections, group, key) {
 }
 
 export default function BulkConnectionTimingModal({ connections, onSaved, onClose }) {
-  const [settings, setSettings] = useState(() => Object.fromEntries(TIMING_GROUPS.map((group) => [
-    group.id,
-    {
-      enabled: false,
-      minimum: commonSeconds(connections, group, group.minKey),
-      maximum: commonSeconds(connections, group, group.maxKey),
-    },
-  ])));
+  const [settings, setSettings] = useState(() => {
+    const concurrencyValues = connections.map(connection => Number(connection.maxConcurrency) || 0);
+    return {
+      concurrency: {
+        enabled: false,
+        value: concurrencyValues.every(value => value === concurrencyValues[0]) ? String(concurrencyValues[0] ?? 0) : "",
+      },
+      ...Object.fromEntries(TIMING_GROUPS.map((group) => [
+        group.id,
+        {
+          enabled: false,
+          minimum: commonSeconds(connections, group, group.minKey),
+          maximum: commonSeconds(connections, group, group.maxKey),
+        },
+      ])),
+    };
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [failures, setFailures] = useState([]);
@@ -66,6 +75,14 @@ export default function BulkConnectionTimingModal({ connections, onSaved, onClos
     event.preventDefault();
     if (saving || connections.length === 0) return;
     const updates = {};
+    if (settings.concurrency.enabled) {
+      const value = Number(settings.concurrency.value);
+      if (settings.concurrency.value.trim() === "" || !Number.isInteger(value) || value < 0 || value > 1000) {
+        setError(`${translate("Max concurrent requests")}: ${translate("Enter an integer between 0 and 1000.")}`);
+        return;
+      }
+      updates.maxConcurrency = value;
+    }
     for (const group of TIMING_GROUPS) {
       const setting = settings[group.id];
       if (!setting.enabled) continue;
@@ -117,11 +134,24 @@ export default function BulkConnectionTimingModal({ connections, onSaved, onClos
   };
 
   return (
-    <Modal isOpen title={translate("Bulk edit timing")} onClose={handleClose} size="lg">
+    <Modal isOpen title={translate("Bulk edit settings")} onClose={handleClose} size="lg">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="text-sm text-text-muted">
           {translate("Selected connections")}: {connections.length}. {translate("Only checked settings are applied to selected connections.")}
         </p>
+        <fieldset disabled={saving} className="flex flex-col gap-3 rounded-lg border border-border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input type="checkbox" checked={settings.concurrency.enabled}
+              onChange={event => updateSetting("concurrency", { enabled: event.target.checked })}
+              className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" />
+            {translate("Max concurrent requests")}
+          </label>
+          <Input aria-label={translate("Max concurrent requests")} type="number" min={0} max={1000} step="1"
+            value={settings.concurrency.value} placeholder={translate("Mixed values")}
+            disabled={!settings.concurrency.enabled || saving} required={settings.concurrency.enabled}
+            hint={translate("0 means unlimited.")}
+            onChange={event => updateSetting("concurrency", { value: event.target.value })} />
+        </fieldset>
         {TIMING_GROUPS.map((group) => (
           <fieldset key={group.id} disabled={saving} className="flex flex-col gap-3 rounded-lg border border-border p-3">
             <label className="flex items-center gap-2 text-sm font-medium">
@@ -151,7 +181,7 @@ export default function BulkConnectionTimingModal({ connections, onSaved, onClos
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={handleClose} disabled={saving}>{translate("Cancel")}</Button>
-          <Button type="submit" loading={saving} disabled={connections.length === 0 || !TIMING_GROUPS.some((group) => settings[group.id].enabled)}>
+          <Button type="submit" loading={saving} disabled={connections.length === 0 || (!settings.concurrency.enabled && !TIMING_GROUPS.some((group) => settings[group.id].enabled))}>
             {translate("Apply to selected")}
           </Button>
         </div>

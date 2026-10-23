@@ -1452,6 +1452,8 @@
   "Russia": "俄罗斯",
   "India": "印度",
   "Bulk edit timing": "批量配置间隔/冷却",
+  "Bulk edit settings": "批量设置",
+  "Enter an integer between 0 and 1000.": "请输入 0–1000 之间的整数。",
   "Request interval": "请求间隔",
   "Account cooldown": "账号冷却",
   "Selected connections": "已选连接",
