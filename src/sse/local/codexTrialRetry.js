@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 import { trackTrialResponse } from "./codexTrialSession.js";
 
 function cooldownDelay(response) {
@@ -57,7 +58,8 @@ export async function handleTrialRequest(session, request, handleRequest) {
         session.cooldownRetries = (session.cooldownRetries || 0) + 1;
         cooldown = { until: Date.now() + waitMs };
         session.cooldown = cooldown;
-        await response.body?.cancel();
+        const error = await response.text().catch(error => error.message);
+        session.logError?.(`[网关自动重试 ${session.cooldownRetries}] HTTP ${response.status} · ${safeDiagnosticMessage(error)} · ${Math.ceil(waitMs / 1000)} 秒后重试`);
         await delay(waitMs, undefined, { signal });
         if (session.cooldown === cooldown) session.cooldown = null;
         response = await invoke();

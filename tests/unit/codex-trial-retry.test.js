@@ -34,6 +34,7 @@ afterEach(async () => {
 describe("trial overload recovery", () => {
   it("waits for every cooldown beyond the CLI reconnect budget while preserving the same account and request", async () => {
     vi.useRealTimers();
+    job.session.logError = vi.fn();
     const ids = [], times = [];
     const handle = vi.fn(async attempt => {
       expect(getTrialSession(attempt)).toBe(job.session);
@@ -53,6 +54,11 @@ describe("trial overload recovery", () => {
     for (let index = 1; index < times.length; index++) expect(times[index] - times[index - 1]).toBeGreaterThanOrEqual(1000);
     expect(job.session).toMatchObject({ requests: 4, errors: 3, cooldownRetries: 3, cooldown: null });
     expect(job.session.models.has(payload.model)).toBe(true);
+    expect(job.session.logError).toHaveBeenCalledTimes(3);
+    for (let index = 0; index < 3; index++) {
+      expect(job.session.logError.mock.calls[index][0]).toContain(`[网关自动重试 ${index + 1}] HTTP 503`);
+      expect(job.session.logError.mock.calls[index][0]).toContain("Our servers are currently overloaded.");
+    }
   }, 10_000);
 
   it("accepts an HTTP-date cooldown and keeps an hour-long wait cancellable with heartbeats", async () => {

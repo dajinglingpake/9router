@@ -35,7 +35,7 @@ export async function getCliVersion() {
 }
 
 // A fresh CLI process per account. No inherited user auth, MCPs, skills or config.
-export async function runCodexCli({ directory, token, model, effort, provider = "codex", prompt, signal, onProgress }) {
+export async function runCodexCli({ directory, token, model, effort, provider = "codex", prompt, signal, onProgress, trialSession }) {
   const workspace = path.join(directory, "workspace");
   const home = path.join(directory, "home");
   await fs.mkdir(workspace, { recursive: true, mode: 0o700 });
@@ -89,6 +89,7 @@ export async function runCodexCli({ directory, token, model, effort, provider = 
     } catch { appendOutput(line); }
     publish();
   };
+  if (trialSession) trialSession.logError = message => onLine(JSON.stringify({ type: "error", message }));
   let killTimer;
   let child;
   const stop = () => {
@@ -149,6 +150,7 @@ export async function runCodexCli({ directory, token, model, effort, provider = 
     const html = await readTrialHtml(workspace).catch(() => null);
     return { ...snapshot(), html, error: message.replaceAll(token, "[trial-token]"), activity: html ? "执行结束，已保留未完成作品" : "执行结束", cliErrors: Math.max(1, cliErrors), elapsedMs: Date.now() - startedAt };
   } finally {
+    if (trialSession) delete trialSession.logError;
     signal.removeEventListener("abort", stop);
     clearTimeout(killTimer);
     // Reap any remaining tool subprocesses before removing this job's private directory.

@@ -36,6 +36,21 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform !== "linux")("Codex CLI resource cleanup", () => {
+  it("keeps gateway retry errors in the existing log and output after a successful run", async () => {
+    const trialSession = {};
+    const promise = runCodexCli({
+      directory: path.join(directory, "job"), token: "fixture-token", model: "success",
+      prompt: "fixture", signal: new AbortController().signal, trialSession,
+    });
+    await vi.waitFor(() => expect(trialSession.logError).toBeTypeOf("function"));
+    trialSession.logError("[网关自动重试 1] HTTP 503 · server_is_overloaded");
+    const result = await promise;
+    expect(result.error).toBeFalsy();
+    expect(result.cliErrors).toBe(1);
+    expect(result.log).toContain('"type":"error"');
+    expect(result.output).toContain("[错误] [网关自动重试 1] HTTP 503 · server_is_overloaded");
+    expect(trialSession.logError).toBeUndefined();
+  });
   it("leaves provider-specific reasoning to the gateway without passing unsupported levels to the CLI", async () => {
     const result = await runCodexCli({
       directory: path.join(directory, "job"), token: "fixture-token", model: "success",

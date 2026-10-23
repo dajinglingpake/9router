@@ -188,7 +188,7 @@ async function runTrial(batch, id) {
   try {
     save({ ...record, status: "running", activity: "正在启动 Codex CLI", startedAt: new Date().toISOString() });
     const result = await runCodexCli({
-      ...record, token: session.token,
+      ...record, token: session.token, trialSession: session.session,
       directory: path.join(ROOT, "jobs", record.runId),
       signal: batch.controller.signal,
       onProgress,
