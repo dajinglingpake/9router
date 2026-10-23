@@ -68,12 +68,12 @@ export default function CodexQuotaSummary() {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
         <h2 className="text-lg font-semibold text-text-primary">Codex 额度汇总</h2>
-        <p className="text-xs text-text-muted">覆盖所有分页的启用账号；共享额度按套餐汇总，专用额度按账号单独展示。</p>
+        <p className="text-xs text-text-muted">汇总所有分页中启用共享账号的额度，按套餐分组。</p>
       </div>
       <Button size="sm" variant="secondary" icon="refresh" disabled={loading} onClick={() => refresh(true)}>刷新额度</Button>
     </div>
     {error && <p role="alert" className="mt-3 text-sm text-red-500">{error}{summary ? "，下方保留上次结果。" : ""}</p>}
-    {loading && !summary && <p role="status" className="mt-3 text-sm text-text-muted">正在汇总全部账号额度…</p>}
+    {loading && !summary && <p role="status" className="mt-3 text-sm text-text-muted">正在汇总共享账号额度…</p>}
     {summary && <>
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
         <span>启用账号：{summary.accountCount} 个</span>
@@ -81,17 +81,16 @@ export default function CodexQuotaSummary() {
         <span>专用账号：{summary.dedicatedAccountCount} 个</span>
         <span>更新时间：{new Date(summary.generatedAt).toLocaleTimeString("zh-CN", { hour12: false })}</span>
       </div>
-      {!summary.accountCount && <p className="mt-3 text-sm text-text-muted">暂无启用的 Codex 账号。</p>}
-      {summary.groups.map(group => <section key={group.key} aria-label={group.scope === "dedicated" ? `专用额度 · ${group.name}` : `共享额度 · ${planLabel(group.plan)}`} className="mt-4">
-        <h3 className="mb-2 text-sm font-medium text-text-primary">{group.scope === "dedicated" ? `专用额度 · ${group.name}` : "共享额度"} · {planLabel(group.plan)} · {group.accountCount} 个账号<span className="ml-2 text-xs text-text-muted">已耗尽 {group.depletedAccounts} 个</span></h3>
-        {group.scope === "dedicated" && <p className="mb-2 break-all text-xs text-primary">绑定人员：{group.exclusiveApiKeyIds.map((id, index) => group.exclusiveApiKeyNames[index] || `已绑定 Key（${id.slice(0, 8)}）`).join("、")}</p>}
+      {!summary.sharedAccountCount && <p className="mt-3 text-sm text-text-muted">暂无启用的共享 Codex 账号。</p>}
+      {summary.groups.filter(group => group.scope === "shared").map(group => <section key={group.key} aria-label={`共享额度 · ${planLabel(group.plan)}`} className="mt-4">
+        <h3 className="mb-2 text-sm font-medium text-text-primary">共享额度 · {planLabel(group.plan)} · {group.accountCount} 个账号<span className="ml-2 text-xs text-text-muted">已耗尽 {group.depletedAccounts} 个</span></h3>
         {group.sharedWeeklyAccounts > 0 && <p className="mb-2 text-xs text-text-muted">{group.sharedWeeklyAccounts === group.accountCount ? "5 小时与每周使用同一份额度。" : `${group.sharedWeeklyAccounts} 个账号的 5 小时额度与周额度共用。`}</p>}
         <div className={`grid grid-cols-1 gap-3 ${group.session.accountCount && group.weekly.accountCount ? "sm:grid-cols-2" : ""}`}>
           {group.session.accountCount > 0 && <QuotaMetric title="5 小时剩余" quota={group.session} accountCount={group.accountCount} />}
           {group.weekly.accountCount > 0 && <QuotaMetric title="每周剩余" quota={group.weekly} accountCount={group.accountCount} />}
         </div>
       </section>)}
-      {summary.accountCount > 0 && <p className="mt-3 text-xs text-text-muted">共享与专用额度独立判断告警，专用账号达到阈值时 @ 绑定人员。5 小时与每周分别判断，同时触发合并通知。满额账号为同套餐的等效估算，无法精确换算 Token 或请求次数。此处汇总普通额度。</p>}
+      {summary.sharedAccountCount > 0 && <p className="mt-3 text-xs text-text-muted">5 小时与每周分别判断告警，同时触发合并通知。满额账号为同套餐的等效估算，无法精确换算 Token 或请求次数。此处汇总普通额度。</p>}
     </>}
   </Card>;
 }
