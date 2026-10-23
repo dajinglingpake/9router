@@ -21,7 +21,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-9router}"
 PORT="${PORT:-20128}"
 IMAGE_NAME="${IMAGE_NAME:-9router:local}"
 BUILD_NODE_IMAGE="${BUILD_NODE_IMAGE:-node:22-bookworm-slim}"
-SKIP_BUILD="${SKIP_BUILD:-false}"
+CODEX_RUNTIME_DIR="${CODEX_RUNTIME_DIR:-}"
 
 SSH_OPTIONS=(
   -o StrictHostKeyChecking=no
@@ -96,21 +96,32 @@ echo "[1/7] Checking local tools..."
 require_cmd sshpass
 require_cmd docker
 require_cmd curl
+require_cmd git
 require_var REMOTE_HOST
 require_var REMOTE_USER
 require_var REMOTE_PASS
 require_var SUDO_PASS
+require_var CODEX_RUNTIME_DIR
+if [ ! -x "$CODEX_RUNTIME_DIR/bin/codex" ]; then
+  echo "Codex runtime not found: $CODEX_RUNTIME_DIR/bin/codex" >&2
+  exit 1
+fi
 
 echo "[2/7] Checking remote deployment..."
 sudo_remote "mkdir -p $(shell_quote "$REMOTE_DIR/data")"
 
 echo "[3/7] Building local Docker image..."
-if [ "$SKIP_BUILD" = "true" ]; then
-  docker image inspect "$IMAGE_NAME" >/dev/null
-  echo "Using existing image: $IMAGE_NAME"
-else
-  docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$IMAGE_NAME" "$ROOT"
-fi
+BUILD_BASE_IMAGE="${IMAGE_NAME}-build-base"
+BUILD_CODEX_IMAGE="${IMAGE_NAME}-build-codex"
+SOURCE_REVISION="$(git rev-parse HEAD)"
+docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$BUILD_BASE_IMAGE" "$ROOT"
+docker build -f "$ROOT/local/codex-trials/Dockerfile" \
+  --build-arg ROUTER_IMAGE="$BUILD_BASE_IMAGE" \
+  --build-context "codex-runtime=$CODEX_RUNTIME_DIR" -t "$BUILD_CODEX_IMAGE" "$ROOT"
+docker build -f "$ROOT/local/account-appeals/Dockerfile" \
+  --build-arg ROUTER_IMAGE="$BUILD_CODEX_IMAGE" \
+  --label "org.opencontainers.image.revision=$SOURCE_REVISION" -t "$IMAGE_NAME" "$ROOT"
+docker image rm "$BUILD_CODEX_IMAGE" "$BUILD_BASE_IMAGE" >/dev/null
 
 echo "[4/7] Loading image on remote host..."
 REMOTE_IMAGE_TAR="$REMOTE_DIR/.9router-image-$(date +%s).tar"
