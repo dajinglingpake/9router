@@ -22,6 +22,14 @@ PORT="${PORT:-20128}"
 IMAGE_NAME="${IMAGE_NAME:-9router:local}"
 BUILD_NODE_IMAGE="${BUILD_NODE_IMAGE:-node:22-bookworm-slim}"
 CODEX_RUNTIME_DIR="${CODEX_RUNTIME_DIR:-}"
+LOCAL_DEPLOY=false
+MODE="${1:-upgrade}"
+if [ "$MODE" = "upgrade-local" ] || [ "$MODE" = "status-local" ]; then
+  LOCAL_DEPLOY=true
+  REMOTE_HOST=127.0.0.1
+  REMOTE_DIR="$ROOT"
+  COMPOSE_FILE=compose.yaml
+fi
 
 SSH_OPTIONS=(
   -o StrictHostKeyChecking=no
@@ -56,6 +64,10 @@ ssh_remote() {
 
 sudo_remote() {
   local cmd="$1"
+  if [ "$LOCAL_DEPLOY" = true ]; then
+    bash -c "$cmd"
+    return
+  fi
   ssh_remote "printf '%s\n' $(shell_quote "$SUDO_PASS") | sudo -S -p '' sh -lc $(shell_quote "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/packages/ContainerManager/target/usr/bin:\$PATH; $cmd")"
 }
 
@@ -69,38 +81,43 @@ print_container_status() {
 }
 
 sync_compose_file() {
+  # Local deployment already uses the source compose.yaml in ROOT.
+  if [ "$LOCAL_DEPLOY" = true ]; then return; fi
   local tmp="/tmp/9router-compose-$(date +%s).yaml"
   ssh_remote "cat > $(shell_quote "$tmp")" < "$ROOT/compose.yaml"
   sudo_remote "mv $(shell_quote "$tmp") $(shell_quote "$REMOTE_DIR/$COMPOSE_FILE")"
 }
 
-MODE="${1:-upgrade}"
 case "$MODE" in
-  upgrade) ;;
-  status)
-    require_cmd sshpass
-    require_var REMOTE_HOST
-    require_var REMOTE_USER
-    require_var REMOTE_PASS
-    require_var SUDO_PASS
+  upgrade|upgrade-local) ;;
+  status|status-local)
+    if [ "$LOCAL_DEPLOY" = false ]; then
+      require_cmd sshpass
+      require_var REMOTE_HOST
+      require_var REMOTE_USER
+      require_var REMOTE_PASS
+      require_var SUDO_PASS
+    fi
     print_container_status
     exit 0
     ;;
   *)
-    echo "Usage: $0 [upgrade|status]" >&2
+    echo "Usage: $0 [upgrade|status|upgrade-local|status-local]" >&2
     exit 1
     ;;
 esac
 
 echo "[1/7] Checking local tools..."
-require_cmd sshpass
 require_cmd docker
 require_cmd curl
 require_cmd git
-require_var REMOTE_HOST
-require_var REMOTE_USER
-require_var REMOTE_PASS
-require_var SUDO_PASS
+if [ "$LOCAL_DEPLOY" = false ]; then
+  require_cmd sshpass
+  require_var REMOTE_HOST
+  require_var REMOTE_USER
+  require_var REMOTE_PASS
+  require_var SUDO_PASS
+fi
 require_var CODEX_RUNTIME_DIR
 if [ ! -x "$CODEX_RUNTIME_DIR/bin/codex" ]; then
   echo "Codex runtime not found: $CODEX_RUNTIME_DIR/bin/codex" >&2
@@ -123,10 +140,14 @@ docker build -f "$ROOT/local/account-appeals/Dockerfile" \
   --label "org.opencontainers.image.revision=$SOURCE_REVISION" -t "$IMAGE_NAME" "$ROOT"
 docker image rm "$BUILD_CODEX_IMAGE" "$BUILD_BASE_IMAGE" >/dev/null
 
-echo "[4/7] Loading image on remote host..."
-REMOTE_IMAGE_TAR="$REMOTE_DIR/.9router-image-$(date +%s).tar"
-docker save "$IMAGE_NAME" | ssh_remote "cat > $(shell_quote "$REMOTE_IMAGE_TAR")"
-sudo_remote "docker load -i $(shell_quote "$REMOTE_IMAGE_TAR") && rm -f $(shell_quote "$REMOTE_IMAGE_TAR")"
+if [ "$LOCAL_DEPLOY" = true ]; then
+  echo "[4/7] Using image built on this host..."
+else
+  echo "[4/7] Loading image on remote host..."
+  REMOTE_IMAGE_TAR="$REMOTE_DIR/.9router-image-$(date +%s).tar"
+  docker save "$IMAGE_NAME" | ssh_remote "cat > $(shell_quote "$REMOTE_IMAGE_TAR")"
+  sudo_remote "docker load -i $(shell_quote "$REMOTE_IMAGE_TAR") && rm -f $(shell_quote "$REMOTE_IMAGE_TAR")"
+fi
 
 echo "[5/7] Updating remote compose..."
 sync_compose_file

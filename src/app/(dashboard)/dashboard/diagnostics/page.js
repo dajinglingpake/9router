@@ -1,6 +1,7 @@
 import DiagnosticsDashboard from "./DiagnosticsDashboard";
 import CodexTrialsPanel from "./CodexTrialsPanel";
 import Link from "next/link";
+import OfficialStatusProvider from "./OfficialStatus";
 
 export default async function DiagnosticsPage({ searchParams }) {
   const params = await searchParams;
@@ -12,8 +13,8 @@ export default async function DiagnosticsPage({ searchParams }) {
       <Link href="/dashboard/diagnostics" aria-current={!trials ? "page" : undefined} className={`rounded-lg px-4 py-2 ${!trials ? "bg-primary/10 font-medium text-primary" : "text-text-muted hover:bg-surface-2"}`}>请求分析</Link>
       <Link href="/dashboard/diagnostics?tab=trials" aria-current={trials ? "page" : undefined} className={`rounded-lg px-4 py-2 ${trials ? "bg-primary/10 font-medium text-primary" : "text-text-muted hover:bg-surface-2"}`}>账号测试</Link>
     </nav>
-    {trials ? <CodexTrialsPanel /> : <DiagnosticsDashboard initialFocus={initialFocus} initialModel={typeof params?.model === "string" ? params.model : "all"}
+    <OfficialStatusProvider>{trials ? <CodexTrialsPanel /> : <DiagnosticsDashboard initialFocus={initialFocus} initialModel={typeof params?.model === "string" ? params.model : "all"}
     initialAccountLabel={typeof params?.accountLabel === "string" ? params.accountLabel : "all"}
-    initialAccountColor={typeof params?.accountColor === "string" ? params.accountColor : "all"} />}
+    initialAccountColor={typeof params?.accountColor === "string" ? params.accountColor : "all"} />}</OfficialStatusProvider>
   </div>;
 }

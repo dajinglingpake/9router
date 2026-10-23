@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ACCOUNT_PERFORMANCE_RULES, classifyAccountPerformance } from "@/shared/utils/accountPerformance.js";
 import { duration, formatNumber, percent, throughput, tokenCount, Icon } from "./format";
 import DiagnosticsIdentity from "./DiagnosticsIdentity";
+import { AccountOfficialStatus } from "./OfficialStatus";
 
 const stabilityLabels = { stable: "较稳定", errors: "失败偏多", insufficient: "样本不足", inactive: "近期无记录", empty: "暂无样本", "no-success": "近期未成功" };
 const colors = {
@@ -20,7 +21,7 @@ const matches = (account, filter) => filter === "all" || (filter === "stable" ? 
     : ["insufficient", "inactive", "empty", "no-success"].includes(account.stability));
 const Badge = ({ tone, children }) => <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${colors[tone]}`}>{children}</span>;
 
-export default function DiagnosticsAccounts({ performance, loading, onFocusAccount, onShowOverload, onShowFailures }) {
+export default function DiagnosticsAccounts({ performance, range, loading, onFocusAccount, onShowOverload, onShowFailures }) {
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("fast");
   const [waitingMs, setWaitingMs] = useState(ACCOUNT_PERFORMANCE_RULES.waitingMs);
@@ -80,6 +81,7 @@ export default function DiagnosticsAccounts({ performance, loading, onFocusAccou
           {account.speedCandidate && <p className="mt-1 text-xs leading-5 text-sky-800 dark:text-sky-300">平均吞吐比 {account.speedPeerAccounts} 个同提供商同模型账号的中位值高 {percent(account.speedFasterPercent)}</p>}
           {account.bindings.length > 0 && <p className="mt-1 truncate text-xs text-primary" title={account.bindings.join("、")}>专用：{account.bindings.join("、")}</p>}
           <p className="mt-1 text-xs leading-5 text-text-muted">最后成功 {timestamp(account.lastSuccessAt)}</p>
+          {account.providers?.length === 1 && <AccountOfficialStatus provider={account.providers[0]} start={range?.start} end={range?.end} windowLabel="所选时段" />}
         </div>
         <div className="min-w-0 text-sm tabular-nums">
           <p className="mb-1 text-xs text-text-muted lg:sr-only">成功 / 失败尝试</p>

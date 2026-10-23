@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { AccountOfficialStatus } from "./OfficialStatus";
 import Button from "@/shared/components/Button";
 import Modal from "@/shared/components/Modal";
 import CodexTrialOutput from "./CodexTrialOutput";
@@ -47,6 +48,7 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
         <p className="mt-1 text-xs font-medium text-text-muted">{account.providerName}</p>
         {result && <p className="mt-1 break-all text-sm font-medium text-primary">{result.model} · {effortLabels[result.effort] || result.effort || "模型默认"}</p>}
         <CodexTrialAccountActions account={account} onUpdated={onUpdated} />
+        <AccountOfficialStatus provider={account.provider} start={result?.startedAt} end={result?.finishedAt || (result?.status === "running" ? now : null)} />
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2">
         <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${color}`}>{status}</span>

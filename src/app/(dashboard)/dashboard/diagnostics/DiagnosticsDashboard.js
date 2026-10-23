@@ -178,7 +178,7 @@ export default function DiagnosticsDashboard({ initialFocus = null, initialModel
         <SegmentedControl options={[{ value: "byAccount", label: "账号表现", icon: "account_circle" }, { value: "byApiKey", label: "API Key 调用", icon: "key" }]} value={dimension} onChange={setDimension} />
         <button type="button" className="min-h-11 cursor-pointer text-xs text-primary hover:underline" onClick={() => focusIssue("slow")}>查看长响应 {formatNumber(summary.slowCount)} 条</button>
       </div>
-      {dimension === "byAccount" && <DiagnosticsAccounts performance={data.accountPerformance} loading={loading} onFocusAccount={focusGroup}
+      {dimension === "byAccount" && <DiagnosticsAccounts performance={data.accountPerformance} range={data.range} loading={loading} onFocusAccount={focusGroup}
         onShowOverload={row => focusIssue("overload", row, "byAccount")} onShowFailures={row => focusIssue("error", row, "byAccount")} />}
 
       {!summary.recordCount ? <div className={`${panel} flex flex-col items-center px-6 py-14 text-center`}>
