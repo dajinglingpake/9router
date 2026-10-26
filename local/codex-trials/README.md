@@ -32,14 +32,26 @@
 
 现有文件的接入点：诊断 `page.js` 加页签，`src/sse/local/chat.js` 接受临时会话，`src/sse/local/modelRouting.js` 固定账号；`recentAccountApiKeyUsers.js` 排除测试调用，`requestDiagnostics.js` 识别测试身份，共享使用人组件隐藏空列表。没有修改 `open-sse`、账号编辑流程、数据库结构或依赖清单。
 
-## 本地容器部署
+## 运行时升级与部署
 
-先按项目原方式构建包含上述源文件的 9router 镜像，命名为 `9router:codex-trial-base`。然后使用本目录 Dockerfile 为该镜像加入已安装的 Codex Linux 运行时。当前验证版本是 `codex-cli 0.163.0`，需要支持命名权限配置和 `--ignore-user-config`。
+账号测试使用 `codex-cli 0.164.0`，构建时校验版本。将 CLI 安装到独立目录，不依赖宿主全局 Codex 的升级状态：
 
 ```sh
-docker build -f "local/codex-trials/Dockerfile" \
-  --build-context "codex-runtime=/absolute/path/to/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl" \
-  -t "9router:codex-trial-20261019" "."
+npm install --prefix "$HOME/.local/share/9router-codex/0.164.0" \
+  --save-exact --ignore-scripts --no-audit --no-fund "@openai/codex@0.164.0"
+```
+
+在现有 `scripts/upgrade-remote-9router.local.env` 中设置 Linux x64 运行时路径：
+
+```sh
+CODEX_RUNTIME_DIR="$HOME/.local/share/9router-codex/0.164.0/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl"
+```
+
+只使用现有升级脚本完成构建、配置同步和容器更新；它会同时包含 Codex CLI 与账号申诉浏览器运行时。升级 CLI 时同步修改本目录 Dockerfile 的版本校验和上述运行时路径。
+
+```sh
+bash "scripts/upgrade-remote-9router.sh" upgrade-local
+bash "scripts/upgrade-remote-9router.sh" upgrade
 ```
 
 容器沿用原数据卷与端口。默认不启用 CLI 沙箱，无需修改 Docker seccomp / AppArmor：
@@ -47,7 +59,7 @@ docker build -f "local/codex-trials/Dockerfile" \
 ```yaml
 services:
   9router:
-    image: 9router:codex-trial-20261019
+    image: 9router:local
     init: true
 ```
 
@@ -58,7 +70,7 @@ services:
 ```yaml
 services:
   9router:
-    image: 9router:codex-trial-20261019
+    image: 9router:local
     init: true
     environment:
       CODEX_TRIAL_UNSANDBOXED: "false"
