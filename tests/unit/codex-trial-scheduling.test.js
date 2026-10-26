@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [], codexModels: null }));
+const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [], kimiModels: [], codexModels: null }));
 vi.mock("@/lib/dataDir", () => ({ get DATA_DIR() { return fixture.directory; } }));
 vi.mock("@/lib/localDb", () => ({
   getProviderConnections: async () => [
@@ -11,6 +11,7 @@ vi.mock("@/lib/localDb", () => ({
     { id: "compatible-account", provider: "openai-compatible-fixture", isActive: false },
     { id: "claude-account", provider: "claude", isActive: true },
     { id: "codebuddy-account", provider: "codebuddy-cn", isActive: false },
+    { id: "kimi-account", provider: "kimi", isActive: true },
   ],
   getProviderNodes: async () => [{ id: "openai-compatible-fixture", type: "openai-compatible", name: "Fixture", prefix: "fixture" }],
   getCustomModels: async () => [{ providerAlias: "fixture", id: "vendor/model", type: "llm" }],
@@ -19,6 +20,7 @@ vi.mock("@/lib/codebuddyModels", () => ({
   resolveCodebuddyModels: vi.fn(async () => ({ models: fixture.codebuddyModels })),
 }));
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+vi.mock("@/lib/kimiModels", () => ({ resolveKimiModels: vi.fn(async () => ({ models: fixture.kimiModels })) }));
 vi.mock("@/lib/codexModels", () => ({ resolveCodexCatalog: vi.fn(async connections => ({
   models: fixture.codexModels ?? ["gpt-6.1-sol", "gpt-5.6-terra"].map(id => ({ id, name: id, supportedEffortLevels: ["xhigh"],
     connectionIds: connections.filter(connection => connection.provider === "codex").map(connection => connection.id) })), accounts: [],
@@ -47,6 +49,7 @@ beforeEach(async () => {
   fixture.directory = fs.mkdtempSync(path.join(os.tmpdir(), "9router-trial-queue-"));
   fixture.jobs = [];
   fixture.codebuddyModels = [];
+  fixture.kimiModels = [];
   fixture.codexModels = null;
   vi.mocked(resolveCodebuddyModels).mockClear();
   fixture.sessions.clear();
@@ -153,6 +156,15 @@ describe("Codex trial scheduling", () => {
       ids: ["codebuddy-account"], models: [{ provider: "codebuddy-cn", model: "glm-5.2" }],
     }));
     expect(fixture.jobs[0]).toMatchObject({ provider: "codebuddy-cn", model: "glm-5.2" });
+  });
+  it("accepts a newly published Kimi model and rejects unsupported reasoning levels", async () => {
+    fixture.kimiModels = [{ id: "k3.1-pro", name: "K3.1 Pro", supportedEffortLevels: ["low", "high", "max"] }];
+    const selection = { provider: "kimi", model: "k3.1-pro", effort: "high" };
+    await expect(store.startTrials(input({ ids: ["kimi-account"], models: [{ ...selection, effort: "medium" }] })))
+      .rejects.toMatchObject({ status: 400 });
+    expect(fixture.jobs).toHaveLength(0);
+    await store.startTrials(input({ ids: ["kimi-account"], models: [selection] }));
+    expect(fixture.jobs[0]).toMatchObject({ connectionId: "kimi-account", ...selection });
   });
   it("defaults to four parallel jobs and starts different accounts before additional models", async () => {
     await store.startTrials(input({ all: true, models: [...models, { model: "gpt-5.6-terra", effort: "xhigh" }] }));

@@ -5,6 +5,7 @@ import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/sha
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { pingModelByKind } from "@/app/api/models/test/ping";
 import { resolveCodexModels } from "@/lib/codexModels";
+import { resolveKimiModels } from "@/lib/kimiModels";
 
 /**
  * POST /api/providers/[id]/test-models
@@ -24,6 +25,10 @@ export async function POST(request, { params }) {
     const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
 
     let models = providerId === "codex" ? (await resolveCodexModels(connection)).models : getProviderModels(alias);
+    if (providerId === "kimi") {
+      const live = await resolveKimiModels(connection);
+      if (live.models.length) models = live.models;
+    }
 
     const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
 

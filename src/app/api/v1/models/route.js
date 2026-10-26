@@ -25,6 +25,7 @@ import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 
@@ -69,6 +70,7 @@ function comboSeatCapabilities(seat) {
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
+  kimi: resolveKimiModels,
   "codebuddy-cn": resolveCodebuddyModels,
   kiro: async (conn) => {
     const result = await resolveKiroModels({

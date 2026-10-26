@@ -16,6 +16,7 @@ import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { resolveClineModels, resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+import { resolveKimiModels } from "@/lib/kimiModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -158,6 +159,12 @@ function buildQoderModelsResolver(providerId) {
 
 // Provider models endpoints configuration
 const PROVIDER_MODELS_CONFIG = {
+  kimi: {
+    customResolver: async (connection) => {
+      const result = await resolveKimiModels(connection, { forceRefresh: true });
+      return result.models.length ? result : { ...result, models: getStaticProviderModels("kimi") };
+    },
+  },
   "codebuddy-cn": {
     customResolver: async (connection) => {
       const result = await resolveCodebuddyModels(connection, { forceRefresh: true });

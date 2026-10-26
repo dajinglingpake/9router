@@ -164,7 +164,7 @@ export default function ProviderDetailPage() {
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
   const codexCatalog = useCodexModels(connections, { enabled: providerId === "codex" });
-  const models = providerId === "codex" ? codexCatalog.models : (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn") && liveModels.length > 0
+  const models = providerId === "codex" ? codexCatalog.models : (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi") && liveModels.length > 0
     ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
@@ -183,10 +183,12 @@ export default function ProviderDetailPage() {
     : providerId === "kimi" ? "Kimi API Key"
     : (providerId === "qoder" || providerId === "qoder-cn") ? "PAT"
     : "API Key";
+  const getModelEfforts = modelId => (providerId === "kimi" && models.find(model => model.id === modelId)?.supportedEffortLevels)
+    || getThinkingLevels(providerId, modelId);
   // Resolve suffix "(level)" for a model when a thinking level is picked and the model supports it.
   const resolveThinkingSuffix = (modelId) => {
     if (!thinkingMode || thinkingMode === "auto") return null;
-    const levels = getThinkingLevels(providerId, modelId);
+    const levels = getModelEfforts(modelId);
     return levels && levels.includes(thinkingMode) ? thinkingMode : null;
   };
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
@@ -198,7 +200,7 @@ export default function ProviderDetailPage() {
     const addLevels = (modelId) => {
       if (!modelId || seen.has(modelId)) return;
       seen.add(modelId);
-      const lv = getThinkingLevels(providerId, modelId);
+      const lv = getModelEfforts(modelId);
       if (lv) lv.forEach((l) => { if (l !== "none") set.add(l); });
     };
     for (const m of models) addLevels(m.id);
@@ -483,11 +485,11 @@ export default function ProviderDetailPage() {
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
   // Resolve the active account's catalog on entry or connection changes.
-  // CodeBuddy keeps its built-in list as a fallback when discovery fails.
+  // Providers keep their built-in lists as a fallback when discovery fails.
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn";
-    const showWarning = providerId === "zed" || providerId === "codebuddy-cn";
-    const catalogName = providerId === "codebuddy-cn" ? "CodeBuddy" : "Zed";
+    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi";
+    const showWarning = providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi";
+    const catalogName = providerId === "codebuddy-cn" ? "CodeBuddy" : providerId === "kimi" ? "Kimi" : "Zed";
     setLiveModels([]);
     setLiveModelsError(null);
     if (!isLiveCatalog) {
@@ -1867,7 +1869,7 @@ export default function ProviderDetailPage() {
         )}
         {providerId === "codex" && <p className="text-xs text-text-muted mb-3">{codexCatalog.loading ? "正在按账号获取可用模型…" : "以下为启用账号实际可用模型的并集。"}</p>}
         {providerId === "codex" && codexCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{codexCatalog.warning}</p>}
-        {(providerId === "zed" || providerId === "codebuddy-cn") && !!liveModelsError && (
+        {(providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi") && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {renderModelsSection()}

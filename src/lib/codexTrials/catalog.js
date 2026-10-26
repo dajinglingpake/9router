@@ -4,18 +4,21 @@ import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { CODEX_TRIAL_MODEL } from "@/shared/utils/codexTrial";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 
 const textModel = model => (model.kind || model.type || "llm") === "llm"
   && model.quotaFamily !== "review" && !model.id.endsWith("-review") && !model.id.endsWith("[1m]");
 
+const liveResolvers = { "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels };
+
 // Discovery is opt-in: polling test results must never probe upstream accounts.
 export async function getTrialProviders(connections, { discoverModels = false } = {}) {
   const [nodes, customModels] = await Promise.all([getProviderNodes(), getCustomModels()]);
   const codex = await resolveCodexCatalog(connections, { forceRefresh: discoverModels, cachedOnly: !discoverModels });
-  const liveModels = discoverModels
-    ? (await Promise.all(connections.filter(connection => connection.provider === "codebuddy-cn")
-      .map(connection => resolveCodebuddyModels(connection)))).flatMap(result => result.models)
+  const liveCatalogs = discoverModels
+    ? await Promise.all(connections.filter(connection => liveResolvers[connection.provider])
+      .map(async connection => ({ provider: connection.provider, ...await liveResolvers[connection.provider](connection) })))
     : [];
   return [...new Set(connections.map(connection => connection.provider))].flatMap(id => {
     const node = nodes.find(item => item.id === id);
@@ -23,11 +26,14 @@ export async function getTrialProviders(connections, { discoverModels = false } 
     if (node ? !["openai-compatible", "anthropic-compatible"].includes(node.type)
       : !definition || !(definition.serviceKinds || ["llm"]).includes("llm")) return [];
     const aliases = new Set([id, definition?.alias, node?.prefix].filter(Boolean));
-    const catalog = id === "codex" ? codex.models : id === "codebuddy-cn" && liveModels.length ? liveModels : getModelsByProviderId(id);
+    const live = liveCatalogs.filter(result => result.provider === id);
+    const liveModels = live.flatMap(result => result.models);
+    const catalog = id === "codex" ? codex.models : liveModels.length ? liveModels : getModelsByProviderId(id);
     const entries = [...catalog, ...(id === "codex" ? [] : customModels.filter(model => aliases.has(model.providerAlias)))];
     const models = [...new Map(entries.filter(textModel).map(model => [model.id, {
       id: model.id, name: model.name || model.id,
-      efforts: model.supportedEffortLevels?.length ? model.supportedEffortLevels : getThinkingLevels(id, model.id) || [],
+      efforts: id === "kimi" && Array.isArray(model.supportedEffortLevels) ? model.supportedEffortLevels
+        : model.supportedEffortLevels?.length ? model.supportedEffortLevels : getThinkingLevels(id, model.id) || [],
       ...(id === "codex" ? { connectionIds: model.connectionIds } : {}),
     }])).values()];
     return [{
@@ -35,6 +41,7 @@ export async function getTrialProviders(connections, { discoverModels = false } 
       defaultModel: models.find(model => model.id === CODEX_TRIAL_MODEL)?.id || models[0]?.id || "",
       allowCustomModel: id !== "codex" && (!!node || !!definition?.passthroughModels || !models.length),
       ...(id === "codex" ? { warning: codex.accounts.filter(account => account.warning).map(account => account.warning).join("；") } : {}),
+      ...(live.some(result => result.warning) ? { warning: [...new Set(live.map(result => result.warning).filter(Boolean))].join("；") } : {}),
     }];
   });
 }

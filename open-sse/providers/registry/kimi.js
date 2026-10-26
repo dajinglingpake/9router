@@ -1,5 +1,11 @@
 import { CLAUDE_API_HEADERS } from "../shared.js";
 
+export const KIMI_MODELS_CONFIG = {
+  url: "https://api.kimi.com/coding/v1/models",
+  timeoutMs: 10000,
+  cacheTtlMs: 5 * 60 * 1000,
+};
+
 // Dual auth (same pattern as xai): OAuth = Kimi Code subscription (device code),
 // API key = platform.moonshot / api.kimi.com. Transport is shared.
 // CLIProxyAPI parity: client_id, auth.kimi.com device+token, X-Msh-* headers, device_id.
