@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { upstream } = vi.hoisted(() => ({ upstream: vi.fn() }));
+const { upstream, router } = vi.hoisted(() => ({ upstream: vi.fn(), router: vi.fn() }));
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: upstream }));
+vi.mock("open-sse/handlers/systemoneCore.js", () => ({ handleSystemoneCore: router }));
 vi.mock("@/sse/services/tokenRefresh.js", () => ({ checkAndRefreshToken: async (_p, c) => c, updateProviderCredentials: vi.fn() }));
 vi.mock("@/lib/providerUsage.js", () => ({ loadConnectionUsage: vi.fn().mockResolvedValue(null) }));
 vi.mock("@/lib/alerts/wecom.js", () => ({ notifyRequestError: vi.fn().mockResolvedValue(undefined) }));
@@ -19,6 +20,7 @@ beforeEach(async () => {
   delete global._dbAdapter;
   vi.resetModules();
   upstream.mockReset().mockImplementation(async () => ({ success: true, response: Response.json({ ok: true }) }));
+  router.mockReset();
   db = await import("@/lib/db/index.js");
   await db.initDb();
   await db.updateSettings({ requireApiKey: false });
@@ -56,6 +58,64 @@ async function send(model, key, { header = "Authorization", query = false, heade
     body: JSON.stringify({ model, stream: false, messages: [{ role: "user", content: "hello" }] }),
   }));
 }
+
+describe("upstream features through local combo routing", () => {
+  it("keeps smart routing sticky per API key and uses each caller's exclusive router account", async () => {
+    const owner = await db.createApiKey("smart-owner", "test-machine");
+    const other = await db.createApiKey("smart-other", "test-machine");
+    const accounts = [];
+    for (const key of [owner, other]) {
+      accounts.push(await db.createProviderConnection({
+        provider: "openai", authType: "apikey", apiKey: "upstream-test-key", name: key.name,
+        exclusiveApiKeyIds: [key.id],
+      }));
+    }
+    await db.createCombo({ name: "smart", models: ["openai/model-a", "openai/model-b"] });
+    await db.updateSettings({ comboStrategies: { smart: { fallbackStrategy: "smart", smartPolicy: "strict", routerModel: "openai/router" } } });
+    router.mockImplementation(async ({ credentials }) => ({
+      success: true,
+      response: Response.json({ answers: { route: {
+        choice: credentials.connectionId === accounts[0].id ? "openai/model-b" : "openai/model-a",
+        confidence: 0.95,
+      } } }),
+    }));
+    for (const key of [owner, owner, other]) {
+      const response = await send("cc/smart", key.key, { headers: { "x-session-id": "same-client-session" } });
+      expect(response.status).toBe(200);
+      await response.text();
+    }
+    expect(router).toHaveBeenCalledTimes(2);
+    expect(router.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual(accounts.map(account => account.id));
+    expect(upstream.mock.calls.map(([args]) => args.modelInfo.model)).toEqual(["model-b", "model-b", "model-a"]);
+    expect(upstream.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual([accounts[0].id, accounts[0].id, accounts[1].id]);
+  });
+
+  it("falls back to normal combo order when the decision model fails", async () => {
+    await db.createProviderConnection({ provider: "openai", authType: "apikey", apiKey: "test", name: "router" });
+    await db.createCombo({ name: "smart-fallback", models: ["openai/model-a", "openai/model-b"] });
+    await db.updateSettings({ comboStrategies: { "smart-fallback": { fallbackStrategy: "smart", routerModel: "openai/router" } } });
+    router.mockRejectedValue(new Error("decision service unavailable"));
+    const response = await send("smart-fallback");
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(router).toHaveBeenCalledOnce();
+    expect(upstream).toHaveBeenCalledWith(expect.objectContaining({ modelInfo: { provider: "openai", model: "model-a" } }));
+  });
+
+  it("passes the configured prompt through local routing and advances past request-scoped errors", async () => {
+    const account = await db.createProviderConnection({ provider: "openai", authType: "apikey", apiKey: "test", name: "shared" });
+    await db.createCombo({ name: "fallback", models: ["openai/model-a", "openai/model-b"] });
+    await db.updateSettings({ customPromptEnabled: true, customPrompt: "Keep the configured instruction." });
+    upstream.mockResolvedValueOnce({ success: false, status: 400, error: "unsupported parameter", response: Response.json({ error: "unsupported parameter" }, { status: 400 }) });
+    const response = await send("fallback");
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(upstream.mock.calls.map(([args]) => args.modelInfo.model)).toEqual(["model-a", "model-b"]);
+    for (const [args] of upstream.mock.calls) {
+      expect(args).toMatchObject({ credentials: { connectionId: account.id }, customPromptEnabled: true, customPrompt: "Keep the configured instruction." });
+    }
+  });
+});
 
 describe("disabled combo API Key allowlist", () => {
   it.each(["private-combo", "cc/private-combo", "cc/private-combo[1m]"])("allows %s only for its listed active key", async name => {

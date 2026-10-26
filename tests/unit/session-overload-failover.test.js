@@ -125,6 +125,7 @@ describe("credits policy during account routing", () => {
 
 describe("stable account bindings during overload", () => {
   it("continues a trial request after cooldown without changing its account, model or conversation", async () => {
+    await db.updateSettings({ customPromptEnabled: true, customPrompt: "A normal chat-only instruction." });
     const connection = await account("trial-account");
     await db.updateProviderConnection(connection.id, { isActive: false, accountCooldownMinMs: 1000, accountCooldownMaxMs: 1000 });
     await account("other-account");
@@ -148,6 +149,7 @@ describe("stable account bindings during overload", () => {
       expect(await response.text()).toContain("response.completed");
       expect(upstream).toHaveBeenCalledTimes(2);
       for (const [args] of upstream.mock.calls) {
+        expect(args.customPromptEnabled).toBe(false);
         expect(args.connectionId).toBe(connection.id);
         expect(args.modelInfo).toEqual({ provider: "codex", model: MODEL });
         expect(args.body.input).toEqual(input);

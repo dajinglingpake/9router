@@ -40,12 +40,14 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
   seenModels.add(modelStr);
   const requestId = getRequestId(request);
+  const sessionKey = trial ? null : getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   // Resolve combo aliases (including cc/<name>) before provider prefixes.
   const apiKeyId = await getRequestKeyId(request);
   const comboModels = await getComboModels(modelStr, apiKeyId);
   if (comboModels?.length) {
     return handleLocalCombo(body, comboModels, modelStr, (_body, candidate) =>
-      handleSingleModelChat(_body, candidate, clientRawRequest, request, apiKey, new Set(seenModels), new Set(excludedAccounts), deadline, retryCount, [...comboNames, modelStr]));
+      handleSingleModelChat(_body, candidate, clientRawRequest, request, apiKey, new Set(seenModels), new Set(excludedAccounts), deadline, retryCount, [...comboNames, modelStr]),
+      { request, sessionId: sessionKey });
   }
   const modelInfo = await getModelInfo(modelStr, apiKeyId);
 
@@ -69,7 +71,6 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
-  const sessionKey = trial ? null : getSessionRoutingKey(clientRawRequest?.headers, clientRawRequest?.body || body, clientRawRequest?.apiKeyRecordId || apiKey);
   const chatSettings = await getSettings();
   const codexPolicy = provider === "codex" && !trial ? getCodexRoutingPolicy(chatSettings) : null;
   const apiKeyRoutingKey = codexPolicy?.apiKeyAffinity
@@ -271,6 +272,8 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
+      customPromptEnabled: !trial && !!chatSettings.customPromptEnabled,
+      customPrompt: chatSettings.customPrompt || "",
       clientAbortSignal: stickyBinding ? AbortSignal.any([request?.signal, attemptTimeout.signal].filter(Boolean)) : request?.signal,
       pxpipeEnabled: !!chatSettings.pxpipeEnabled,
       pxpipeMinChars: chatSettings.pxpipeMinChars,
