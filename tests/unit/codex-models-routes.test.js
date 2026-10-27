@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const state = {
   connection: vi.fn(), connections: vi.fn(), catalog: vi.fn(), models: vi.fn(), access: vi.fn(),
-  aliases: vi.fn(), custom: vi.fn(), disabled: vi.fn(), ping: vi.fn(),
+  aliases: vi.fn(), custom: vi.fn(), disabled: vi.fn(), ping: vi.fn(), combos: vi.fn(),
   };
   state.database = { getProviderConnectionById: state.connection, getProviderConnections: state.connections,
-  getModelAliases: state.aliases, getCustomModels: state.custom, getCombos: async () => [],
+  getModelAliases: state.aliases, getCustomModels: state.custom, getCombos: state.combos,
   getProviderNodes: async () => [], getSettings: async () => ({}), updateSettings: vi.fn(), setModelAlias: vi.fn() };
   return state;
 });
@@ -36,6 +36,7 @@ beforeEach(() => {
   mocks.connection.mockResolvedValue(free);
   mocks.aliases.mockResolvedValue({ fake: "cx/not-authorized" });
   mocks.custom.mockResolvedValue([{ providerAlias: "cx", id: "not-authorized" }]);
+  mocks.combos.mockResolvedValue([]);
   mocks.disabled.mockResolvedValue({});
   mocks.access.mockImplementation(async (connections, request) => request?.headers.get("x-owner") === "yes" ? connections : connections.filter(connection => connection.id === "free"));
   mocks.catalog.mockImplementation(async connections => ({ models: [
@@ -114,6 +115,47 @@ describe("Codex live catalogs across endpoints", () => {
     expect((await buildModelsList(["llm"])).filter(model => model.owned_by === "cx")).toEqual([]);
     mocks.connections.mockResolvedValue([]);
     expect((await buildModelsList(["llm"])).filter(model => model.owned_by === "cx")).toEqual([]);
+  });
+
+  it.each(["cx/gpt-6.1-terra", "codex/gpt-6.1-terra", "cx/gpt-6.1-terra(high)"])(
+    "publishes live limits for the Terra combo seat %s and its cc alias", async seat => {
+      mocks.combos.mockResolvedValue([{ name: "gpt-6.1-terra", models: [seat] }]);
+      mocks.catalog.mockResolvedValue({ models: [{ ...model("gpt-6.1-terra", ["free"]),
+        capabilities: { contextWindow: 500000, maxOutput: 128000 } }], accounts: [] });
+
+      const models = await buildModelsList(["llm"]);
+      for (const id of ["gpt-6.1-terra", "cc/gpt-6.1-terra", "cx/gpt-6.1-terra"]) {
+        expect(models.find(entry => entry.id === id)).toMatchObject({
+          context_length: 500000, max_completion_tokens: 128000,
+          capabilities: { contextWindow: 500000, maxOutput: 128000 },
+        });
+      }
+      expect(mocks.catalog).toHaveBeenCalledExactlyOnceWith([free], { respectEnabledModels: true });
+    }
+  );
+
+  it("keeps the smallest live limit across nested combo seats", async () => {
+    mocks.combos.mockResolvedValue([
+      { name: "terra", models: ["cx/gpt-6.1-terra"] },
+      { name: "mixed", models: ["terra", "cx/gpt-6-luna"] },
+    ]);
+    mocks.catalog.mockResolvedValue({ models: [
+      { ...model("gpt-6.1-terra", ["free"]), capabilities: { contextWindow: 500000, maxOutput: 128000 } },
+      model("gpt-6-luna", ["free"]),
+    ], accounts: [] });
+    const models = await buildModelsList(["llm"]);
+    expect(models.find(entry => entry.id === "mixed")).toMatchObject({
+      context_length: 272000, max_completion_tokens: 64000,
+      capabilities: { contextWindow: 272000 },
+    });
+  });
+
+  it("keeps static combo limits when the Codex live catalog is unavailable", async () => {
+    mocks.combos.mockResolvedValue([{ name: "luna", models: ["cx/gpt-6-luna"] }]);
+    mocks.catalog.mockResolvedValue({ models: [], accounts: [] });
+    expect((await buildModelsList(["llm"])).find(entry => entry.id === "luna")).toMatchObject({
+      context_length: 272000, max_completion_tokens: 128000,
+    });
   });
 
   it("uses live account membership for trials and avoids discovery during polling", async () => {

@@ -59,11 +59,16 @@ const ALIAS_TO_PROVIDER_ID = {
   ...ALIAS_TO_ID,
 };
 
-function comboSeatCapabilities(seat) {
+function comboSeatCapabilities(seat, codexCapabilities = null) {
   const slash = seat.indexOf("/");
   if (slash <= 0) return null;
   const alias = seat.slice(0, slash);
-  return getCapabilitiesForModel(ALIAS_TO_PROVIDER_ID[alias] || alias, seat.slice(slash + 1));
+  const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
+  const model = seat.slice(slash + 1);
+  const caps = getCapabilitiesForModel(providerId, model);
+  const live = providerId === "codex"
+    ? codexCapabilities?.get(model.replace(/\([^()]+\)\s*$/, "")) : null;
+  return live ? { ...caps, ...live } : caps;
 }
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -288,7 +293,7 @@ function comboMatchesKinds(combo, kindFilter) {
 // treated as a literal model and publishes the 200k floor. Expand nested
 // names (cycle-guarded) so the published window is the true min across the
 // whole chain.
-function comboSeatLimits(combo, combosByName, visiting = new Set()) {
+function comboSeatLimits(combo, combosByName, resolveCapabilities = comboSeatCapabilities, visiting = new Set()) {
   const name = typeof combo?.name === "string" ? combo.name : null;
   if (name) {
     if (visiting.has(name)) return { contextWindow: undefined, maxOutput: undefined };
@@ -304,13 +309,13 @@ function comboSeatLimits(combo, combosByName, visiting = new Set()) {
       if (slash <= 0) {
         const nested = combosByName.get(seat);
         if (nested) {
-          const nestedLimits = comboSeatLimits(nested, combosByName, visiting);
+          const nestedLimits = comboSeatLimits(nested, combosByName, resolveCapabilities, visiting);
           if (Number.isFinite(nestedLimits.contextWindow)) contextWindow = Math.min(contextWindow, nestedLimits.contextWindow);
           if (Number.isFinite(nestedLimits.maxOutput)) maxOutput = Math.min(maxOutput, nestedLimits.maxOutput);
           continue;
         }
       }
-      const caps = comboSeatCapabilities(seat) || getCapabilitiesForModel(null, seat);
+      const caps = resolveCapabilities(seat) || getCapabilitiesForModel(null, seat);
       if (Number.isFinite(caps?.contextWindow)) contextWindow = Math.min(contextWindow, caps.contextWindow);
       if (Number.isFinite(caps?.maxOutput)) maxOutput = Math.min(maxOutput, caps.maxOutput);
     }
@@ -398,6 +403,15 @@ export async function buildModelsList(kindFilter, options = {}) {
     }
   }
 
+  // Resolve once from the caller's accessible accounts so combos and direct
+  // Codex entries publish the same live limits, including newly released models.
+  const codexConnections = connections.filter(connection => connection.provider === "codex");
+  const codexCatalog = codexConnections.length && providerMatchesKinds("codex", kindFilter)
+    ? await resolveCodexCatalog(codexConnections, { respectEnabledModels: true })
+    : { models: [] };
+  const codexCapabilities = new Map(codexCatalog.models.map(model => [model.id, model.capabilities]));
+  const resolveComboCapabilities = seat => comboSeatCapabilities(seat, codexCapabilities);
+
   const models = [];
   const combosByName = new Map(
     combos.filter((c) => typeof c?.name === "string").map((c) => [c.name, c]),
@@ -417,13 +431,13 @@ export async function buildModelsList(kindFilter, options = {}) {
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
     } else {
-      const comboCaps = aggregateComboCapabilities(combo.models, comboByName, comboSeatCapabilities);
+      const comboCaps = aggregateComboCapabilities(combo.models, comboByName, resolveComboCapabilities);
       if (comboCaps) entry.capabilities = comboCaps;
       // Any seat can serve the request, so the only window a combo can promise is
       // its smallest. Combo entries were the only models on this endpoint that
       // published no limits at all, which leaves a client to guess from the name —
       // and it guesses high (see the snake_case note on the per-provider path).
-      const { contextWindow, maxOutput } = comboSeatLimits(combo, combosByName);
+      const { contextWindow, maxOutput } = comboSeatLimits(combo, combosByName, resolveComboCapabilities);
       if (Number.isFinite(contextWindow)) entry.context_length = contextWindow;
       if (Number.isFinite(maxOutput)) entry.max_completion_tokens = maxOutput;
     }
@@ -508,7 +522,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         : providerModels.map((model) => model.id);
 
       if (providerId === "codex") {
-        const catalog = await resolveCodexCatalog(connections.filter(connection => connection.provider === "codex"), { respectEnabledModels: true });
+        const catalog = codexCatalog;
         rawModelIds = catalog.models.map(model => model.id);
         liveModelKindById = new Map(catalog.models.map(model => [model.id, modelKind(model)]));
         liveCapabilitiesById = new Map(catalog.models.map(model => [model.id, model.capabilities]));
