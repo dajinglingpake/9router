@@ -25,7 +25,7 @@ function makeExec(config) {
 
 const creds = { apiKey: "k" };
 
-beforeEach(() => fetchMock.mockReset());
+beforeEach(() => { fetchMock.mockReset(); });
 
 describe("Retry-After parsing", () => {
   it("parses delay-seconds", () => {
@@ -64,6 +64,33 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
     expect(out.response.status).toBe(503);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(onUpstreamOverload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps pacing and overload diagnostics when using a provider transport", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 3, delayMs: 0 } } });
+    const order = [];
+    const directFetch = vi.fn(async () => {
+      order.push("fetch");
+      return new Response("no healthy upstream", { status: 503 });
+    });
+    fetchMock.mockImplementation((url, options) => options.directFetch(url, options));
+    const onUpstreamOverload = vi.fn();
+    const log = { info: vi.fn() };
+
+    const out = await ex.execute({
+      model: "m", body: {}, directFetch, log, onUpstreamOverload,
+      credentials: { ...creds, beforeUpstreamRequest: async () => { order.push("pace"); } },
+      onUpstreamRequest: async () => { order.push("request"); },
+      diagnosticContext: { retryCount: 2, sseAttempt: 1 },
+    });
+
+    expect(order).toEqual(["pace", "request", "fetch"]);
+    expect(directFetch).toHaveBeenCalledTimes(1);
+    expect(onUpstreamOverload).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      upstreamStatus: 503, retryCount: 2, sseAttempt: 1, message: "no healthy upstream",
+    }));
+    expect(log.info).toHaveBeenCalledWith("UPSTREAM_HTTP", "test", expect.objectContaining({ upstreamStatus: 503 }));
+    await expect(out.response.text()).resolves.toBe("no healthy upstream");
   });
 
   it.each([
