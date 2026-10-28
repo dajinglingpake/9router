@@ -1,5 +1,27 @@
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 
+// Chat tools have no namespace field. Recover it from the original Responses
+// declarations/history when returning tool calls, including deferred tools.
+export function collectResponsesToolNamespaces(body) {
+  const namespaces = new Map();
+  const collect = (tools) => {
+    for (const tool of Array.isArray(tools) ? tools : []) {
+      if (tool?.type !== "namespace" || !tool.name || !Array.isArray(tool.tools)) continue;
+      for (const nested of tool.tools) {
+        if ([OPENAI_BLOCK.FUNCTION, "custom"].includes(nested?.type) && nested.name) namespaces.set(nested.name, tool.name);
+      }
+    }
+  };
+  for (const item of Array.isArray(body?.input) ? body.input : []) {
+    if (item?.type === RESPONSES_ITEM.ADDITIONAL_TOOLS) collect(item.tools);
+    else if ([RESPONSES_ITEM.FUNCTION_CALL, RESPONSES_ITEM.CUSTOM_TOOL_CALL].includes(item?.type) && item.name && item.namespace) {
+      namespaces.set(item.name, item.namespace);
+    }
+  }
+  collect(body?.tools);
+  return namespaces;
+}
+
 /**
  * Normalize Responses API input to array format.
  * Accepts string or array, returns array of message items.

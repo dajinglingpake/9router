@@ -1,4 +1,5 @@
 import { FORMATS } from "../../translator/formats.js";
+import { collectResponsesToolNamespaces } from "../../translator/formats/responsesApi.js";
 import { needsTranslation } from "../../translator/index.js";
 import { openAICompletionToClaudeMessage } from "../../translator/concerns/claudeMessage.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
@@ -30,7 +31,7 @@ function extractCustomToolInput(argumentsValue) {
   return argumentsText;
 }
 
-function openAICompletionToResponses(responseBody, customToolNames = null) {
+function openAICompletionToResponses(responseBody, customToolNames = null, toolNamespaces = null) {
   const choice = responseBody?.choices?.[0];
   if (!choice) return responseBody;
 
@@ -65,6 +66,7 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
       id: `${custom ? "ctc" : "fc"}_${tc.id || ""}`,
       call_id: tc.id || "",
       name: fn.name || "",
+      ...(toolNamespaces?.has(fn.name) && { namespace: toolNamespaces.get(fn.name) }),
       ...(custom
         ? { input: extractCustomToolInput(fn.arguments) }
         : { arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments || {}) }),
@@ -94,12 +96,12 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
 /**
  * Translate non-streaming response body from provider format → OpenAI format.
  */
-export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null) {
+export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null, toolNamespaces = null) {
   if (targetFormat === sourceFormat) return responseBody;
   // Provider responded in OpenAI Chat Completions shape but the client speaks
   // Responses API — convert so tool_calls/text surface as Responses `output`.
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES) {
-    return openAICompletionToResponses(responseBody, customToolNames);
+    return openAICompletionToResponses(responseBody, customToolNames, toolNamespaces);
   }
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.CLAUDE) {
     return openAICompletionToClaudeMessage(responseBody);
@@ -280,7 +282,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: totalLatency } }));
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)
-    ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames)
+    ? translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames, collectResponsesToolNamespaces(body))
     : responseBody;
   const isClaudeMessageResponse = sourceFormat === FORMATS.CLAUDE && translatedResponse?.type === "message";
   // Responses-format translation produces a `object:"response"` body with no

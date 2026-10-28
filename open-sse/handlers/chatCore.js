@@ -103,7 +103,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // /chat/completions), so without this guard a claude-format request would wrongly
   // route kimi to /messages.
   const modelSupportedFormats = getModelSupportedFormats(alias, model);
-  const runtimeTransport = resolveTransport(provider, sourceFormat);
+  const runtimeTransport = resolveTransport(provider, sourceFormat, body);
   // Per-model guard: when a model declares supportedFormats, only use the
   // sourceFormat-matched transport if that format is declared (opencode-go models
   // differ — kimi/glm only do /chat/completions). Undeclared models keep the
@@ -115,7 +115,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // translated to the Responses body (`input`) yet POSTed to the default Chat
   // Completions URL, and upstream rejects it: "unknown parameter `input`".
   const modelTargetTransport = modelTargetFormat ? resolveTransport(provider, modelTargetFormat) : null;
-  const useTransport = (!modelSupportedFormats || modelSupportedFormats.includes(sourceFormat))
+  const useTransport = (!modelSupportedFormats || modelSupportedFormats.includes(runtimeTransport?.format || sourceFormat))
     ? runtimeTransport
     : modelTargetTransport;
   // A source-format-matched endpoint keeps the request lossless. Prefer it
@@ -236,7 +236,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
     toolNameMap = translatedBody._toolNameMap;
     delete translatedBody._toolNameMap;
-    customToolNames = translatedBody._customToolNames;
+    customToolNames = translatedBody._customToolNames ? new Set(translatedBody._customToolNames) : undefined;
     delete translatedBody._customToolNames;
     translatedBody.model = stripThinkingSuffix(upstreamModel);
     stripContinuityFields(translatedBody);

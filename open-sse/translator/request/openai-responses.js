@@ -186,20 +186,18 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
     result.tools = responseTools
       .flatMap(tool => {
         // Chat Completions has no namespace tool type. Expose each nested
-        // Responses function directly so providers can call it by name.
+        // Responses function/custom tool directly so providers can call it by name.
         if (tool.type === "namespace" && Array.isArray(tool.tools)) {
           return tool.tools
-            .filter(nestedTool => nestedTool?.type === OPENAI_BLOCK.FUNCTION && nestedTool.name)
+            .filter(nestedTool => [OPENAI_BLOCK.FUNCTION, "custom"].includes(nestedTool?.type) && nestedTool.name)
             .map(nestedTool => ({
-              type: OPENAI_BLOCK.FUNCTION,
-              function: {
-                name: nestedTool.name,
-                description: String(nestedTool.description || tool.description || ""),
-                parameters: normalizeToolParameters(nestedTool.parameters),
-                strict: nestedTool.strict
-              }
+              ...nestedTool,
+              description: nestedTool.description || tool.description || "",
             }));
         }
+        return tool;
+      })
+      .map(tool => {
         // Already in Chat Completions format: { type: "function", function: { name, ... } }
         if (tool.function) return tool;
         // Responses API function/custom tool: { type, name, description, parameters|format }.
@@ -245,6 +243,10 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       .filter(Boolean);
   }
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
+
+  if ([OPENAI_BLOCK.FUNCTION, "custom"].includes(body.tool_choice?.type) && body.tool_choice.name) {
+    result.tool_choice = { type: OPENAI_BLOCK.FUNCTION, function: { name: body.tool_choice.name } };
+  }
 
   // Cleanup Responses API specific fields
   // Map Responses-only max_output_tokens to Chat max_tokens (avoid leaking unknown field upstream)

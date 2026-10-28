@@ -1,5 +1,6 @@
 import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
+import { collectResponsesToolNamespaces } from "../translator/formats/responsesApi.js";
 import { PROVIDERS } from "../config/providers.js";
 import { liftReasoningAliases } from "../translator/concerns/reasoning.js";
 import { appendRequestLog } from "@/lib/usageDb.js";
@@ -17,17 +18,6 @@ export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
 
 // sharedEncoder is stateless — safe to share across streams
 const sharedEncoder = new TextEncoder();
-
-function collectToolNamespaces(tools) {
-  const namespaces = new Map();
-  for (const namespaceTool of tools || []) {
-    if (namespaceTool?.type !== "namespace" || !namespaceTool.name || !Array.isArray(namespaceTool.tools)) continue;
-    for (const tool of namespaceTool.tools) {
-      if (tool?.type === "function" && tool.name) namespaces.set(tool.name, namespaceTool.name);
-    }
-  }
-  return namespaces;
-}
 
 /**
  * Stream modes
@@ -90,7 +80,7 @@ export function createSSEStream(options = {}) {
         ...initState(sourceFormat),
         provider,
         toolNameMap,
-        toolNamespaces: collectToolNamespaces(body?.tools),
+        toolNamespaces: collectResponsesToolNamespaces(body),
         customToolNames: new Set(customToolNames || []),
         model,
         sessionId: credentials?._clientSessionId || null,

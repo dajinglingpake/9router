@@ -3,6 +3,7 @@ import { restoreToolNames } from "../../utils/opencodeFingerprint.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { FORMATS } from "../../translator/formats.js";
+import { collectResponsesToolNamespaces } from "../../translator/formats/responsesApi.js";
 import { openAICompletionToClaudeMessage } from "../../translator/concerns/claudeMessage.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats, formatDoneLine } from "./requestDetail.js";
@@ -52,7 +53,7 @@ function extractCustomToolInput(argumentsValue) {
   return argumentsText;
 }
 
-function chatCompletionToResponses(responseBody, customToolNames = null) {
+function chatCompletionToResponses(responseBody, customToolNames = null, toolNamespaces = null) {
   const choice = responseBody?.choices?.[0];
   if (!choice) return responseBody;
 
@@ -84,6 +85,7 @@ function chatCompletionToResponses(responseBody, customToolNames = null) {
       id: `${custom ? "ctc" : "fc"}_${tc.id || ""}`,
       call_id: tc.id || "",
       name: fn.name || "",
+      ...(toolNamespaces?.has(fn.name) && { namespace: toolNamespaces.get(fn.name) }),
       ...(custom
         ? { input: extractCustomToolInput(fn.arguments) }
         : { arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments || {}) }),
@@ -349,7 +351,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     // When content is empty (e.g. thinking models that used all tokens for reasoning),
     // reasoning_content is the only useful output and must be preserved.
     // Previously this was unconditional, which broke Qwen3.5, Claude extended thinking, etc.
-    if (parsed?.choices) {
+    // Responses clients replay reasoning items along with tool calls.
+    if (parsed?.choices && sourceFormat !== FORMATS.OPENAI_RESPONSES) {
       for (const choice of parsed.choices) {
         if (choice?.message?.reasoning_content && choice.message.content) {
           delete choice.message.reasoning_content;
@@ -364,7 +367,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     // nonStreamingHandler.js) to avoid a circular import: nonStreamingHandler
     // already imports parseSSEToOpenAIResponse from this module.
     const finalBody = sourceFormat === FORMATS.OPENAI_RESPONSES
-      ? chatCompletionToResponses(parsed, customToolNames)
+      ? chatCompletionToResponses(parsed, customToolNames, collectResponsesToolNamespaces(body))
       : sourceFormat === FORMATS.CLAUDE
         ? openAICompletionToClaudeMessage(parsed)
         : parsed;

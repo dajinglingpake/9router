@@ -6,6 +6,7 @@
 // wrong baseUrl here, same as on the wire. Executor-level cells check URL and auth
 // without any network.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import "../translator/registerAll.js";
 
 const { executeMock } = vi.hoisted(() => ({
   executeMock: vi.fn(),
@@ -29,7 +30,8 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
   }),
 }));
 
-vi.mock("../../open-sse/utils/stream.js", () => ({
+vi.mock("../../open-sse/utils/stream.js", async (importOriginal) => ({
+  ...await importOriginal(),
   COLORS: { red: "", reset: "" },
   createPassthroughStreamWithLogger: vi.fn(() => new TransformStream()),
 }));
@@ -89,12 +91,12 @@ const RESPONSE_BY_FORMAT = {
   },
 };
 
-async function route(model, sourceFormat) {
+async function route(model, sourceFormat, overrides = {}, upstreamResponse = null) {
   executeMock.mockImplementationOnce(async ({ credentials }) => {
     const rt = credentials.runtimeTransport;
     const format = rt?.format || "claude";
     return {
-      response: new Response(JSON.stringify(RESPONSE_BY_FORMAT[format] || RESPONSE_BY_FORMAT.claude), {
+      response: upstreamResponse || new Response(JSON.stringify(RESPONSE_BY_FORMAT[format] || RESPONSE_BY_FORMAT.claude), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -112,7 +114,7 @@ async function route(model, sourceFormat) {
 
   const credentials = { apiKey: "test-key", providerSpecificData: {} };
   const result = await handleChatCore({
-    body,
+    body: { ...body, ...overrides },
     modelInfo: { provider: "kimi", model },
     credentials,
     connectionId: "kimi-route-test",
@@ -120,9 +122,9 @@ async function route(model, sourceFormat) {
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
   });
 
-  const { credentials: creds } = executeMock.mock.calls.at(-1)[0];
+  const { credentials: creds, body: translatedBody } = executeMock.mock.calls.at(-1)[0];
   const executorResult = await executeMock.mock.results.at(-1).value;
-  return { result, runtimeTransport: creds.runtimeTransport ?? null, effectiveUrl: executorResult.url };
+  return { result, translatedBody, runtimeTransport: creds.runtimeTransport ?? null, effectiveUrl: executorResult.url };
 }
 
 describe("kimi /responses transport routing (via real handleChatCore)", () => {
@@ -139,6 +141,66 @@ describe("kimi /responses transport routing (via real handleChatCore)", () => {
 
   it("registry exposes models to exercise", () => {
     expect(MODELS.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    { tools: [{ type: "custom", name: "exec" }] },
+    { input: [{ type: "additional_tools", tools: [{ type: "custom", name: "exec" }] }, { role: "user", content: "hi" }] },
+    { tools: [{ type: "namespace", name: "functions", tools: [{ type: "custom", name: "exec" }] }] },
+  ])("routes unsupported custom declarations through Chat and preserves exec: %j", async (overrides) => {
+    const { result, runtimeTransport, translatedBody } = await route(MODELS[0], "openai-responses", overrides);
+    expect(result.success).toBe(true);
+    expect(runtimeTransport?.format).toBe("openai");
+    expect(translatedBody.input).toBeUndefined();
+    expect(translatedBody.tools).toEqual([expect.objectContaining({
+      type: "function",
+      function: expect.objectContaining({ name: "exec", parameters: expect.objectContaining({ required: ["input"] }) }),
+    })]);
+    expect(translatedBody._customToolNames).toBeUndefined();
+  });
+
+  it("keeps native Responses for apply_patch and function tools", async () => {
+    const tools = [{ type: "custom", name: "apply_patch" }, { type: "function", name: "exec", parameters: { type: "object" } }];
+    const { runtimeTransport, translatedBody } = await route(MODELS[0], "openai-responses", { tools });
+    expect(runtimeTransport?.format).toBe("openai-responses");
+    expect(translatedBody.tools).toEqual(tools);
+  });
+
+  it("converts custom tool history even without a fresh declaration", async () => {
+    const { runtimeTransport, translatedBody } = await route(MODELS[0], "openai-responses", {
+      input: [
+        { type: "custom_tool_call", name: "exec", call_id: "call_exec", input: "return 1;" },
+        { type: "custom_tool_call_output", call_id: "call_exec", output: "1" },
+      ],
+    });
+    expect(runtimeTransport?.format).toBe("openai");
+    expect(translatedBody.messages).toEqual([
+      expect.objectContaining({ role: "assistant", tool_calls: [{ id: "call_exec", type: "function", function: { name: "exec", arguments: '{"input":"return 1;"}' } }] }),
+      { role: "tool", tool_call_id: "call_exec", content: "1" },
+    ]);
+  });
+
+  it.each([false, true])("returns exec in Responses custom-tool format (stream=%s)", async (stream) => {
+    const toolCall = { id: "call_exec", type: "function", function: { name: "exec", arguments: '{"input":"return 1;"}' } };
+    const chatResponse = stream
+      ? [{ id: "chatcmpl-1", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...toolCall }] }, finish_reason: null }] },
+        { id: "chatcmpl-1", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }]
+        .map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n"
+      : JSON.stringify({ ...RESPONSE_BY_FORMAT.openai, choices: [{ index: 0, message: { role: "assistant", tool_calls: [toolCall] }, finish_reason: "tool_calls" }] });
+    const { result, translatedBody } = await route(MODELS[0], "openai-responses", {
+      stream, tools: [{ type: "custom", name: "exec" }], tool_choice: { type: "custom", name: "exec" },
+    }, new Response(chatResponse, { headers: { "content-type": stream ? "text/event-stream" : "application/json" } }));
+    expect(result.success).toBe(true);
+    expect(translatedBody.tool_choice).toEqual({ type: "function", function: { name: "exec" } });
+    const text = await result.response.text();
+    const output = stream
+      ? text.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)))
+        .find(event => event.type === "response.completed")?.response.output
+      : JSON.parse(text).output;
+    expect(output).toEqual(expect.arrayContaining([expect.objectContaining({
+      type: "custom_tool_call", name: "exec", call_id: "call_exec", input: "return 1;",
+    })]));
+    if (stream) expect(text).toContain("response.custom_tool_call_input.delta");
   });
 
   // Registry models only; an id without declared supportedFormats uses the

@@ -1,5 +1,6 @@
 import { PROVIDERS } from "../config/providers.js";
 import { OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
+import { RESPONSES_ITEM } from "../translator/schema/index.js";
 
 const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 const OPENAI_COMPATIBLE_DEFAULTS = {
@@ -145,11 +146,27 @@ export function getTargetFormat(provider, credentials = null) {
 // Resolve which transport to use for a provider given the client sourceFormat.
 // Multi-endpoint providers (transport.transports[]) pick the entry matching sourceFormat
 // to avoid lossy translation; falls back to the default transport when no match.
-export function resolveTransport(provider, sourceFormat) {
+export function resolveTransport(provider, sourceFormat, body = null) {
   const config = PROVIDERS[provider];
   const transports = config?.transports;
   if (!Array.isArray(transports) || !transports.length) return null;
-  return transports.find(t => t.format === sourceFormat) || null;
+  const transport = transports.find(t => t.format === sourceFormat) || null;
+  const fallback = transport?.customToolFallback;
+  if (!fallback || !body) return transport;
+
+  const unsupported = (name) => !fallback.supported.includes(name);
+  const hasUnsupportedTool = (tools) => Array.isArray(tools) && tools.some(tool =>
+    (tool?.type === "custom" && unsupported(tool.name)) ||
+    (tool?.type === "namespace" && hasUnsupportedTool(tool.tools))
+  );
+  const input = Array.isArray(body.input) ? body.input : [];
+  const needsFallback = hasUnsupportedTool(body.tools) || hasUnsupportedTool([body.tool_choice]) || input.some(item =>
+    (item?.type === RESPONSES_ITEM.ADDITIONAL_TOOLS && hasUnsupportedTool(item.tools)) ||
+    (item?.type === RESPONSES_ITEM.CUSTOM_TOOL_CALL && unsupported(item.name))
+  );
+  return needsFallback
+    ? transports.find(t => t.format === fallback.format) || transport
+    : transport;
 }
 
 // Check if last message is from user

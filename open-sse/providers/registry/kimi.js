@@ -62,6 +62,9 @@ export default {
     {
       format: "openai-responses",
       baseUrl: "https://api.kimi.com/coding/v1/responses",
+      // Responses rejects other freeform tools (e.g. Codex exec). Translate
+      // those requests through Chat so custom tool inputs can round-trip.
+      customToolFallback: { supported: ["apply_patch"], format: "openai" },
       auth: { combined: true, header: "Authorization", scheme: "bearer", hooks: ["kimiHeaders"] },
     },
   ],
