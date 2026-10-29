@@ -40,6 +40,7 @@ function maskName(name) {
 
 function sanitize(c) {
   const safe = { accountExpiry: getAccountExpiry(c) };
+  if (c.provider === "openai") safe.hasOpenaiAdminKey = !!c.openaiAdminKey;
   const accountPlan = getAccountPlan(c);
   if (accountPlan) safe.accountPlan = accountPlan;
   for (const f of SAFE_FIELDS) if (c[f] !== undefined) safe[f] = c[f];

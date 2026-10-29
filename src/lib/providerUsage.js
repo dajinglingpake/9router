@@ -8,6 +8,7 @@ import { isUnrecoverableRefreshError } from "open-sse/services/tokenRefresh.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
+import { getOpenAIUsage } from "@/lib/openaiUsage.js";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -124,6 +125,7 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
 }
 
 export function supportsConnectionUsage(connection) {
+  if (connection.provider === "openai" && !connection.openaiAdminKey) return false;
   return USAGE_SUPPORTED_PROVIDERS.includes(connection.provider) && (connection.authType === "oauth" ||
     (["apikey", "api_key"].includes(connection.authType) && USAGE_APIKEY_PROVIDERS.includes(connection.provider)));
 }
@@ -134,7 +136,8 @@ export async function loadConnectionUsage(connection, { force = false, signal } 
   }
   await ensureOutboundProxyInitialized();
   const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData);
-  const proxyOptions = { ...proxyConfig, strictProxy: proxyConfig.connectionProxyEnabled === true, signal };
+  const proxyOptions = { ...proxyConfig, strictProxy: proxyConfig.strictProxy === true || proxyConfig.connectionProxyEnabled === true, signal };
+  if (connection.provider === "openai") return getOpenAIUsage(connection, proxyOptions, { force });
   if (connection.authType === "oauth") {
     try {
       const result = await refreshAndUpdateCredentials(connection, false, proxyOptions);

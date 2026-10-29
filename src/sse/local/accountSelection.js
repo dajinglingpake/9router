@@ -106,7 +106,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     const connections = (await filterAccountPoolForRequest(
       await getProviderConnections({ provider: providerId }), options.request
-    )).filter(c => c.isActive !== false);
+    )).filter(c => c.isActive !== false && (c.provider !== "openai" || !!c.apiKey));
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     // A deleted or replaced connection cannot serve the old sticky session.
@@ -327,6 +327,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
+    const { openaiAdminKey, ...modelConnection } = connection;
     return {
       authType: connection.authType,
       apiKey: connection.apiKey,
@@ -366,7 +367,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       testStatus: connection.testStatus,
       lastError: connection.lastError,
       // Pass full connection for clearAccountError to read modelLock_* keys
-      _connection: connection
+      _connection: modelConnection
     };
   } finally {
     if (resolveMutex) resolveMutex();

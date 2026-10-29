@@ -13,6 +13,7 @@ import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 import QuotaTable from "./QuotaTable";
+import OpenAIUsageSummary from "./OpenAIUsageSummary";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
 import {
@@ -1394,6 +1395,8 @@ export default function ProviderLimits() {
                     </span>
                     <p className="mt-1.5 text-xs text-text-muted">{error}</p>
                   </div>
+                ) : quota?.raw?.openaiUsage ? (
+                  <OpenAIUsageSummary usage={quota.raw.openaiUsage} detailUrl={quota.raw.detailUrl} />
                 ) : quota?.message ? (
                   <div className="text-center py-5">
                     <p className="text-xs text-text-muted">{quota.message}</p>

@@ -9,6 +9,7 @@ import {
   deleteProviderConnection,
 } from "@/models";
 import { toProviderConnectionResponse, usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
+import { normalizeOpenAIAdminKey } from "@/lib/openaiAdminKey";
 import { getApiKeyById } from "@/lib/db/repos/apiKeysRepo.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { ACCOUNT_QUALITY_LABELS, ACCOUNT_QUALITY_MAX_LENGTH, getAccountQualityStatus, getAccountQualityLabel, getAccountQualityMarkedAt, getAccountQualityColor, isAccountQualityColor } from "@/shared/utils/accountQuality.js";
@@ -236,6 +237,19 @@ export async function PUT(request, { params }) {
     if (defaultModel !== undefined) updateData.defaultModel = defaultModel;
     if (isActive !== undefined) updateData.isActive = isActive;
     if (apiKey && existing.authType === "apikey") updateData.apiKey = apiKey;
+    const adminKey = normalizeOpenAIAdminKey(existing.provider, body.openaiAdminKey);
+    if (adminKey.error) return NextResponse.json({ error: adminKey.error }, { status: 400 });
+    if (adminKey.value !== undefined) updateData.openaiAdminKey = adminKey.value;
+    if (existing.provider === "openai" && (apiKey !== undefined || body.openaiAdminKey !== undefined)) {
+      if (apiKey != null && typeof apiKey !== "string") {
+        return NextResponse.json({ error: "API Key 格式无效。" }, { status: 400 });
+      }
+      if (apiKey?.trim()) updateData.apiKey = apiKey.trim();
+      else delete updateData.apiKey;
+      if (!(updateData.apiKey || existing.apiKey) && !(adminKey.value === undefined ? existing.openaiAdminKey : adminKey.value)) {
+        return NextResponse.json({ error: "API Key 和 Admin Key 至少保留一个。" }, { status: 400 });
+      }
+    }
     if (testStatus !== undefined) updateData.testStatus = testStatus;
     if (lastError !== undefined) updateData.lastError = lastError;
     if (lastErrorAt !== undefined) updateData.lastErrorAt = lastErrorAt;

@@ -11,6 +11,7 @@ const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 export default function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, authType, authHint, website, proxyPools, error, existingNames, onSave, onBulkDone, onClose }) {
   const NONE_PROXY_POOL_VALUE = "__none__";
   const isOllamaLocal = provider === "ollama-local";
+  const isOpenAI = provider === "openai";
   const isCookie = authType === "cookie";
   const isXaiApiKey = provider === "xai" && !isCookie;
   const credentialLabel = isCookie ? "Cookie Value" : provider === "qoder" || provider === "qoder-cn" ? "Personal Access Token (PAT)" : "API Key";
@@ -33,6 +34,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [formData, setFormData] = useState({
     name: "",
     apiKey: "",
+    openaiAdminKey: "",
     defaultModel: "",
     priority: 1,
     proxyPoolId: NONE_PROXY_POOL_VALUE,
@@ -100,6 +102,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   // handleSubmit's early return both read it; encoding the rule twice is what let Save look
   // clickable while silently doing nothing for profile-only Bedrock connections.
   const apiKeySatisfied = () => {
+    if (isOpenAI) return !!(formData.apiKey.trim() || formData.openaiAdminKey.trim());
     const psd = buildProviderSpecificData();
     if (apiKeyOptionalWith && psd?.[apiKeyOptionalWith]) return true;
     // AWS static keys are a pair: a secret alone saves a connection that can never sign.
@@ -136,26 +139,29 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     setSaving(true);
     try {
       let isValid = false;
-      try {
-        setValidating(true);
-        setValidationResult(null);
-        const res = await fetch("/api/providers/validate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
-        });
-        const data = await res.json();
-        isValid = !!data.valid;
-        setValidationResult(isValid ? "success" : "failed");
-      } catch {
-        setValidationResult("failed");
-      } finally {
-        setValidating(false);
+      if (!isOpenAI || formData.apiKey.trim()) {
+        try {
+          setValidating(true);
+          setValidationResult(null);
+          const res = await fetch("/api/providers/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+          });
+          const data = await res.json();
+          isValid = !!data.valid;
+          setValidationResult(isValid ? "success" : "failed");
+        } catch {
+          setValidationResult("failed");
+        } finally {
+          setValidating(false);
+        }
       }
 
       await onSave({
         name: formData.name || (isOllamaLocal ? "Ollama Local" : ""),
         apiKey: formData.apiKey,
+        ...(isOpenAI ? { openaiAdminKey: formData.openaiAdminKey.trim() } : {}),
         defaultModel: isCompatible ? formData.defaultModel.trim() : undefined,
         priority: formData.priority,
         proxyPoolId: formData.proxyPoolId === NONE_PROXY_POOL_VALUE ? null : formData.proxyPoolId,
@@ -222,7 +228,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   if (!provider) return null;
 
   return (
-    <Modal isOpen={isOpen} title={`Add ${providerName || provider} ${credentialLabel}`} onClose={onClose}>
+    <Modal isOpen={isOpen} title={isOpenAI ? "添加 OpenAI 账号" : `Add ${providerName || provider} ${credentialLabel}`} onClose={onClose}>
       <div className="flex flex-col gap-4">
         {/* Mode switcher. Hidden for AWS credentials: bulk lines carry only a key, so a
             Bedrock entry would be saved with no access key id or profile and never work. */}
@@ -289,7 +295,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         {!isOllamaLocal && (
           <div className="flex gap-2">
             <Input
-              label={credentialLabel}
+              label={isOpenAI ? "API Key（模型调用，可选）" : credentialLabel}
               type={isCookie ? "text" : "password"}
               value={formData.apiKey}
               onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
@@ -297,11 +303,22 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
               className="flex-1"
             />
             <div className="pt-6">
-              <Button onClick={handleValidate} disabled={!apiKeySatisfied() || validating || saving} variant="secondary">
+              <Button onClick={handleValidate} disabled={!apiKeySatisfied() || (isOpenAI && !formData.apiKey.trim()) || validating || saving} variant="secondary">
                 {validating ? "Checking..." : "Check"}
               </Button>
             </div>
           </div>
+        )}
+        {isOpenAI && (
+          <Input
+            label="Admin Key（用量查询，可选）"
+            type="password"
+            autoComplete="new-password"
+            value={formData.openaiAdminKey}
+            onChange={(e) => setFormData({ ...formData, openaiAdminKey: e.target.value })}
+            placeholder="输入 OpenAI Admin Key"
+            hint="API Key 和 Admin Key 至少填写一个。只填 Admin Key 可查询组织用量和费用；两者都填可同时调用模型。"
+          />
         )}
         {isXaiApiKey && (
           <p className="text-xs text-text-muted">

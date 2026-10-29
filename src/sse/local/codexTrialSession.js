@@ -30,6 +30,7 @@ export function isTrialToken(request) {
 export async function getTrialCredentials(session) {
   const connection = await getProviderConnectionById(session.connectionId);
   if (!connection || connection.provider !== (session.provider || "codex")) return null;
+  if (connection.provider === "openai" && !connection.apiKey) return null;
   if (connection.provider === "codex") {
     const policy = getCodexRoutingPolicy(await getSettings());
     const quota = getAccountQuotaState(connection, session.model, await loadCodexQuotaSnapshot(connection), policy);
@@ -40,8 +41,9 @@ export async function getTrialCredentials(session) {
     };
   }
   const proxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+  const { openaiAdminKey, ...modelConnection } = connection;
   return {
-    ...connection,
+    ...modelConnection,
     copilotToken: connection.providerSpecificData?.copilotToken,
     connectionId: connection.id,
     connectionName: connection.displayName || connection.name || connection.email || connection.id,
@@ -63,7 +65,7 @@ export async function getTrialCredentials(session) {
       minIntervalMs: Number(connection.minRequestIntervalMs) || 0,
       maxIntervalMs: Number(connection.maxRequestIntervalMs) || Number(connection.minRequestIntervalMs) || 0,
     }),
-    _connection: connection,
+    _connection: modelConnection,
   };
 }
 

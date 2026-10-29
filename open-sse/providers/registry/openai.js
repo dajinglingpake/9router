@@ -4,6 +4,21 @@ export const OPENAI_MODELS_CONFIG = {
   cacheTtlMs: 5 * 60 * 1000,
 };
 
+export const OPENAI_USAGE_CONFIG = {
+  costsUrl: "https://api.openai.com/v1/organization/costs",
+  completionsUrl: "https://api.openai.com/v1/organization/usage/completions",
+  timeoutMs: 15000,
+  cacheTtlMs: 5 * 60 * 1000,
+  bucketLimit: 31,
+  groupBy: ["model", "service_tier", "batch"],
+  pricingUrl: "https://developers.openai.com/api/docs/pricing",
+  // Verified Standard short-context rates live in MODEL_PRICING.
+  estimatedModels: ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],
+  tierMultipliers: { default: 1, flex: 0.5, batch: 0.5, priority: 2, fast: 2, ultrafast: 6 },
+  ultrafastModels: ["gpt-6-astra", "gpt-6.1-sol"],
+  cacheWrite12hMultiplier: 2,
+};
+
 export default {
   id: "openai",
   priority: 30,
@@ -18,11 +33,12 @@ export default {
       apiKeyUrl: "https://platform.openai.com/api-keys",
     },
     quotaNotice: {
-      message: "普通 OpenAI API Key 无法通过此处查询剩余额度。组织用量查询需要单独的 Admin Key，余额请在 OpenAI 官方账单页面查看。",
+      message: "在编辑账号中配置 Admin Key，即可查询组织本月用量和已消费金额。",
       detailUrl: "https://platform.openai.com/settings/organization/billing/overview",
     },
   },
   category: "apikey",
+  features: { usage: true, usageApikey: true },
   thinkingConfig: {
     options: [
       "auto",

@@ -40,6 +40,8 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
   const [cloudflareData, setCloudflareData] = useState({ accountId: "" });
   const [awsData, setAwsData] = useState({ profile: "", region: "", accessKeyId: "", sessionToken: "" });
   const [clearAwsSessionToken, setClearAwsSessionToken] = useState(false);
+  const [openaiAdminKey, setOpenaiAdminKey] = useState("");
+  const [clearOpenaiAdminKey, setClearOpenaiAdminKey] = useState(false);
   const [region, setRegion] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -50,6 +52,8 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
 
   useEffect(() => {
     if (connection) {
+      setOpenaiAdminKey("");
+      setClearOpenaiAdminKey(false);
       setFormData({
         name: connection.name || "",
         priority: connection.priority || 1,
@@ -177,6 +181,10 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         accountExpiresAt: formData.accountExpiresAt ? new Date(formData.accountExpiresAt).toISOString() : null,
         exclusiveApiKeyIds: formData.exclusiveApiKeyIds,
       };
+      if (connection.provider === "openai") {
+        if (clearOpenaiAdminKey) updates.openaiAdminKey = null;
+        else if (openaiAdminKey.trim()) updates.openaiAdminKey = openaiAdminKey.trim();
+      }
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -347,6 +355,27 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           </>
         )}
 
+        {connection.provider === "openai" && (
+          <div className="space-y-2 rounded-lg border border-border p-3">
+            <Input
+              label="Admin Key（用量查询，可选）"
+              type="password"
+              autoComplete="new-password"
+              value={openaiAdminKey}
+              disabled={clearOpenaiAdminKey}
+              onChange={(e) => setOpenaiAdminKey(e.target.value)}
+              placeholder={connection.hasOpenaiAdminKey ? "已配置，留空保留；输入新值替换" : "输入 OpenAI Admin Key"}
+              hint="保存后可在配额管理查看组织本月用量和已消费金额。模型调用继续使用上方的 API Key。"
+            />
+            {connection.hasOpenaiAdminKey && (
+              <label className="flex items-center gap-2 text-xs text-text-muted">
+                <input type="checkbox" checked={clearOpenaiAdminKey} onChange={(e) => setClearOpenaiAdminKey(e.target.checked)} />
+                保存时清除已配置的 Admin Key
+              </label>
+            )}
+          </div>
+        )}
+
         {isAzure && (
           <div className="bg-sidebar/50 p-4 rounded-lg border border-accent/20">
             <h3 className="font-semibold mb-3 text-sm">Azure OpenAI Configuration</h3>
@@ -471,6 +500,7 @@ EditConnectionModal.propTypes = {
     priority: PropTypes.number,
     authType: PropTypes.string,
     provider: PropTypes.string,
+    hasOpenaiAdminKey: PropTypes.bool,
     providerSpecificData: PropTypes.object,
   }),
   proxyPools: PropTypes.arrayOf(PropTypes.shape({

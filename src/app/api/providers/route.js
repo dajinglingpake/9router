@@ -12,6 +12,7 @@ import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/provid
 import { getAccountExpiry } from "@/lib/accountExpiry";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
+import { normalizeOpenAIAdminKey } from "@/lib/openaiAdminKey";
 import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { getRecentAccountApiKeyUsers } from "@/lib/recentAccountApiKeyUsers.js";
@@ -99,7 +100,13 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const provider = normalizeProviderId(body.provider);
-    const { apiKey, name, displayName, priority, globalPriority, defaultModel, testStatus } = body;
+    const { name, displayName, priority, globalPriority, defaultModel, testStatus } = body;
+    const apiKey = provider === "openai" && typeof body.apiKey === "string" ? body.apiKey.trim() : body.apiKey;
+    const adminKey = normalizeOpenAIAdminKey(provider, body.openaiAdminKey);
+    if (adminKey.error) return NextResponse.json({ error: adminKey.error }, { status: 400 });
+    if (provider === "openai" && apiKey != null && typeof apiKey !== "string") {
+      return NextResponse.json({ error: "API Key 格式无效。" }, { status: 400 });
+    }
     const proxyConfig = normalizeProxyConfig(body);
     if (proxyConfig.error) {
       return NextResponse.json({ error: proxyConfig.error }, { status: 400 });
@@ -132,8 +139,8 @@ export async function POST(request) {
     // key to paste. Without this, following such a provider's own setup notice returns 400.
     const apiKeySubstitute = AI_PROVIDERS[provider]?.apiKeyOptionalWith;
     const hasApiKeySubstitute = !!(apiKeySubstitute && body.providerSpecificData?.[apiKeySubstitute]);
-    if (!apiKey && provider !== "ollama-local" && !hasApiKeySubstitute) {
-      return NextResponse.json({ error: `${isWebCookieProvider ? "Cookie value" : "API Key"} is required` }, { status: 400 });
+    if (!apiKey && !adminKey.value && provider !== "ollama-local" && !hasApiKeySubstitute) {
+      return NextResponse.json({ error: provider === "openai" ? "API Key 和 Admin Key 至少填写一个。" : `${isWebCookieProvider ? "Cookie value" : "API Key"} is required` }, { status: 400 });
     }
     const connectionName = name || displayName || AI_PROVIDERS[provider]?.name;
     if (!connectionName) {
@@ -193,6 +200,7 @@ export async function POST(request) {
       authType: isWebCookieProvider ? "cookie" : "apikey",
       name: connectionName,
       apiKey: apiKey || "",
+      ...(adminKey.value ? { openaiAdminKey: adminKey.value } : {}),
       priority: priority || 1,
       globalPriority: globalPriority || null,
       defaultModel: defaultModel || null,
