@@ -69,10 +69,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
     const sessionKey = options.sessionKey;
-    const sessionBinding = await getSessionBinding(sessionKey);
-    if (sessionBinding && sessionBinding.provider !== providerId) {
-      return { sessionUnavailable: true, lastErrorCode: 409, lastError: "当前会话已绑定其他提供商，不能切换。" };
-    }
+    const sessionBinding = await getSessionBinding(sessionKey, providerId);
     const apiKeyKey = codexPolicy?.apiKeyAffinity ? options.apiKeyRoutingKey : null;
     let binding = apiKeyKey ? await getApiKeyBinding(apiKeyKey) : sessionBinding;
     const bindingSubject = apiKeyKey ? "当前 API Key" : "当前会话";
@@ -115,14 +112,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // A deleted or replaced connection cannot serve the old sticky session.
     const boundConnection = binding ? await getProviderConnectionById(binding.connectionId) : null;
     if (binding && !boundConnection) {
-      if (!apiKeyKey) await clearSessionBinding(sessionKey);
+      if (!apiKeyKey) await clearSessionBinding(sessionKey, providerId);
       log.info("AUTH", `${provider} | cleared stale session binding ${binding.connectionId?.slice(0, 8) || "unknown"}`);
       binding = null;
     }
     // A manually disabled account cannot serve its sessions. Persist the new
     // binding only after a replacement passes the usual availability filters.
     if (binding && (!boundConnection.isActive || !connections.some(c => c.id === binding.connectionId))) {
-      if (!apiKeyKey) await clearSessionBinding(sessionKey);
+      if (!apiKeyKey) await clearSessionBinding(sessionKey, providerId);
       binding = null;
     }
 

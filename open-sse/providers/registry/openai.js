@@ -1,3 +1,9 @@
+export const OPENAI_MODELS_CONFIG = {
+  url: "https://api.openai.com/v1/models",
+  timeoutMs: 10000,
+  cacheTtlMs: 5 * 60 * 1000,
+};
+
 export default {
   id: "openai",
   priority: 30,
@@ -10,6 +16,10 @@ export default {
     website: "https://platform.openai.com",
     notice: {
       apiKeyUrl: "https://platform.openai.com/api-keys",
+    },
+    quotaNotice: {
+      message: "普通 OpenAI API Key 无法通过此处查询剩余额度。组织用量查询需要单独的 Admin Key，余额请在 OpenAI 官方账单页面查看。",
+      detailUrl: "https://platform.openai.com/settings/organization/billing/overview",
     },
   },
   category: "apikey",
@@ -27,6 +37,10 @@ export default {
     baseUrl: "https://api.openai.com/v1/chat/completions",
     forceStream: true,
   },
+  // Keep Codex's Responses tools, text settings and tool results on the native API.
+  transports: [
+    { format: "openai-responses", baseUrl: "https://api.openai.com/v1/responses", thinkingFormat: "openai-responses" },
+  ],
   models: [
     { id: "gpt-5.5", name: "GPT-5.5" },
     { id: "gpt-5.4", name: "GPT-5.4" },

@@ -4,7 +4,7 @@ import { backfillCodexEmails } from "@/lib/oauth/providers";
 import { getAccountExpiry } from "@/lib/accountExpiry";
 import { getAccountPlan } from "@/lib/accountPlan.js";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo";
-import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { getRecentAccountApiKeyUsers } from "@/lib/recentAccountApiKeyUsers.js";
@@ -55,6 +55,7 @@ function sanitize(c) {
 }
 
 function isUsageEligible(connection) {
+  if (AI_PROVIDERS[connection.provider]?.quotaNotice) return true;
   return USAGE_SUPPORTED_PROVIDERS.includes(connection.provider) && (
     connection.authType === "oauth" || USAGE_APIKEY_PROVIDERS.includes(connection.provider)
   );

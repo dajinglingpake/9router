@@ -22,6 +22,19 @@ beforeEach(() => {
 const read = async query => (await GET(new Request(`http://localhost/api/providers/client?${query}`))).json();
 
 describe("quota ownership filtering", () => {
+  it("shows OpenAI API-key accounts even when remote quota lookup is unavailable", async () => {
+    mocks.connections.mockResolvedValue([
+      connection("openai", { provider: "openai", authType: "apikey", apiKey: "private-key" }),
+      connection("openai-disabled", { provider: "openai", authType: "apikey", isActive: false }),
+      connection("codex"),
+    ]);
+    const all = await read("provider=openai");
+    expect(all.connections.map(item => item.id)).toEqual(["openai", "openai-disabled"]);
+    expect(all.providerOptions).toEqual(["codex", "openai"]);
+    expect(JSON.stringify(all)).not.toContain("private-key");
+    expect((await read("provider=openai&accountStatus=active")).pagination.total).toBe(1);
+  });
+
   it("filters across all pages before paginating shared accounts", async () => {
     const result = await read("quotaScope=shared&pageSize=1&page=2");
     expect(result.connections.map(item => item.id)).toEqual(["shared-2"]);

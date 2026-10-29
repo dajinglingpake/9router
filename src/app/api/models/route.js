@@ -6,6 +6,7 @@ import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
+import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 
 // GET /api/models - Get models with aliases
@@ -22,7 +23,7 @@ export async function GET() {
       ...AI_MODELS.filter(model => !["codex", codexAlias].includes(model.provider)),
       ...codex.models.map(model => ({ provider: codexAlias, model: model.id, name: model.name, capabilities: model.capabilities })),
     ];
-    for (const [providerId, resolveModels] of Object.entries({ "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels })) {
+    for (const [providerId, resolveModels] of Object.entries({ "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels, openai: resolveOpenAIModels })) {
       const connections = (await getProviderConnections({ provider: providerId, isActive: true }))
         .filter(connection => connection.provider === providerId && connection.isActive !== false);
       if (!connections.length) continue;

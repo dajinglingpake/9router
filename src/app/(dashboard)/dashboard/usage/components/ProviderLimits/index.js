@@ -1397,6 +1397,13 @@ export default function ProviderLimits() {
                 ) : quota?.message ? (
                   <div className="text-center py-5">
                     <p className="text-xs text-text-muted">{quota.message}</p>
+                    {AI_PROVIDERS[conn.provider]?.quotaNotice?.detailUrl && (
+                      <a href={AI_PROVIDERS[conn.provider].quotaNotice.detailUrl} target="_blank" rel="noopener noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                        查看官方额度与账单
+                        <span className="material-symbols-outlined text-[14px]">open_in_new</span>
+                      </a>
+                    )}
                   </div>
                 ) : (
                   <QuotaTable
@@ -1408,11 +1415,6 @@ export default function ProviderLimits() {
                     }
                     onHideQuota={(quotaRow) => handleHideQuota(conn.provider, quotaRow)}
                   />
-                )}
-                {quota?.message && !error && !isLoading && (
-                  <p className="mt-2 px-1 text-[10px] leading-relaxed text-text-muted">
-                    {quota.message}
-                  </p>
                 )}
                 {hiddenQuotaRows.length > 0 && (
                   <div className="mt-2 flex min-w-0 items-center gap-1 border-t border-black/5 pt-2 text-[10px] text-text-muted dark:border-white/5">

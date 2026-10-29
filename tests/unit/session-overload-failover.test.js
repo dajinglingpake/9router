@@ -174,7 +174,7 @@ describe("stable account bindings during overload", () => {
       if (bound) await sessions.bindSession(key, "codex", busy.id);
       const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: key });
       expect(selected.connectionId).toBe(bound ? busy.id : idle.id);
-      expect((await sessions.getSessionBinding(key)).connectionId).toBe(bound ? busy.id : idle.id);
+      expect((await sessions.getSessionBinding(key, "codex")).connectionId).toBe(bound ? busy.id : idle.id);
       selected.releaseSelection?.();
     }
   });
@@ -205,7 +205,7 @@ describe("stable account bindings during overload", () => {
     await sessions.bindSession(sessionKey(), "codex", busy.id);
     const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
     expect(selected.connectionId).toBe(busy.id);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(busy.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(busy.id);
     selected.releaseSelection?.();
   });
 
@@ -272,7 +272,7 @@ describe("stable account bindings during overload", () => {
     await db.updateProviderConnection(a.id, { testStatus: "active" });
     const selected = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
     expect(selected.connectionId).toBe(a.id);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
     selected.releaseSelection?.();
   });
 
@@ -311,7 +311,7 @@ describe("stable account bindings during overload", () => {
     expect(response.headers.get("Retry-After")).not.toBeNull();
     expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id]);
     expect(cancel).toHaveBeenCalledOnce();
-    expect(await sessions.getSessionBinding(sessionKey())).toEqual({ provider: "codex", connectionId: a.id });
+    expect(await sessions.getSessionBinding(sessionKey(), "codex")).toEqual({ provider: "codex", connectionId: a.id });
     expect(loads.getAccountActiveCount(a.id)).toBe(0);
     expect(loads.getAccountActiveCount(b.id)).toBe(0);
     expect((await db.getProviderConnectionById(a.id)).errorCode).toBe(503);
@@ -337,7 +337,7 @@ describe("stable account bindings during overload", () => {
     expect(response.status).toBe(503);
     expect(response.headers.get("Retry-After")).not.toBeNull();
     expect(upstream).not.toHaveBeenCalled();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
   });
 
   it.each([429, 503])("never binds a new session to an account with a persisted %i cooldown", async (status) => {
@@ -347,7 +347,7 @@ describe("stable account bindings during overload", () => {
     const credentials = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
     expect(credentials.connectionId).toBe(b.id);
     credentials.releaseSelection?.();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(b.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(b.id);
   });
 
   it.each([false, true])("skips runtime queue cooldown even when the database is healthy (existing binding: %s)", async (bound) => {
@@ -358,7 +358,7 @@ describe("stable account bindings during overload", () => {
     const credentials = await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() });
     expect(credentials).toMatchObject(bound ? { sessionUnavailable: true, lastErrorCode: 503, retryAfter: expect.any(String) } : { connectionId: b.id });
     credentials.releaseSelection?.();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(bound ? a.id : b.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(bound ? a.id : b.id);
   });
 
   it("leaves a new session unbound when every account is cooling down", async () => {
@@ -367,7 +367,7 @@ describe("stable account bindings during overload", () => {
 
     expect(await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() }))
       .toMatchObject({ allRateLimited: true, retryAfter: expect.any(String) });
-    expect(await sessions.getSessionBinding(sessionKey())).toBeNull();
+    expect(await sessions.getSessionBinding(sessionKey(), "codex")).toBeNull();
     expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
@@ -406,7 +406,7 @@ describe("stable account bindings during overload", () => {
     expect((await response.json()).error.message).toContain(OVERLOAD);
     expect(response.headers.get("Retry-After")).not.toBeNull();
     expect(upstream).toHaveBeenCalledOnce();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
   });
 
   it.each([400, 429])("keeps existing session behavior for a %i without quota failover", async (status) => {
@@ -418,7 +418,7 @@ describe("stable account bindings during overload", () => {
     const response = await send();
     expect(response.status).toBe(status);
     expect(upstream).toHaveBeenCalledOnce();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
   });
 
   it.each([
@@ -434,7 +434,7 @@ describe("stable account bindings during overload", () => {
     expect(response.status).toBe(status);
     expect((await response.json()).error.message).toBe(`${message}\n提示：${hint}`);
     expect(upstream).toHaveBeenCalledOnce();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
   });
 
   it.each([
@@ -454,7 +454,7 @@ describe("stable account bindings during overload", () => {
       expect((await response.json()).error.message).toBe(`${message}\n提示：${hint} 请在 ${seconds} 秒后重试。`);
     }
     expect(upstream).toHaveBeenCalledOnce();
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
     const { getRequestErrors } = await import("@/lib/db/repos/requestErrorsRepo.js");
     const { items } = await getRequestErrors();
     expect(items).toHaveLength(1);
@@ -483,7 +483,7 @@ describe("stable account bindings during overload", () => {
 
     expect(await (await send()).json()).toEqual({ ok: true });
     expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id, b.id]);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(b.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(b.id);
   });
 
   it("only migrates to accounts that have the requested model enabled", async () => {
@@ -495,7 +495,7 @@ describe("stable account bindings during overload", () => {
 
     expect(await (await send()).json()).toEqual({ ok: true });
     expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id, c.id]);
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(c.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(c.id);
   });
 
   it.each([false, true])("releases the slot without switching when an account locks before the upstream call (bound: %s)", async bound => {
@@ -510,7 +510,7 @@ describe("stable account bindings during overload", () => {
 
     expect((await send(bound ? "failover-session" : null)).status).toBe(503);
     expect(upstream).not.toHaveBeenCalled();
-    if (bound) expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    if (bound) expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
     expect(loads.getAccountActiveCount(a.id)).toBe(0);
     expect(limiter.__test__.snapshot("account", a.id)?.active || 0).toBe(0);
   });
@@ -525,7 +525,7 @@ describe("stable account bindings during overload", () => {
     const selected = await Promise.all([1, 2].map(() => selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() })));
     expect(selected).toEqual([expect.objectContaining({ sessionUnavailable: true }), expect.objectContaining({ sessionUnavailable: true })]);
     selected.forEach(credentials => credentials.releaseSelection?.());
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
     expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
@@ -536,15 +536,36 @@ describe("stable account bindings during overload", () => {
     const selected = await Promise.all([1, 2, 3].map(() => selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() })));
     expect(selected.map(credentials => credentials.connectionId)).toEqual([a.id, a.id, a.id]);
     selected.forEach(credentials => credentials.releaseSelection?.());
-    expect((await sessions.getSessionBinding(sessionKey())).connectionId).toBe(a.id);
+    expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(a.id);
     expect(global.__ninerouterAccountSelection.reservations.size).toBe(0);
   });
 
   it("keeps bindings isolated between providers", async () => {
-    const a = await account("a");
-    await sessions.bindSession(sessionKey(), "other-provider", a.id);
-    expect(await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() }))
-      .toMatchObject({ sessionUnavailable: true, lastErrorCode: 409 });
-    expect((await sessions.getSessionBinding(sessionKey())).provider).toBe("other-provider");
+    const codex = await account("codex", 0);
+    const openai = await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "openai", apiKey: "test-key", isActive: true });
+    await account("another-codex", 0);
+    await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "another-openai", apiKey: "test-key", isActive: true });
+    await sessions.bindSession(sessionKey(), "codex", codex.id);
+    await sessions.bindSession(sessionKey(), "openai", openai.id);
+    await occupy(codex);
+    await occupy(openai);
+    for (const [provider, id] of [["openai", openai.id], ["codex", codex.id], ["openai", openai.id]]) {
+      const credentials = await selection.getProviderCredentials(provider, null, MODEL, { sessionKey: sessionKey() });
+      expect(credentials.connectionId).toBe(id);
+      credentials.releaseSelection?.();
+      expect(await sessions.getSessionBinding(sessionKey(), provider)).toEqual({ provider, connectionId: id });
+    }
+  });
+
+  it("clears only the unavailable provider binding and does not resurrect a legacy binding", async () => {
+    const codex = await account("codex", 0);
+    const { setMeta } = await import("@/lib/db/helpers/metaStore.js");
+    await setMeta(`chat-session:${sessionKey()}`, JSON.stringify({ provider: "codex", connectionId: codex.id }));
+    await sessions.bindSession(sessionKey(), "codex", codex.id);
+    await sessions.bindSession(sessionKey(), "openai", "openai-account");
+    await db.updateProviderConnection(codex.id, { isActive: false });
+    expect(await selection.getProviderCredentials("codex", null, MODEL, { sessionKey: sessionKey() })).toBeNull();
+    expect(await sessions.getSessionBinding(sessionKey(), "codex")).toBeNull();
+    expect(await sessions.getSessionBinding(sessionKey(), "openai")).toEqual({ provider: "openai", connectionId: "openai-account" });
   });
 });

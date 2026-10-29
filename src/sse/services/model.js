@@ -97,6 +97,22 @@ export async function getComboModels(modelStr, apiKeyId = null) {
   return null;
 }
 
+// Preserve combo order and nested strategies while skipping providers outside
+// the caller's dedicated account bindings. Null means an ordinary shared key.
+export async function filterComboModelsByProviders(models, providers, apiKeyId, seen = new Set()) {
+  if (!providers) return models;
+  const allowed = await Promise.all(models.map(async model => {
+    if (seen.has(model)) return false;
+    const nested = await getComboModels(model, apiKeyId);
+    if (nested?.length) {
+      return (await filterComboModelsByProviders(nested, providers, apiKeyId, new Set([...seen, model]))).length > 0;
+    }
+    const info = await getModelInfo(model, apiKeyId);
+    return !info.disabled && providers.has(info.provider);
+  }));
+  return models.filter((_, index) => allowed[index]);
+}
+
 // Outer combos override nested defaults; only models executable by the selected
 // provider are eligible. Account selection still owns session affinity.
 export async function getComboAccountModels(comboNames, provider) {

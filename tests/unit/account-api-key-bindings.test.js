@@ -69,10 +69,11 @@ async function update(id, patch) {
   const { PUT } = await import("@/app/api/providers/[id]/route.js");
   return PUT(new Request("http://localhost/api/providers/test", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }), { params: Promise.resolve({ id }) });
 }
-function send(key) {
+function send(key, model = "cx/gpt-6.1-sol", sessionId = null) {
   const req = request(key.key);
-  const body = { model: "cx/gpt-6.1-sol", input: "hello", stream: false };
-  const caller = { headers: {}, body, endpoint: "/v1/responses", apiKeyRecordId: key.id };
+  if (sessionId) req.headers.set("x-session-id", sessionId);
+  const body = { model, input: "hello", stream: false };
+  const caller = { headers: Object.fromEntries(req.headers), body, endpoint: "/v1/responses", apiKeyRecordId: key.id };
   return routing.handleSingleModelChat(body, body.model, caller, req, key.key, new Set(), new Set(), Date.now() + 2000);
 }
 
@@ -113,7 +114,7 @@ describe("exclusive account isolation", () => {
     const sessionKey = sessions.getSessionRoutingKey({ "x-session-id": "stale" }, {}, other.id);
     await sessions.bindSession(sessionKey, "codex", privateA.id);
     expect((await pick(local, other.key, { sessionKey })).connectionId).toBe(privateB.id);
-    expect((await sessions.getSessionBinding(sessionKey)).connectionId).toBe(privateB.id);
+    expect((await sessions.getSessionBinding(sessionKey, "codex")).connectionId).toBe(privateB.id);
   });
   it("overrides stale automatic key bindings", async () => {
     await db.updateSettings({ localCodexRouting: { apiKeyAffinity: true } });
@@ -256,6 +257,90 @@ describe("exclusive account isolation", () => {
   it("routes chat attempts to the owner's account", async () => {
     expect((await send(owner)).status).toBe(200);
     expect(upstream.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual([privateA.id]);
+  });
+  it.each(["codex", "openai"])("routes a mixed combo with a pre-upgrade %s session to the available dedicated account", async legacyProvider => {
+    const openai = await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "private-openai", apiKey: "test-openai", isActive: true, exclusiveApiKeyIds: [owner.id] });
+    await db.updateProviderConnection(privateA.id, { isActive: false });
+    await db.createCombo({ name: "mixed", models: ["cx/gpt-6.1-sol", "openai/gpt-6.1-sol"] });
+    const sessionKey = sessions.getSessionRoutingKey({ "x-session-id": "old-session" }, {}, owner.id);
+    const { setMeta } = await import("@/lib/db/helpers/metaStore.js");
+    await setMeta(`chat-session:${sessionKey}`, JSON.stringify({ provider: legacyProvider, connectionId: legacyProvider === "codex" ? privateA.id : openai.id }));
+
+    for (let i = 0; i < 2; i++) {
+      const response = await send(owner, "mixed", "old-session");
+      expect(response.status).toBe(200);
+      await response.text();
+    }
+    expect(upstream.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual([openai.id, openai.id]);
+    expect(await sessions.getSessionBinding(sessionKey, "openai")).toEqual({ provider: "openai", connectionId: openai.id });
+    expect(await sessions.getSessionBinding(sessionKey, "codex")).toBeNull();
+  });
+  it("uses the edited combo in the same session after removing an exclusive account binding", async () => {
+    const openai = await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "private-openai", apiKey: "test-openai", isActive: true, exclusiveApiKeyIds: [owner.id] });
+    const combo = await db.createCombo({ name: "edited", models: ["openai/gpt-6.1-sol"] });
+    const first = await send(owner, combo.name, "unchanged-session");
+    expect(first.status).toBe(200);
+    await first.text();
+    expect((await update(openai.id, { exclusiveApiKeyIds: [] })).status).toBe(200);
+    await db.updateCombo(combo.id, { models: ["cx/gpt-6.1-sol"] });
+    const second = await send(owner, combo.name, "unchanged-session");
+    expect(second.status).toBe(200);
+    await second.text();
+    expect(upstream.mock.calls.map(([args]) => [args.modelInfo.provider, args.credentials.connectionId])).toEqual([
+      ["openai", openai.id], ["codex", privateA.id],
+    ]);
+  });
+  it("falls back across providers after a request rejection without leaving the owner's account pools", async () => {
+    const openai = await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "private-openai", apiKey: "test-openai", isActive: true, exclusiveApiKeyIds: [owner.id] });
+    await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "shared-openai", apiKey: "shared-openai", isActive: true });
+    await db.createProviderConnection({ provider: "anthropic", authType: "apikey", name: "shared-anthropic", apiKey: "shared-anthropic", isActive: true });
+    await db.createCombo({ name: "fallback", models: ["anthropic/claude-sonnet-4", "cx/gpt-6.1-sol", "openai/gpt-6.1-sol"] });
+    upstream.mockImplementation(async args => args.modelInfo.provider === "codex"
+      ? { success: false, status: 400, error: "Request validation failed", response: Response.json({ error: { message: "Request validation failed" } }, { status: 400 }) }
+      : { success: true, response: Response.json({ ok: true }) });
+    const response = await send(owner, "fallback", "fallback-session");
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(upstream.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual([privateA.id, openai.id]);
+  });
+  it.each([false, true])("skips shared providers before calling upstream when only one provider is bound (nested: %s)", async nested => {
+    await db.updateProviderConnection(privateA.id, { exclusiveApiKeyIds: [] });
+    const openai = await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "private-openai", apiKey: "test-openai", isActive: true, exclusiveApiKeyIds: [owner.id] });
+    if (nested) await db.createCombo({ name: "inner", models: ["cx/gpt-6.1-sol", "openai/gpt-6.1-sol"] });
+    await db.createCombo({ name: "only-bound", models: ["cx/gpt-6.1-sol", nested ? "cc/inner" : "openai/gpt-6.1-sol"] });
+    const response = await send(owner, "only-bound", "single-provider");
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(upstream.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual([openai.id]);
+    const sessionKey = sessions.getSessionRoutingKey({ "x-session-id": "single-provider" }, {}, owner.id);
+    expect(await sessions.getSessionBinding(sessionKey, "codex")).toBeNull();
+  });
+  it("rejects combos without a bound provider instead of using a shared provider", async () => {
+    await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "shared-openai", apiKey: "test-openai", isActive: true });
+    await db.createCombo({ name: "unbound", models: ["openai/gpt-6.1-sol"] });
+    const response = await send(owner, "unbound", "restricted-session");
+    expect(response.status).toBe(503);
+    expect((await response.json()).error.message).toContain("没有当前 API Key 已绑定提供商的模型");
+    expect(upstream).not.toHaveBeenCalled();
+  });
+  it("keeps disabled private providers reserved without falling back to another shared provider", async () => {
+    await db.updateProviderConnection(privateA.id, { isActive: false });
+    await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "shared-openai", apiKey: "test-openai", isActive: true });
+    await db.createCombo({ name: "disabled-owner", models: ["openai/gpt-6.1-sol", "cx/gpt-6.1-sol"] });
+    expect((await send(owner, "disabled-owner", "disabled-session")).status).toBe(503);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+  it("uses shared providers in the next request after all dedicated bindings are removed", async () => {
+    const openai = await db.createProviderConnection({ provider: "openai", authType: "apikey", name: "shared-openai", apiKey: "test-openai", isActive: true });
+    await db.createCombo({ name: "released", models: ["openai/gpt-6.1-sol", "cx/gpt-6.1-sol"] });
+    const first = await send(owner, "released", "released-session");
+    expect(first.status).toBe(200);
+    await first.text();
+    expect((await update(privateA.id, { exclusiveApiKeyIds: [] })).status).toBe(200);
+    const second = await send(owner, "released", "released-session");
+    expect(second.status).toBe(200);
+    await second.text();
+    expect(upstream.mock.calls.map(([args]) => args.credentials.connectionId)).toEqual([privateA.id, openai.id]);
   });
   it("does not retry overloaded private accounts against the shared pool", async () => {
     upstream.mockImplementation(async () => ({ success: false, status: 503, error: "overloaded", response: Response.json({ error: "overloaded" }, { status: 503 }) }));

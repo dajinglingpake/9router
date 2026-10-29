@@ -164,7 +164,7 @@ export default function ProviderDetailPage() {
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
   const codexCatalog = useCodexModels(connections, { enabled: providerId === "codex" });
-  const models = providerId === "codex" ? codexCatalog.models : (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi") && liveModels.length > 0
+  const models = providerId === "codex" ? codexCatalog.models : (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai") && liveModels.length > 0
     ? liveModels
     : staticModels;
   const providerAlias = getProviderAlias(providerId);
@@ -487,9 +487,9 @@ export default function ProviderDetailPage() {
   // Resolve the active account's catalog on entry or connection changes.
   // Providers keep their built-in lists as a fallback when discovery fails.
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi";
-    const showWarning = providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi";
-    const catalogName = providerId === "codebuddy-cn" ? "CodeBuddy" : providerId === "kimi" ? "Kimi" : "Zed";
+    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai";
+    const showWarning = providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai";
+    const catalogName = providerInfo?.name || providerId;
     setLiveModels([]);
     setLiveModelsError(null);
     if (!isLiveCatalog) {
@@ -1869,7 +1869,7 @@ export default function ProviderDetailPage() {
         )}
         {providerId === "codex" && <p className="text-xs text-text-muted mb-3">{codexCatalog.loading ? "正在按账号获取可用模型…" : "以下为启用账号实际可用模型的并集。"}</p>}
         {providerId === "codex" && codexCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{codexCatalog.warning}</p>}
-        {(providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi") && !!liveModelsError && (
+        {(providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai") && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {renderModelsSection()}

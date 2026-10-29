@@ -170,6 +170,7 @@ function toLevel(cfg) {
 }
 
 function normalizeOpenAILevel(level, supportedLevels) {
+  if (level === "minimal" && supportedLevels && !supportedLevels.includes(level) && supportedLevels.includes("low")) return "low";
   if (level !== "max" && level !== "ultra") return level;
   if (supportedLevels?.includes(level)) return level;
   if (level === "ultra" && supportedLevels?.includes("max")) return "max";
@@ -261,7 +262,8 @@ function stripAll(body) {
 // Apply unified thinking config to body in the resolved provider-native format.
 function applyFormat(fmt, body, cfg, caps, supportedLevels, display) {
   const none = cfg.mode === "none";
-  const canDisable = caps.thinkingCanDisable !== false;
+  const canDisable = caps.thinkingCanDisable !== false
+    && (!fmt.startsWith("openai") || !supportedLevels || supportedLevels.includes("none"));
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
   const eff = none && !canDisable ? { mode: "level", level: "minimal" } : cfg;
 

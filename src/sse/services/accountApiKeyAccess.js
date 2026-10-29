@@ -1,10 +1,12 @@
 import { getApiKeyByValue } from "@/lib/db/repos/apiKeysRepo.js";
+import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { isIpAllowed } from "@/lib/apiKeys/accessPolicy.js";
 import { extractClientApiKey } from "./keyAccess.js";
 import { extractClientIp } from "../utils/clientIp.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
 const requestKeyIds = new WeakMap();
+const requestBoundProviders = new WeakMap();
 
 export async function getRequestKeyId(request) {
   if (!request) return null;
@@ -16,6 +18,23 @@ export async function getRequestKeyId(request) {
     })());
   }
   return requestKeyIds.get(request);
+}
+
+export async function getRequestBoundProviders(request) {
+  if (!request) return null;
+  if (!requestBoundProviders.has(request)) {
+    requestBoundProviders.set(request, (async () => {
+      const keyId = await getRequestKeyId(request);
+      if (!keyId) return null;
+      // Disabled dedicated accounts still reserve their provider. A failed
+      // private route must not fall through to another provider's shared pool.
+      const connections = await getProviderConnections();
+      const providers = new Set(connections
+        .filter(c => getExclusiveApiKeyIds(c).includes(keyId)).map(c => c.provider));
+      return providers.size ? providers : null;
+    })());
+  }
+  return requestBoundProviders.get(request);
 }
 
 export function filterAccountPoolByApiKey(connections, apiKeyId) {

@@ -17,6 +17,7 @@ import { resolveClineModels, resolveClinepassModels } from "open-sse/services/cl
 import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
+import { resolveOpenAIModels } from "@/lib/openaiModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -238,7 +239,12 @@ const PROVIDER_MODELS_CONFIG = {
         }));
     }
   },
-  openai: createOpenAIModelsConfig("https://api.openai.com/v1/models"),
+  openai: {
+    customResolver: async (connection) => {
+      const result = await resolveOpenAIModels(connection, { forceRefresh: true });
+      return result.models.length ? result : { ...result, models: getStaticProviderModels("openai") };
+    },
+  },
   openrouter: createOpenAIModelsConfig("https://openrouter.ai/api/v1/models"),
   nous: {
     ...createOpenAIModelsConfig(NOUS_MODELS_URL),

@@ -5,12 +5,13 @@ import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { CODEX_TRIAL_MODEL } from "@/shared/utils/codexTrial";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
+import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 
 const textModel = model => (model.kind || model.type || "llm") === "llm"
   && model.quotaFamily !== "review" && !model.id.endsWith("-review") && !model.id.endsWith("[1m]");
 
-const liveResolvers = { "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels };
+const liveResolvers = { "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels, openai: resolveOpenAIModels };
 
 // Discovery is opt-in: polling test results must never probe upstream accounts.
 export async function getTrialProviders(connections, { discoverModels = false } = {}) {

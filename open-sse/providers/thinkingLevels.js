@@ -35,12 +35,17 @@ const FORMAT_LEVELS = {
 };
 
 const CODEX_GPT_5_6_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const OPENAI_GPT_6_LEVELS = ["none", "low", "medium", "high", "xhigh", "max"];
 
 // Opus/Sonnet 4.6 lack xhigh (Anthropic + Kiro docs) — keep the 4-level+max set.
 const CLAUDE_NO_XHIGH = ["none", "low", "medium", "high", "max"];
 
 // Model-name pattern overrides (glob, first match wins) — more precise than format default.
 const PATTERN_THINKING = [
+  // Official API levels differ from the Codex subscription catalog.
+  { provider: "openai", pattern: "gpt-6.1-sol*", levels: OPENAI_GPT_6_LEVELS.filter(level => level !== "none") },
+  { provider: "openai", pattern: "gpt-6-astra*", levels: OPENAI_GPT_6_LEVELS.filter(level => level !== "none") },
+  { provider: "openai", pattern: "gpt-6*", levels: OPENAI_GPT_6_LEVELS },
   // Gemini 4 (Argon) rejects "minimal" with 400 — LOW is the floor; cannot disable thinking.
   { pattern: "*gemini-4*", levels: ["low", "medium", "high"] },
   { pattern: "*claude*4.6*", levels: CLAUDE_NO_XHIGH },

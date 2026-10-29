@@ -6,7 +6,7 @@ import { getUsageForProvider } from "open-sse/services/usage.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { isUnrecoverableRefreshError } from "open-sse/services/tokenRefresh.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
@@ -129,7 +129,9 @@ export function supportsConnectionUsage(connection) {
 }
 
 export async function loadConnectionUsage(connection, { force = false, signal } = {}) {
-  if (!supportsConnectionUsage(connection)) return { message: "Usage not available for this connection" };
+  if (!supportsConnectionUsage(connection)) {
+    return AI_PROVIDERS[connection.provider]?.quotaNotice || { message: "Usage not available for this connection" };
+  }
   await ensureOutboundProxyInitialized();
   const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData);
   const proxyOptions = { ...proxyConfig, strictProxy: proxyConfig.connectionProxyEnabled === true, signal };

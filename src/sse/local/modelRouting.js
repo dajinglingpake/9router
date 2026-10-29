@@ -13,7 +13,7 @@ import { isModelLockActive, getModelLockUntil } from "open-sse/services/accountF
 import { getProviderCredentials, markAccountUnavailable, clearAccountError } from "./auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { getSessionRoutingKey } from "../services/sessionRouting.js";
-import { getModelInfo, getComboModels, getComboAccountModels } from "../services/model.js";
+import { getModelInfo, getComboModels, getComboAccountModels, filterComboModelsByProviders } from "../services/model.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import {
   acquireConcurrencySlot, holdConcurrencyUntilResponseDone, ConcurrencyQueueError,
@@ -27,7 +27,7 @@ import { handleLocalCombo } from "./comboRouting.js";
 import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from "../services/keyAccess.js";
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
-import { filterAccountPoolForRequest, getRequestKeyId } from "../services/accountApiKeyAccess.js";
+import { filterAccountPoolForRequest, getRequestKeyId, getRequestBoundProviders } from "../services/accountApiKeyAccess.js";
 import { appendChatErrorHint } from "../utils/errorHints.js";
 import { getTrialSession, getTrialCredentials } from "./codexTrialSession.js";
 import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
@@ -45,7 +45,9 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   const apiKeyId = await getRequestKeyId(request);
   const comboModels = await getComboModels(modelStr, apiKeyId);
   if (comboModels?.length) {
-    return handleLocalCombo(body, comboModels, modelStr, (_body, candidate) =>
+    const models = await filterComboModelsByProviders(comboModels, await getRequestBoundProviders(request), apiKeyId, seenModels);
+    if (!models.length) return rejectChatRequest(HTTP_STATUS.SERVICE_UNAVAILABLE, "此组合中没有当前 API Key 已绑定提供商的模型。", clientRawRequest, "router");
+    return handleLocalCombo(body, models, modelStr, (_body, candidate) =>
       handleSingleModelChat(_body, candidate, clientRawRequest, request, apiKey, new Set(seenModels), new Set(excludedAccounts), deadline, retryCount, [...comboNames, modelStr]),
       { request, sessionId: sessionKey });
   }
