@@ -1396,7 +1396,8 @@ export default function ProviderLimits() {
                     <p className="mt-1.5 text-xs text-text-muted">{error}</p>
                   </div>
                 ) : quota?.raw?.openaiUsage ? (
-                  <OpenAIUsageSummary usage={quota.raw.openaiUsage} detailUrl={quota.raw.detailUrl} />
+                  <OpenAIUsageSummary usage={quota.raw.openaiUsage} detailUrl={quota.raw.detailUrl}
+                    connectionId={conn.id} onBalanceSaved={() => refreshProvider(conn.id, conn.provider)} />
                 ) : quota?.message ? (
                   <div className="text-center py-5">
                     <p className="text-xs text-text-muted">{quota.message}</p>

@@ -39,7 +39,8 @@ describe("OpenAI organization usage", () => {
       const url = new URL(rawUrl);
       expect(url.origin).toBe("https://api.openai.com");
       expect(url.searchParams.get("start_time")).toBe(String(Date.parse("2026-10-01T00:00:00Z") / 1000));
-      expect(url.searchParams.get("end_time")).toBe(String(Date.now() / 1000));
+      expect(url.searchParams.get("end_time")).toBe(String(url.pathname.endsWith("/costs")
+        ? Date.parse("2026-10-30T00:00:00Z") / 1000 : Date.now() / 1000));
       expect(url.searchParams.get("bucket_width")).toBe("1d");
       expect(url.searchParams.get("limit")).toBe("31");
       expect(url.searchParams.getAll("group_by")).toEqual(url.pathname.endsWith("/costs") ? [] : ["model", "service_tier", "batch"]);
@@ -50,6 +51,104 @@ describe("OpenAI organization usage", () => {
     expect(JSON.stringify(result)).not.toContain(account.openaiAdminKey);
     expect(result).not.toHaveProperty("balance");
     expect(result.openaiUsage).not.toHaveProperty("expiresAt");
+  });
+
+  it("includes today's official costs when the costs API only returns complete daily buckets", async () => {
+    vi.setSystemTime(new Date("2026-10-30T06:28:55Z"));
+    const todayEnd = Date.parse("2026-10-31T00:00:00Z") / 1000;
+    const rows = [
+      { model: "gpt-6.1-sol", service_tier: "default", batch: false, num_model_requests: 729,
+        input_tokens: 93070147, output_tokens: 489686, input_cached_tokens: 88597386,
+        input_cache_write_tokens: 4460205, input_cache_write_30m_tokens: 4460205 },
+      { model: "gpt-6.1-sol", service_tier: "default", batch: false, num_model_requests: 403,
+        input_tokens: 56633966, output_tokens: 245944, input_cached_tokens: 53020825,
+        input_cache_write_tokens: 3611910, input_cache_write_30m_tokens: 3611910 },
+    ];
+    proxyAwareFetch.mockImplementation(async rawUrl => {
+      const url = new URL(rawUrl);
+      if (!url.pathname.endsWith("/costs")) return page(rows);
+      return page(Number(url.searchParams.get("end_time")) >= todayEnd
+        ? [cost(24.9322231), cost(16.7937595)] : [cost(24.9322231)]);
+    });
+    const result = (await getOpenAIUsage(account)).openaiUsage;
+    expect(result.costs).toEqual([{ currency: "USD", amount: 41.7259826 }]);
+    expect(result).toMatchObject({ periodEnd: "2026-10-30T06:28:55.000Z", requests: 1132, inputTokens: 149704113, outputTokens: 735630 });
+    expect(result).not.toHaveProperty("estimate");
+    const { estimateOpenAIUsage } = await import("@/lib/openaiUsageEstimate.js");
+    expect(estimateOpenAIUsage(rows)).toMatchObject({ amount: 41.7259826, unpricedRequests: 0 });
+  });
+
+  it("includes the final UTC day across a month boundary while querying usage only through now", async () => {
+    vi.setSystemTime(new Date("2026-10-31T23:59:59Z"));
+    const result = (await getOpenAIUsage(account)).openaiUsage;
+    const costsUrl = new URL(proxyAwareFetch.mock.calls.find(([url]) => url.includes("/costs"))[0]);
+    const usageUrl = new URL(proxyAwareFetch.mock.calls.find(([url]) => url.includes("/usage/completions"))[0]);
+    expect(costsUrl.searchParams.get("end_time")).toBe(String(Date.parse("2026-11-01T00:00:00Z") / 1000));
+    expect(usageUrl.searchParams.get("end_time")).toBe(String(Date.now() / 1000));
+    expect(result.periodEnd).toBe("2026-10-31T23:59:59.000Z");
+  });
+
+  it("deducts paginated estimated usage since the recorded balance, including previous months", async () => {
+    const balance = { amount: 61.96, recordedAt: "2026-09-28T15:23:45.000Z" };
+    const since = String(Date.parse(balance.recordedAt) / 1000);
+    proxyAwareFetch.mockImplementation(async rawUrl => {
+      const url = new URL(rawUrl);
+      if (url.pathname.endsWith("/costs")) return page([cost(24.93)]);
+      if (url.searchParams.get("start_time") !== since) return page([usage]);
+      expect(url.searchParams.get("end_time")).toBe(String(Date.now() / 1000));
+      return page([{ model: "gpt-6.1-sol", service_tier: "default", batch: false,
+        num_model_requests: 1, input_tokens: 0, output_tokens: 50_000 }],
+      url.searchParams.has("page") ? {} : { has_more: true, next_page: "balance-next" });
+    });
+    const result = (await getOpenAIUsage({ ...account, openaiBalance: balance })).openaiUsage;
+    expect(result.costs).toEqual([{ currency: "USD", amount: 24.93 }]);
+    expect(result.balance).toMatchObject({ ...balance, currency: "USD", remaining: 60.96, estimate: { amount: 1, unpricedRequests: 0 } });
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("starts at the recorded amount without querying an empty time range", async () => {
+    const balance = { amount: 61.96, recordedAt: new Date().toISOString() };
+    const result = (await getOpenAIUsage({ ...account, openaiBalance: balance })).openaiUsage.balance;
+    expect(result).toMatchObject({ ...balance, remaining: 61.96, estimate: { amount: 0 } });
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("isolates cached balances by amount and recording time, preserving negative remaining amounts", async () => {
+    const recordedAt = "2026-10-28T03:00:00.000Z";
+    proxyAwareFetch.mockImplementation(async url => page(url.includes("/costs") ? [cost(0)] : [{
+      model: "gpt-6.1-sol", service_tier: "default", batch: false,
+      num_model_requests: 1, input_tokens: 0, output_tokens: 100_000,
+    }]));
+    const read = openaiBalance => getOpenAIUsage({ ...account, openaiBalance });
+    await read(undefined);
+    expect((await read({ amount: 2, recordedAt })).openaiUsage.balance.remaining).toBe(1);
+    expect((await read({ amount: 0.5, recordedAt })).openaiUsage.balance.remaining).toBe(-0.5);
+    expect((await read({ amount: 0, recordedAt })).openaiUsage.balance.remaining).toBe(-1);
+    expect((await read({ amount: 2, recordedAt: new Date().toISOString() })).openaiUsage.balance.remaining).toBe(2);
+    expect((await read(undefined)).openaiUsage).not.toHaveProperty("balance");
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(13);
+  });
+
+  it("withholds a remaining amount when some requests cannot be priced", async () => {
+    const balance = { amount: 61.96, recordedAt: "2026-10-28T03:00:00.000Z" };
+    const result = (await getOpenAIUsage({ ...account, openaiBalance: balance })).openaiUsage;
+    expect(result.balance).toMatchObject({ remaining: null, estimate: { unpricedRequests: 3 } });
+    expect(result.costs).toEqual([{ currency: "USD", amount: 1.25 }]);
+  });
+
+  it("keeps monthly statistics available on a balance query failure and retries without caching it", async () => {
+    const balance = { amount: 61.96, recordedAt: "2026-10-28T03:00:00.000Z" };
+    const since = String(Date.parse(balance.recordedAt) / 1000);
+    const fallback = proxyAwareFetch.getMockImplementation();
+    proxyAwareFetch.mockImplementation(async url => new URL(url).searchParams.get("start_time") === since
+      ? new Response(account.openaiAdminKey, { status: 429 }) : fallback(url));
+    for (let i = 0; i < 2; i++) {
+      const result = (await getOpenAIUsage({ ...account, openaiBalance: balance })).openaiUsage;
+      expect(result.balance).toMatchObject({ remaining: null, error: expect.stringContaining("限流") });
+      expect(result.balance.error).not.toContain(account.openaiAdminKey);
+      expect(result.costs).toEqual([{ currency: "USD", amount: 1.25 }]);
+    }
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(6);
   });
 
   it("caches successful results and refreshes on force, key, proxy, month or TTL changes", async () => {

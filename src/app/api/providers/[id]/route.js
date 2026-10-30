@@ -240,6 +240,19 @@ export async function PUT(request, { params }) {
     const adminKey = normalizeOpenAIAdminKey(existing.provider, body.openaiAdminKey);
     if (adminKey.error) return NextResponse.json({ error: adminKey.error }, { status: 400 });
     if (adminKey.value !== undefined) updateData.openaiAdminKey = adminKey.value;
+    if (adminKey.value !== undefined && adminKey.value !== existing.openaiAdminKey) updateData.openaiBalance = null;
+    if (body.openaiBalanceAmount !== undefined) {
+      const amount = body.openaiBalanceAmount;
+      if (existing.provider !== "openai" || (amount !== null && (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0))) {
+        return NextResponse.json({ error: "OpenAI 余额需填写不小于 0 的美元金额。" }, { status: 400 });
+      }
+      if (amount !== null && !(adminKey.value === undefined ? existing.openaiAdminKey : adminKey.value)) {
+        return NextResponse.json({ error: "请先配置 Admin Key，以便查询记录后的用量。" }, { status: 400 });
+      }
+      updateData.openaiBalance = amount === null ? null : {
+        amount, recordedAt: new Date(Math.floor(Date.now() / 1000) * 1000).toISOString(),
+      };
+    }
     if (existing.provider === "openai" && (apiKey !== undefined || body.openaiAdminKey !== undefined)) {
       if (apiKey != null && typeof apiKey !== "string") {
         return NextResponse.json({ error: "API Key 格式无效。" }, { status: 400 });

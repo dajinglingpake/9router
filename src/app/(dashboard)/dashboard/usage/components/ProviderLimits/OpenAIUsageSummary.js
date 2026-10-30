@@ -1,14 +1,17 @@
+import OpenAIBalance from "./OpenAIBalance";
+
 const formatNumber = value => value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 const formatMoney = (amount, currency) => `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${currency}`;
 const componentLabels = { input: "普通输入", cached: "缓存读取", write30m: "缓存写入（30 分钟）", write12h: "缓存写入（12 小时）", output: "输出" };
 const tierLabels = { default: "标准", flex: "Flex", batch: "Batch", priority: "Fast", fast: "Fast", ultrafast: "Ultrafast" };
 
-export default function OpenAIUsageSummary({ usage, detailUrl }) {
+export default function OpenAIUsageSummary({ usage, detailUrl, connectionId, onBalanceSaved }) {
   const estimate = usage.costs.length === 0 ? usage.estimate : null;
   const amounts = usage.costs.length ? usage.costs : estimate?.amount != null ? [estimate] : [];
   const amountLabel = estimate ? (estimate.unpricedRequests > 0 ? "本月消费（部分估算）" : "本月消费（估算）") : "本月已消费";
   return (
     <div className="space-y-2">
+      <OpenAIBalance balance={usage.balance} connectionId={connectionId} onSaved={onBalanceSaved} />
       <div className="text-[10px] text-text-muted">组织本月统计 · UTC</div>
       <dl className="space-y-px">
         {amounts.map(cost => (

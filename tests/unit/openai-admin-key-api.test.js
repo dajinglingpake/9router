@@ -115,3 +115,45 @@ describe("OpenAI Admin Key settings", () => {
     expect(await db.getProviderConnectionById(account.id)).not.toHaveProperty("openaiAdminKey");
   });
 });
+
+describe("OpenAI manual balance", () => {
+  it("records the current balance with a server timestamp, preserves it on unrelated edits and supports recalibration and clearing", async () => {
+    await updateConnection(request(account.id, { openaiAdminKey: adminKey }), context(account.id));
+    const before = Math.floor(Date.now() / 1000) * 1000;
+    const response = await updateConnection(request(account.id, {
+      openaiBalanceAmount: 61.96, recordedAt: "2000-01-01T00:00:00Z",
+    }), context(account.id));
+    expect(response.status).toBe(200);
+    const { connection } = await response.json();
+    expect(connection.openaiBalance.amount).toBe(61.96);
+    expect(Date.parse(connection.openaiBalance.recordedAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(connection.openaiBalance.recordedAt)).toBeLessThanOrEqual(Date.now());
+    expect(await db.getProviderConnectionById(account.id)).toMatchObject({ openaiBalance: connection.openaiBalance });
+    await updateConnection(request(account.id, { name: "Renamed account" }), context(account.id));
+    expect((await db.getProviderConnectionById(account.id)).openaiBalance).toEqual(connection.openaiBalance);
+    await updateConnection(request(account.id, { openaiBalanceAmount: 0 }), context(account.id));
+    expect((await db.getProviderConnectionById(account.id)).openaiBalance.amount).toBe(0);
+    await updateConnection(request(account.id, { openaiBalanceAmount: null }), context(account.id));
+    expect((await db.getProviderConnectionById(account.id)).openaiBalance).toBeNull();
+    expect(JSON.stringify(connection)).not.toContain(adminKey);
+  });
+
+  it("validates the amount and Admin Key without changing stored balance on rejected requests", async () => {
+    expect((await updateConnection(request(account.id, { openaiBalanceAmount: 61.96 }), context(account.id))).status).toBe(400);
+    await updateConnection(request(account.id, { openaiAdminKey: adminKey, openaiBalanceAmount: 61.96 }), context(account.id));
+    for (const amount of [-1, "61.96", "", {}, true]) {
+      expect((await updateConnection(request(account.id, { openaiBalanceAmount: amount }), context(account.id))).status).toBe(400);
+      expect((await db.getProviderConnectionById(account.id)).openaiBalance.amount).toBe(61.96);
+    }
+    const other = await db.createProviderConnection({ provider: "kimi", authType: "apikey", apiKey: modelKey });
+    expect((await updateConnection(request(other.id, { openaiBalanceAmount: 1 }), context(other.id))).status).toBe(400);
+  });
+
+  it("clears the balance when changing Admin credentials so another organization's usage is never deducted", async () => {
+    await updateConnection(request(account.id, { openaiAdminKey: adminKey, openaiBalanceAmount: 61.96 }), context(account.id));
+    await updateConnection(request(account.id, { openaiAdminKey: adminKey }), context(account.id));
+    expect((await db.getProviderConnectionById(account.id)).openaiBalance.amount).toBe(61.96);
+    await updateConnection(request(account.id, { openaiAdminKey: "other-organization-key" }), context(account.id));
+    expect((await db.getProviderConnectionById(account.id)).openaiBalance).toBeNull();
+  });
+});

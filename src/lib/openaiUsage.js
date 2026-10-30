@@ -54,16 +54,25 @@ export async function getOpenAIUsage(connection, proxyOptions = {}, { force = fa
   const now = new Date();
   const startTime = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000;
   const endTime = Math.max(startTime + 1, Math.floor(now.getTime() / 1000));
+  // Costs only include complete UTC buckets; include today's bucket through midnight.
+  const costsEndTime = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000;
+  const balance = connection.openaiBalance;
+  const balanceStartTime = balance ? Date.parse(balance.recordedAt) / 1000 : null;
   const { signal: callerSignal, ...proxy } = proxyOptions || {};
   // Never cache by the raw secret, or reuse results after changing credentials/proxy.
-  const key = createHash("sha256").update(JSON.stringify([adminKey, proxy, startTime])).digest("hex");
+  const key = createHash("sha256").update(JSON.stringify([adminKey, proxy, startTime, balance])).digest("hex");
   for (const [id, cached] of usageCache) if (cached.expiresAt <= Date.now()) usageCache.delete(id);
   if (!force && usageCache.has(key)) return usageCache.get(key).value;
   const timeout = AbortSignal.timeout(OPENAI_USAGE_CONFIG.timeoutMs);
   const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout;
-  const [costRows, usageRows] = await Promise.all([
-    readUsagePages(OPENAI_USAGE_CONFIG.costsUrl, adminKey, startTime, endTime, proxy, signal),
+  const [costRows, usageRows, balanceUsage] = await Promise.all([
+    readUsagePages(OPENAI_USAGE_CONFIG.costsUrl, adminKey, startTime, costsEndTime, proxy, signal),
     readUsagePages(OPENAI_USAGE_CONFIG.completionsUrl, adminKey, startTime, endTime, proxy, signal, OPENAI_USAGE_CONFIG.groupBy),
+    balance && balanceStartTime < endTime
+      ? readUsagePages(OPENAI_USAGE_CONFIG.completionsUrl, adminKey, balanceStartTime, endTime, proxy, signal, OPENAI_USAGE_CONFIG.groupBy)
+        .then(rows => ({ estimate: estimateOpenAIUsage(rows) }))
+        .catch(error => ({ error: error.message }))
+      : { estimate: estimateOpenAIUsage([]) },
   ]);
   const costs = new Map();
   for (const row of costRows) {
@@ -79,9 +88,14 @@ export async function getOpenAIUsage(connection, proxyOptions = {}, { force = fa
       costs: [...costs].map(([currency, amount]) => ({ currency, amount })),
       requests: sum("num_model_requests"), inputTokens: sum("input_tokens"), outputTokens: sum("output_tokens"),
       ...(costs.size === 0 ? { estimate: estimateOpenAIUsage(usageRows) } : {}),
+      ...(balance ? { balance: {
+        ...balance, currency: "USD", ...balanceUsage,
+        remaining: balanceUsage.estimate?.amount != null && balanceUsage.estimate.unpricedRequests === 0
+          ? balance.amount - balanceUsage.estimate.amount : null,
+      } } : {}),
     },
     detailUrl: OPENAI.display.quotaNotice.detailUrl,
   };
-  usageCache.set(key, { value, expiresAt: Date.now() + OPENAI_USAGE_CONFIG.cacheTtlMs });
+  if (!balanceUsage.error) usageCache.set(key, { value, expiresAt: Date.now() + OPENAI_USAGE_CONFIG.cacheTtlMs });
   return value;
 }
