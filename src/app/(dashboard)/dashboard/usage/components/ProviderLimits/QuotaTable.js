@@ -176,6 +176,11 @@ export default function QuotaTable({
           // and their resetAt is a hard expiry, so word it as "expires".
           const recurring = quota.recurring !== false;
           const countdownLabel = recurring ? `in ${countdown}` : `expires in ${countdown}`;
+          const usageLabel = quota.usageLabel ?? (isUnlimited
+            ? `${quota.used.toLocaleString()} used · Unlimited`
+            : isCreditBalance
+            ? quota.balanceLabel || `Credit: ${quota.total.toFixed(2)} ${quota.currency || ""}`
+            : `${quota.used.toLocaleString()} / ${quota.total > 0 ? quota.total.toLocaleString() : "∞"}${quota.unit ? ` ${quota.unit}` : ""}`);
 
           // "See details" rows are a link to the provider's own usage page —
           // used where the API exposes no per-bucket date (Qoder add-on grants).
@@ -212,7 +217,9 @@ export default function QuotaTable({
               {/* Progress + used/total */}
               <div className={`min-w-0 flex-1 ${compact ? "space-y-1" : "space-y-1.5"}`}>
                 {!isUnlimited && !isCreditBalance && (
-                <div className={`${compact ? "h-1" : "h-1.5"} rounded-full overflow-hidden border ${colors.bgLight} ${
+                <div role="progressbar" aria-label={quota.name} aria-valuemin={0} aria-valuemax={100}
+                  aria-valuenow={Math.max(0, Math.min(quota.remaining, 100))}
+                  className={`${compact ? "h-1" : "h-1.5"} rounded-full overflow-hidden border ${colors.bgLight} ${
                   quota.remaining === 0 ? "border-black/10 dark:border-white/10" : "border-transparent"
                 }`}>
                   <div
@@ -225,21 +232,9 @@ export default function QuotaTable({
                 <div className={`flex items-center justify-between gap-1 min-w-0 ${compact ? "text-[10px]" : "text-xs"}`}>
                   <span
                     className="text-text-muted truncate"
-                    title={
-                      isUnlimited
-                        ? `${quota.used.toLocaleString()} used · Unlimited`
-                        : isCreditBalance
-                        ? quota.balanceLabel || `Credit balance: ${quota.total.toFixed(2)} ${quota.currency || ""}`
-                        : `${quota.used.toLocaleString()} / ${quota.total > 0 ? quota.total.toLocaleString() : "∞"}`
-                    }
+                    title={usageLabel}
                   >
-                    {isUnlimited
-                      ? `${quota.used.toLocaleString()} used · Unlimited`
-                      : isCreditBalance
-                      ? quota.balanceLabel || `Credit: ${quota.total.toFixed(2)} ${quota.currency || ""}`
-                      : `${quota.used.toLocaleString()} / ${quota.total > 0 ? quota.total.toLocaleString() : "∞"}${
-                          quota.unit ? ` ${quota.unit}` : ""
-                        }`}
+                    {usageLabel}
                   </span>
                   <span className={`font-medium ${isUnlimited ? "text-green-600 dark:text-green-400" : isCreditBalance ? "text-blue-600 dark:text-blue-400" : colors.text} shrink-0`}>
                     {isUnlimited ? "Unlimited" : isCreditBalance ? "" : `${quota.remaining}%`}

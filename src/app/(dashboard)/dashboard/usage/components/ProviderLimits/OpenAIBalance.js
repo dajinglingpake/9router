@@ -3,8 +3,10 @@
 import { useId, useState } from "react";
 import Button from "@/shared/components/Button";
 import Input from "@/shared/components/Input";
+import QuotaTable from "./QuotaTable";
 
-const money = amount => `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD`;
+const formatAmount = amount => amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const money = amount => `${formatAmount(amount)} USD`;
 
 export default function OpenAIBalance({ balance, connectionId, onSaved }) {
   const inputId = useId();
@@ -35,19 +37,24 @@ export default function OpenAIBalance({ balance, connectionId, onSaved }) {
   }
 
   return (
-    <div className="space-y-2 rounded-lg border border-border bg-surface-2/50 p-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-medium text-text-main">预计剩余</span>
-        {balance?.remaining != null && (
-          <span className={`text-sm font-semibold tabular-nums ${balance.remaining <= 0 ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>
-            {money(balance.remaining)}
-          </span>
-        )}
-        {!balance && !editing && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>填写当前余额</Button>}
-        {balance && balance.remaining == null && <span className="text-xs text-text-muted">暂无法估算</span>}
-      </div>
+    <div className="space-y-2">
+      {balance?.remaining != null ? (
+        <QuotaTable compact quotas={[{
+          name: "预计剩余", used: balance.estimate.amount, total: balance.amount,
+          remainingPercentage: balance.amount > 0 ? Math.max(0, Math.min(100, balance.remaining / balance.amount * 100)) : 0,
+          usageLabel: `${formatAmount(balance.remaining)} / ${money(balance.amount)}`,
+          emptyMessage: "手动校准",
+        }]} />
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1.5">
+          <span className="text-xs font-medium text-text-main">预计剩余</span>
+          {!balance && !editing && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>填写当前余额</Button>}
+          {balance && <span className="text-xs text-text-muted">暂无法估算</span>}
+        </div>
+      )}
       {balance && (
-        <div className="space-y-1 text-xs text-text-muted">
+        <div className="space-y-1 px-1.5 text-xs text-text-muted">
+          {balance.remaining != null && <p>预计剩余 {money(balance.remaining)}</p>}
           <p>记录余额 {money(balance.amount)} · {new Date(balance.recordedAt).toLocaleString()}</p>
           {balance.estimate?.amount != null && <p>记录后估算消费 {money(balance.estimate.amount)}</p>}
           {balance.error && <p role="status" className="text-red-600 dark:text-red-400">{balance.error}</p>}
