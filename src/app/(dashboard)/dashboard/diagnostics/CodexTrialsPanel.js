@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AccountOfficialStatus } from "./OfficialStatus";
 import Button from "@/shared/components/Button";
-import Modal from "@/shared/components/Modal";
+import Modal, { ConfirmModal } from "@/shared/components/Modal";
 import CodexTrialOutput from "./CodexTrialOutput";
 import CodexTrialPreview from "./CodexTrialPreview";
 import CodexTrialErrors from "./CodexTrialErrors";
@@ -25,6 +25,7 @@ const effortLabels = { low: "低", medium: "中", high: "高", xhigh: "极高", 
 const number = value => typeof value === "number" ? value.toLocaleString("zh-CN") : "—";
 const elapsed = ms => typeof ms !== "number" ? "—" : ms < 60_000 ? `${(ms / 1000).toFixed(1)} 秒` : `${Math.floor(ms / 60_000)} 分 ${Math.floor(ms % 60_000 / 1000)} 秒`;
 const artifactUrl = (account, format = "html") => `/api/codex-trials/${encodeURIComponent(account.result.id)}?format=${format}&v=${account.result.runId}`;
+const active = result => ["queued", "running"].includes(result?.status);
 
 function Metric({ label, children, danger }) {
   return <div><dt className="text-[11px] text-text-muted">{label}</dt><dd className={`mt-1 text-base font-semibold tabular-nums ${danger ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>{children}</dd></div>;
@@ -34,7 +35,6 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
   const result = account.result;
   const lowMetrics = getTrialDegradationMetrics(result);
   const degraded = lowMetrics.length > 0;
-  const active = result => ["queued", "running"].includes(result?.status);
   const selectedModels = models.filter(item => item.provider === account.provider);
   const selectedActive = account.results?.some(result => active(result) && selectedModels.some(item => item.model === result.model));
   const cooling = result?.status === "running" && result.cooldownUntil > now;
@@ -115,12 +115,19 @@ export default function CodexTrialsPanel() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
+  const [modelReadError, setModelReadError] = useState("");
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [prompt, setPrompt] = useState(CODEX_TRIAL_PROMPT);
   const [modelSelections, setModels] = useState(null);
   const [parallel, setParallel] = useState(CODEX_TRIAL_PARALLEL);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [providerFilter, setProviderFilter] = useState("");
+  const [modelFilter, setModelFilter] = useState("");
+  const [deleteSelection, setDeleteSelection] = useState(null);
+  const [notice, setNotice] = useState("");
+  const [skippedNotice, setSkippedNotice] = useState("");
   const [now, setNow] = useState(0);
   const [inspector, setInspector] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -131,11 +138,11 @@ export default function CodexTrialsPanel() {
     effort: trialDefaultEffort(initialProvider.id, initialProvider.defaultModel, initialProvider.models.find(item => item.id === initialProvider.defaultModel)?.efforts) }] : []);
   const validParallel = Number.isInteger(parallel) && parallel >= 1 && parallel <= CODEX_TRIAL_MAX_PARALLEL;
   const busy = submitting || data?.stopping || !data?.cli?.available || !validParallel || !models.length || models.some(item => !item.model);
-  const load = useCallback(async (signal, refreshModels = false) => {
+  const load = useCallback(async signal => {
     const current = ++sequence.current;
     try {
-      const response = await fetch(`/api/codex-trials${refreshModels ? "?refreshModels=1" : ""}`, {
-        cache: "no-store", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(refreshModels ? 30000 : 10000)]),
+      const response = await fetch("/api/codex-trials", {
+        cache: "no-store", signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10000)]),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "读取测试记录失败。");
@@ -143,7 +150,7 @@ export default function CodexTrialsPanel() {
       if (sequence.current === current && !signal?.aborted) {
         // Status polling carries the local fallback catalog; keep the discovered
         // choices until the page is reopened or refreshed.
-        setData(previous => ({ ...payload, providers: refreshModels ? payload.providers : previous?.providers || payload.providers }));
+        setData(previous => ({ ...payload, providers: previous?.providers || payload.providers }));
         setNow(payload.serverNow ?? Date.now()); setReadError("");
       }
     } catch (cause) { if (sequence.current === current && !signal?.aborted) setReadError(cause.message); }
@@ -151,15 +158,28 @@ export default function CodexTrialsPanel() {
   useEffect(() => {
     const controller = new AbortController();
     let timer;
-    let refreshModels = true;
     const refresh = async () => {
       if (!document.hidden && !controller.signal.aborted) {
-        await load(controller.signal, refreshModels);
-        refreshModels = false;
+        await load(controller.signal);
       }
       if (!controller.signal.aborted) timer = setTimeout(refresh, 1000);
     };
+    const refreshModels = async () => {
+      try {
+        const response = await fetch("/api/codex-trials?refreshModels=1", {
+          cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "更新模型列表失败。");
+        if (controller.signal.aborted) return;
+        // A slow catalog response must never replace newer trial progress from polling.
+        setData(previous => previous ? { ...previous, providers: payload.providers } : payload);
+        setModelReadError("");
+      } catch (cause) { if (!controller.signal.aborted) setModelReadError(cause.message); }
+      finally { if (!controller.signal.aborted) setModelsLoading(false); }
+    };
     Promise.resolve().then(refresh);
+    Promise.resolve().then(refreshModels);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [load]);
   useEffect(() => {
@@ -180,17 +200,19 @@ export default function CodexTrialsPanel() {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [inspector]);
   async function submit(payload) {
-    setSubmitting(true); setError("");
+    setSubmitting(true); setError(""); setNotice(""); setSkippedNotice("");
     try {
       const response = await fetch("/api/codex-trials", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "启动测试失败。");
+      if (result.count) setNotice(`已加入 ${result.count} 项测试。`);
+      if (result.skipped?.length) setSkippedNotice(`以下 ${result.skipped.length} 项未加入测试：${result.skipped.map(item => `${item.name}（${item.model}）：${item.reason}`).join("；")}`);
       await load();
     } catch (cause) { setError(cause.message); }
     finally { setSubmitting(false); }
   }
   async function removeResult(id) {
-    setSubmitting(true); setError("");
+    setSubmitting(true); setError(""); setNotice("");
     try {
       const response = await fetch(`/api/codex-trials/${encodeURIComponent(id)}`, { method: "DELETE" });
       const result = await response.json();
@@ -199,6 +221,18 @@ export default function CodexTrialsPanel() {
       await load();
     } catch (cause) { setError(cause.message); }
     finally { setSubmitting(false); }
+  }
+  async function removeSelectedResults() {
+    setSubmitting(true); setError(""); setNotice("");
+    try {
+      const response = await fetch("/api/codex-trials", { method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: deleteSelection.map(({ id, runId }) => ({ id, runId })) }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "批量删除测试结果失败。");
+      if (result.deleted.includes(inspector?.account.result?.id)) setInspector(null);
+      setNotice(`已删除 ${result.deleted.length} 条测试结果。`);
+    } catch (cause) { setError(cause.message); }
+    finally { setDeleteSelection(null); await load(); setSubmitting(false); }
   }
   const run = (account, result) => submit({ prompt, parallel: data?.parallel ?? parallel,
     models: result ? [{ provider: account.provider, model: result.model, effort: result.effort }]
@@ -216,18 +250,27 @@ export default function CodexTrialsPanel() {
   const degraded = cards.filter(account => matchesTrialDegradationRule(account.result)).length;
   const running = cards.filter(account => account.result?.status === "running").length;
   const queued = cards.filter(account => account.result?.status === "queued").length;
-  const visible = cards.filter(account => `${account.providerName} ${account.provider} ${account.name} ${account.email} ${account.id} ${account.qualityLabel || ""} ${account.result?.model || ""}`.toLowerCase().includes(search.toLowerCase()))
+  const resultProviders = [...new Map(accounts.map(account => [account.provider, account.providerName || account.provider]))];
+  const providerCards = cards.filter(account => !providerFilter || account.provider === providerFilter);
+  const resultModels = [...new Set(providerCards.map(account => account.result?.model).filter(Boolean))].sort();
+  if (modelFilter && !resultModels.includes(modelFilter)) resultModels.push(modelFilter);
+  const visible = providerCards.filter(account => `${account.providerName} ${account.provider} ${account.name} ${account.email} ${account.id} ${account.qualityLabel || ""} ${account.result?.model || ""}`.toLowerCase().includes(search.toLowerCase()))
+    .filter(account => !modelFilter || account.result?.model === modelFilter)
     .filter(account => filter === "all" || (filter === "degraded" ? matchesTrialDegradationRule(account.result) : filter === "disabled" ? !account.enabled : filter === "error" ? ["error", "interrupted"].includes(account.result?.status) : account.result?.status === filter));
+  const deletable = visible.map(account => account.result).filter(result => result && !active(result));
+  const visibleActive = visible.filter(account => active(account.result)).length;
   return <div data-i18n-skip className="flex min-w-0 flex-col gap-6 text-text-main">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div><p className="mb-2 text-xs font-medium text-text-muted">Codex CLI → 9router → 所选供应商的指定账号</p><h1 className="text-2xl font-semibold tracking-tight">账号测试</h1>
         <p className="mt-2 text-sm text-text-muted">同一提示词，比较不同供应商、账号和模型的作品。包含禁用账号。</p></div>
-      <span className={`rounded-full px-3 py-1.5 text-xs ${data?.cli?.available ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-surface-2 text-text-muted"}`}>{data?.cli?.version || (data ? "CLI 未就绪" : "正在连接…")}</span>
+      <span className={`rounded-full px-3 py-1.5 text-xs ${data?.cli?.available ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-surface-2 text-text-muted"}`}>{data?.cli?.version || (data?.cli?.pending ? "正在检查 CLI…" : data ? "CLI 未就绪" : "正在读取结果…")}</span>
     </div>
     <section className={`${panel} p-5`} aria-label="测试配置">
       <label htmlFor="codex-trial-prompt" className="text-sm font-medium">提示词</label>
       <textarea id="codex-trial-prompt" rows={3} value={prompt} maxLength={CODEX_TRIAL_PROMPT_LIMIT} onChange={event => setPrompt(event.target.value)} disabled={submitting} className={`${control} mt-2 resize-y py-3 leading-6`} />
       <CodexTrialModels providers={providers} models={models} onChange={setModels} disabled={submitting} />
+      {modelsLoading && <p role="status" className="mt-2 text-xs text-text-muted">正在更新可用模型…</p>}
+      {modelReadError && <p role="alert" className="mt-2 text-xs text-amber-700 dark:text-amber-300">模型列表更新失败：{modelReadError}。已有测试结果仍可查看。</p>}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-text-muted">{selectedAccounts.length} 个账号 · {models.length} 组供应商 / 模型 · 共 {jobCount} 项测试</p>
         <div className="flex flex-wrap items-end gap-3">
@@ -246,9 +289,18 @@ export default function CodexTrialsPanel() {
       <p className="mt-4 text-xs leading-5 text-text-muted">每行可选择不同供应商，同时测试各自的全部账号（含禁用账号）。测试不设固定总时限，可随时手动停止；停止或报错时，已写出的作品仍可预览和下载，并标记为未完成。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
     </section>
     {(error || readError || data?.cli?.error) && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">{error || readError || data.cli.error}</p>}
+    {skippedNotice && <p role="alert" className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-300">{skippedNotice}</p>}
     <div className="flex flex-wrap items-center justify-between gap-4">
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite"><span className="text-text-muted">全部 <b className="text-text-main">{accounts.length}</b></span><span className="text-emerald-700 dark:text-emerald-400">已生成 {success}</span><span className="text-red-600 dark:text-red-400">降智表现 {degraded}</span><span className="text-red-600 dark:text-red-400">失败 {failures}</span>{running > 0 && <span className="text-blue-600 dark:text-blue-400">执行中 {running}</span>}{queued > 0 && <span className="text-text-muted">排队中 {queued}</span>}</p>
-      <div className="flex flex-wrap gap-2"><input aria-label="搜索账号、供应商或模型" className={`${control} sm:!w-52`} placeholder="搜索账号、供应商或模型…" value={search} onChange={event => setSearch(event.target.value)} /><select aria-label="筛选测试结果" className={`${control} sm:!w-40`} value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部结果</option><option value="disabled">禁用账号</option><option value="success">已生成</option><option value="degraded">降智表现（规则命中）</option><option value="error">失败 / 中断</option></select></div>
+      <div className="flex w-full flex-wrap items-end gap-3">
+        <label className="flex w-full min-w-0 flex-col text-xs text-text-muted sm:w-auto">搜索账号、供应商或模型<input className={`${control} mt-1 sm:!w-52`} placeholder="搜索账号、供应商或模型…" value={search} onChange={event => setSearch(event.target.value)} /></label>
+        <label className="flex w-full min-w-0 flex-col text-xs text-text-muted sm:w-auto">筛选供应商<select aria-label="筛选供应商" className={`${control} mt-1 sm:!w-48`} value={providerFilter} onChange={event => { setProviderFilter(event.target.value); setModelFilter(""); }}><option value="">全部供应商</option>{resultProviders.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+        <label className="flex w-full min-w-0 flex-col text-xs text-text-muted sm:w-auto">筛选模型<select aria-label="筛选模型" className={`${control} mt-1 sm:!w-52`} value={modelFilter} onChange={event => setModelFilter(event.target.value)}><option value="">全部模型</option>{resultModels.map(model => <option key={model} value={model}>{model}</option>)}</select></label>
+        <label className="flex w-full min-w-0 flex-col text-xs text-text-muted sm:w-auto">筛选测试结果<select aria-label="筛选测试结果" className={`${control} mt-1 sm:!w-40`} value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部结果</option><option value="disabled">禁用账号</option><option value="success">已生成</option><option value="degraded">降智表现（规则命中）</option><option value="error">失败 / 中断</option></select></label>
+        <Button size="sm" variant="ghost" className="ml-auto min-h-11 !font-normal" disabled={submitting || !deletable.length} onClick={() => setDeleteSelection(deletable)}>删除筛选结果（{deletable.length}）</Button>
+      </div>
+      {visibleActive > 0 && <p className="w-full text-xs text-text-muted">当前筛选中有 {visibleActive} 条正在执行或排队的测试，批量删除时会跳过。</p>}
+      {notice && <p role="status" className="w-full text-sm text-emerald-700 dark:text-emerald-400">{notice}</p>}
     </div>
     <div className="-mt-3 space-y-1 text-xs leading-5 text-text-muted">
       <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
@@ -256,6 +308,9 @@ export default function CodexTrialsPanel() {
     </div>
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy || !models.some(item => supportsModel(account, item))} deleting={submitting} models={models.filter(item => supportsModel(account, item))} canRetest={!account.result || supportsModel(account, { provider: account.provider, model: account.result.model })} now={now} onRun={run} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加可测试的供应商账号。"}</div>}
+    <ConfirmModal isOpen={!!deleteSelection} onClose={() => { if (!submitting) setDeleteSelection(null); }} onConfirm={removeSelectedResults}
+      title="删除筛选结果" confirmText={`删除 ${deleteSelection?.length || 0} 条结果`} cancelText="取消" loading={submitting}
+      message={`将永久删除所选的 ${deleteSelection?.length || 0} 条测试结果，涉及模型：${[...new Set((deleteSelection || []).map(result => result.model))].join("、")}。作品、执行输出和测试指标将一并删除，账号配置不受影响。此操作不可撤销。`} />
     {["errors", "requests"].includes(inspector?.mode) && <CodexTrialErrors key={`${inspector.account.result.runId}:${inspector.mode}`}
       initialIssue={inspector.mode === "requests" ? "all" : "error"}
       account={cards.find(account => account.result?.id === inspector.account.result.id) || inspector.account} onClose={() => setInspector(null)} />}

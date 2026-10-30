@@ -6,7 +6,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "@/lib/providerUsage";
 
 const cache = globalThis.__ninerouterCodexModels ||= new Map();
-const unavailable = () => ({ models: [], warning: "无法获取此账号的 Codex 模型列表，请稍后刷新。" });
+const unavailable = reason => ({ models: [], warning: `无法获取此账号的 Codex 模型列表${reason ? `（${reason}）` : ""}，请稍后刷新。` });
 
 export function parseCodexModels(payload) {
   const entries = Array.isArray(payload) ? payload : payload?.models || payload?.data;
@@ -41,7 +41,7 @@ export async function resolveCodexModels(connection, { forceRefresh = false, cac
   if (previous?.pending) return previous.pending;
   if (previous && previous.expiresAt > Date.now() && !forceRefresh) return previous.result;
   for (const [id, entry] of cache) if (!entry.pending && entry.expiresAt <= Date.now()) cache.delete(id);
-  const entry = { pending: null, result: null, expiresAt: 0 };
+  const entry = { pending: null, result: previous?.result || null, expiresAt: 0 };
   cache.set(key, entry);
   entry.pending = (async () => {
     try {
@@ -65,10 +65,10 @@ export async function resolveCodexModels(connection, { forceRefresh = false, cac
         current = (await refreshAndUpdateCredentials(current, true, proxyOptions)).connection;
         response = await request();
       }
-      if (!response.ok) return unavailable();
+      if (!response.ok) return unavailable(`HTTP ${response.status}`);
       const models = parseCodexModels(await response.json());
       return { models, ...(models.length ? {} : { warning: "此账号未返回可用的 Codex 模型。" }) };
-    } catch { return unavailable(); }
+    } catch (error) { return unavailable(error?.name === "TimeoutError" ? "请求超时" : undefined); }
   })().then(result => {
     entry.result = result;
     entry.expiresAt = Date.now() + (result.warning ? CODEX_MODELS_CONFIG.timeoutMs : CODEX_MODELS_CONFIG.cacheTtlMs);

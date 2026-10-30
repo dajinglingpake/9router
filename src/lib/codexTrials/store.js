@@ -45,6 +45,15 @@ function initialize() {
   state.loaded = true;
 }
 
+function checkCli() {
+  // Share the pending check across readers; opening results must not wait for a child process.
+  if (!state.cliPending) state.cliPending = getCliVersion()
+    .catch(() => ({ available: false, error: "CLI 检测失败，请稍后重试。" }))
+    .then(cli => { state.cli = cli; return cli; })
+    .finally(() => { state.cliPending = null; });
+  return state.cliPending;
+}
+
 export function getTrialRecord(id) {
   initialize();
   fileFor(id);
@@ -60,15 +69,29 @@ export function deleteTrialRecord(id) {
   return { deleted: id };
 }
 
+export function deleteTrialRecords(targets) {
+  if (!Array.isArray(targets) || !targets.length
+    || targets.some(target => !target || typeof target.id !== "string")
+    || new Set(targets.map(target => target.id)).size !== targets.length) throw fail("请选择要删除的测试结果。");
+  // Validate the entire selection before deleting, including runs changed since confirmation opened.
+  for (const target of targets) {
+    const record = getTrialRecord(target.id);
+    if (!record) throw fail("部分测试结果已删除，请刷新后重试。", 409);
+    if (active(record)) throw fail("部分测试正在执行或排队，请结束测试后再删除。", 409);
+    if (record.runId !== target.runId) throw fail("部分测试结果已更新，请刷新后重新选择。", 409);
+  }
+  return { deleted: targets.map(target => deleteTrialRecord(target.id).deleted) };
+}
+
 export async function listTrials({ discoverModels = false } = {}) {
   initialize();
+  if (!state.cli) void checkCli();
   const connections = await getProviderConnections();
   const providers = await getTrialProviders(connections, { discoverModels });
   const appeals = await getAppealSummaries();
-  if (!state.cli) state.cli = await getCliVersion();
   return {
     serverNow: Date.now(),
-    cli: state.cli,
+    cli: state.cli || { available: false, pending: true },
     running: !!state.batch,
     stopping: state.batch?.controller.signal.aborted || false,
     parallel: state.batch?.parallel ?? null,
@@ -99,7 +122,7 @@ export async function startTrials(input) {
   initialize();
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim() || input.prompt.length > CODEX_TRIAL_PROMPT_LIMIT) throw fail(`请输入 1–${CODEX_TRIAL_PROMPT_LIMIT} 字的提示词。`);
   const connections = await getProviderConnections();
-  const providers = await getTrialProviders(connections, { discoverModels: true });
+  const providers = await getTrialProviders(connections, { discoverModels: true, forceRefresh: true });
   const selected = input.models ?? [{ model: input.model, effort: input.effort }];
   if (!Array.isArray(selected) || !selected.length || selected.length > 20
     || selected.some(item => !item || typeof item.model !== "string" || !/^[^\s()[\]\x00-\x1f\x7f]{1,256}$/.test(item.model))) throw fail("请选择有效的文本模型。");
@@ -116,12 +139,22 @@ export async function startTrials(input) {
   const eligible = connections.filter(connection => models.some(item => item.provider === connection.provider));
   const ids = input.all === true ? eligible.map(connection => connection.id) : [...new Set(Array.isArray(input.ids) ? input.ids : [])];
   if (!ids.length || ids.some(id => !eligible.some(connection => connection.id === id))) throw fail("请选择属于所选供应商的有效账号。");
-  const targets = models.flatMap(item => eligible.filter(connection => connection.provider === item.provider && ids.includes(connection.id))
-    .filter(connection => item.provider !== "codex" || providers.find(provider => provider.id === "codex")?.models
-      .find(model => model.id === item.model)?.connectionIds?.includes(connection.id))
-    .map(connection => ({ ...item, connectionId: connection.id })));
-  if (models.some(item => !targets.some(target => target.provider === item.provider))) throw fail("所选供应商没有对应的待测试账号。");
-  state.cli = await getCliVersion();
+  const targets = [];
+  const skipped = [];
+  for (const item of models) {
+    const catalog = providers.find(provider => provider.id === item.provider);
+    for (const connection of eligible.filter(connection => connection.provider === item.provider && ids.includes(connection.id))) {
+      if (item.provider === "codex" && !catalog.models.find(model => model.id === item.model)?.connectionIds?.includes(connection.id)) {
+        skipped.push({ connectionId: connection.id, model: item.model,
+          name: connection.displayName || connection.name || connection.email || connection.id,
+          reason: catalog.accountWarnings?.find(account => account.connectionId === connection.id)?.warning || "此账号未开放所选模型。" });
+      } else targets.push({ ...item, connectionId: connection.id });
+    }
+  }
+  if (models.some(item => !targets.some(target => target.provider === item.provider))) {
+    throw fail(skipped.length ? `未启动测试：${skipped.map(item => `${item.name}（${item.model}）：${item.reason}`).join("；")}` : "所选供应商没有对应的待测试账号。");
+  }
+  await checkCli();
   if (!state.cli.available) throw fail(state.cli.error, 503);
   // Check each account/model after asynchronous validation so two tabs cannot overwrite an active run.
   if (state.batch?.controller.signal.aborted) throw fail("正在停止测试，请稍后再试。", 409);
@@ -148,7 +181,7 @@ export async function startTrials(input) {
       batch.queue.push(id);
     }
   } finally { startWorkers(batch); }
-  return { count: jobs.length, parallel: batch.parallel };
+  return { count: jobs.length, parallel: batch.parallel, skipped };
 }
 
 function startWorkers(batch) {

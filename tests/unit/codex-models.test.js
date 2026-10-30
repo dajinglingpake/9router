@@ -67,6 +67,21 @@ describe("Codex account catalog", () => {
     expect((await resolveCodexModels(account(), { forceRefresh: true })).models.map(model => model.id)).toEqual(["new-model"]);
   });
 
+  it("keeps the cached models readable while a background refresh is pending", async () => {
+    await resolveCodexModels(account());
+    let finish;
+    mocks.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const refreshing = resolveCodexModels(account(), { forceRefresh: true });
+    try {
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      expect((await resolveCodexModels(account(), { cachedOnly: true })).models.map(model => model.id)).toEqual(["gpt-6-luna"]);
+    } finally {
+      finish(response([rawModel("new-model")]));
+      await refreshing;
+    }
+    expect((await resolveCodexModels(account(), { cachedOnly: true })).models.map(model => model.id)).toEqual(["new-model"]);
+  });
+
   it("refreshes an expired token through the existing credential manager", async () => {
     const connection = account("expired", { refreshToken: "refresh-secret" });
     mocks.fetch.mockResolvedValueOnce(response([], 401)).mockResolvedValueOnce(response([rawModel("allowed")]));
@@ -78,7 +93,14 @@ describe("Codex account catalog", () => {
 
   it.each([403, 429, 500])("never substitutes static models on upstream HTTP %s", async status => {
     mocks.fetch.mockResolvedValue(response([], status));
-    expect(await resolveCodexModels(account())).toMatchObject({ models: [], warning: expect.any(String) });
+    expect(await resolveCodexModels(account())).toMatchObject({ models: [], warning: expect.stringContaining(`HTTP ${status}`) });
+  });
+
+  it("identifies discovery timeouts without exposing raw network error details", async () => {
+    mocks.fetch.mockRejectedValue(new DOMException("private proxy credentials", "TimeoutError"));
+    const result = await resolveCodexModels(account());
+    expect(result).toMatchObject({ models: [], warning: expect.stringContaining("请求超时") });
+    expect(JSON.stringify(result)).not.toContain("private proxy credentials");
   });
 
   it("keeps unavailable accounts out when another account succeeds", async () => {

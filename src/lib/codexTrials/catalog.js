@@ -14,9 +14,9 @@ const textModel = model => (model.kind || model.type || "llm") === "llm"
 const liveResolvers = { "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels, openai: resolveOpenAIModels };
 
 // Discovery is opt-in: polling test results must never probe upstream accounts.
-export async function getTrialProviders(connections, { discoverModels = false } = {}) {
+export async function getTrialProviders(connections, { discoverModels = false, forceRefresh = false } = {}) {
   const [nodes, customModels] = await Promise.all([getProviderNodes(), getCustomModels()]);
-  const codex = await resolveCodexCatalog(connections, { forceRefresh: discoverModels, cachedOnly: !discoverModels });
+  const codex = await resolveCodexCatalog(connections, { forceRefresh, cachedOnly: !discoverModels });
   const liveCatalogs = discoverModels
     ? await Promise.all(connections.filter(connection => liveResolvers[connection.provider])
       .map(async connection => ({ provider: connection.provider, ...await liveResolvers[connection.provider](connection) })))
@@ -37,11 +37,16 @@ export async function getTrialProviders(connections, { discoverModels = false } 
         : model.supportedEffortLevels?.length ? model.supportedEffortLevels : getThinkingLevels(id, model.id) || [],
       ...(id === "codex" ? { connectionIds: model.connectionIds } : {}),
     }])).values()];
+    const accountWarnings = id === "codex" ? codex.accounts.filter(account => account.warning).map(account => {
+      const connection = connections.find(connection => connection.id === account.connectionId);
+      return { connectionId: account.connectionId, warning: account.warning,
+        name: connection?.displayName || connection?.name || connection?.email || account.connectionId };
+    }) : [];
     return [{
       id, name: node?.name || definition?.name || id, models,
       defaultModel: models.find(model => model.id === CODEX_TRIAL_MODEL)?.id || models[0]?.id || "",
       allowCustomModel: id !== "codex" && (!!node || !!definition?.passthroughModels || !models.length),
-      ...(id === "codex" ? { warning: codex.accounts.filter(account => account.warning).map(account => account.warning).join("；") } : {}),
+      ...(id === "codex" ? { accountWarnings, warning: accountWarnings.map(account => `${account.name}：${account.warning}`).join("；") } : {}),
       ...(live.some(result => result.warning) ? { warning: [...new Set(live.map(result => result.warning).filter(Boolean))].join("；") } : {}),
     }];
   });

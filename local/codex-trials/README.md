@@ -5,6 +5,9 @@
 - 默认 `gpt-6.1-sol` / `xhigh`，默认提示词保留鹈鹕骑自行车动画文案，可自由修改提示词、模型与推理强度。后台默认同时执行 2 个任务，其余自动排队，界面无需选择账号数量。
 - 一键测试所有 Codex 账号，包括禁用账号；不修改启用状态。每张卡也可单独重测。
 - 模型列表可增加、移除，每个模型单独设置推理强度，不允许重复。一次测试运行“账号 × 模型”组合；同一账号的各模型分别保留作品、日志和指标。卡片“重测此模型”只替换当前组合，“测试所选模型”运行该账号的全部所选模型。默认并发仍为 2，并遵守原有账号并发和请求间隔。
+- 进入页面先读取已有结果，模型列表在后台更新并复用有效缓存；首次 CLI 检测也在后台完成，不阻塞查看作品。启动测试前仍会重新校验账号可用模型和 CLI。
+- 结果支持按供应商、完整模型 ID、关键词和状态组合筛选，模型选项随供应商联动，并一次删除筛选后的已结束结果；执行中、排队中或确认后已重测的记录受保护。
+- 一键测试会显示实际入队数量，以及因模型列表读取失败或模型未开放而跳过的账号、模型和原因。
 - 每张卡显示现有账号标签，可直接编辑文字、颜色或取消标记，例如填写“风控”；同一账号的各模型卡片同步更新。另有“编辑账号”入口复用原账号设置弹窗，搜索支持标签文字。
 - 模型列表不单列 `[1m]` 上下文标记别名；它不是不同模型，且本功能未给 CLI 设置百万上下文窗口。
 - 在现有 9router 容器内临时启动真实 `codex exec`，写出 `index.html` 后退出。无额外容器、常驻 CLI 服务或依赖包。
@@ -34,17 +37,17 @@
 
 ## 运行时升级与部署
 
-账号测试使用 `codex-cli 0.164.0`，构建时校验版本。将 CLI 安装到独立目录，不依赖宿主全局 Codex 的升级状态：
+账号测试使用 `codex-cli 0.166.0`，构建时校验版本。将 CLI 安装到独立目录，不依赖宿主全局 Codex 的升级状态：
 
 ```sh
-npm install --prefix "$HOME/.local/share/9router-codex/0.164.0" \
-  --save-exact --ignore-scripts --no-audit --no-fund "@openai/codex@0.164.0"
+npm install --prefix "$HOME/.local/share/9router-codex/0.166.0" \
+  --save-exact --ignore-scripts --no-audit --no-fund "@openai/codex@0.166.0"
 ```
 
 在现有 `scripts/upgrade-remote-9router.local.env` 中设置 Linux x64 运行时路径：
 
 ```sh
-CODEX_RUNTIME_DIR="$HOME/.local/share/9router-codex/0.164.0/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl"
+CODEX_RUNTIME_DIR="$HOME/.local/share/9router-codex/0.166.0/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl"
 ```
 
 只使用现有升级脚本完成构建、配置同步和容器更新；它会同时包含 Codex CLI 与账号申诉浏览器运行时。升级 CLI 时同步修改本目录 Dockerfile 的版本校验和上述运行时路径。

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [], kimiModels: [], codexModels: null }));
+const fixture = vi.hoisted(() => ({ directory: "", jobs: [], sessions: new Set(), codebuddyModels: [], kimiModels: [], codexModels: null, codexAccounts: [] }));
 vi.mock("@/lib/dataDir", () => ({ get DATA_DIR() { return fixture.directory; } }));
 vi.mock("@/lib/localDb", () => ({
   getProviderConnections: async () => [
@@ -20,10 +20,12 @@ vi.mock("@/lib/codebuddyModels", () => ({
   resolveCodebuddyModels: vi.fn(async () => ({ models: fixture.codebuddyModels })),
 }));
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
+import { resolveCodexCatalog } from "@/lib/codexModels";
+import { getCliVersion } from "@/lib/codexTrials/cli";
 vi.mock("@/lib/kimiModels", () => ({ resolveKimiModels: vi.fn(async () => ({ models: fixture.kimiModels })) }));
 vi.mock("@/lib/codexModels", () => ({ resolveCodexCatalog: vi.fn(async connections => ({
   models: fixture.codexModels ?? ["gpt-6.1-sol", "gpt-5.6-terra"].map(id => ({ id, name: id, supportedEffortLevels: ["xhigh"],
-    connectionIds: connections.filter(connection => connection.provider === "codex").map(connection => connection.id) })), accounts: [],
+    connectionIds: connections.filter(connection => connection.provider === "codex").map(connection => connection.id) })), accounts: fixture.codexAccounts,
 })) }));
 vi.mock("@/lib/accountAppeals/history", () => ({ getAppealSummaries: async () => ({}) }));
 vi.mock("@/sse/local/codexTrialSession", () => ({ createTrialSession: (id, model) => {
@@ -32,7 +34,7 @@ vi.mock("@/sse/local/codexTrialSession", () => ({ createTrialSession: (id, model
   return { token, session: { requests: 0, errors: 0, models: new Set() }, revoke: () => fixture.sessions.delete(token) };
 } }));
 vi.mock("@/lib/codexTrials/cli", () => ({
-  getCliVersion: async () => ({ available: true, version: "fixture" }),
+  getCliVersion: vi.fn(async () => ({ available: true, version: "fixture" })),
   runCodexCli: job => new Promise(resolve => {
     const finish = result => { job.signal.removeEventListener("abort", abort); resolve({ html: "<html>saved</html>", elapsedMs: 100, usage: { output_tokens: 10 }, ...result }); };
     const abort = () => finish({ error: "cancelled", html: null });
@@ -51,7 +53,10 @@ beforeEach(async () => {
   fixture.codebuddyModels = [];
   fixture.kimiModels = [];
   fixture.codexModels = null;
+  fixture.codexAccounts = [];
   vi.mocked(resolveCodebuddyModels).mockClear();
+  vi.mocked(resolveCodexCatalog).mockClear();
+  vi.mocked(getCliVersion).mockReset().mockResolvedValue({ available: true, version: "fixture" });
   fixture.sessions.clear();
   delete globalThis.__ninerouterCodexTrials;
   vi.resetModules();
@@ -66,11 +71,56 @@ afterEach(async () => {
 });
 
 describe("Codex trial scheduling", () => {
+  it("returns saved results immediately while one shared CLI check is pending", async () => {
+    fs.mkdirSync(path.join(fixture.directory, "codex-trials"), { recursive: true });
+    fs.writeFileSync(path.join(fixture.directory, "codex-trials", "account-0.json"), JSON.stringify({
+      id: "account-0", model: models[0].model, status: "success", html: "<html>saved</html>",
+    }));
+    let finish;
+    vi.mocked(getCliVersion).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    try {
+      const data = await store.listTrials();
+      expect(data.cli).toEqual({ available: false, pending: true });
+      expect(data.accounts[0].results[0]).toMatchObject({ id: "account-0", hasHtml: true });
+      await Promise.all([store.listTrials(), store.listTrials()]);
+      expect(getCliVersion).toHaveBeenCalledTimes(1);
+    } finally {
+      finish({ available: true, version: "fixture" });
+      await globalThis.__ninerouterCodexTrials.cliPending;
+    }
+    expect((await store.listTrials()).cli).toEqual({ available: true, version: "fixture" });
+    expect(getCliVersion).toHaveBeenCalledTimes(1);
+  });
+  it("uses the catalog cache on page entry and forces entitlement validation only before testing", async () => {
+    await store.listTrials({ discoverModels: true });
+    expect(resolveCodexCatalog).toHaveBeenLastCalledWith(expect.any(Array), { forceRefresh: false, cachedOnly: false });
+    await store.listTrials();
+    expect(resolveCodexCatalog).toHaveBeenLastCalledWith(expect.any(Array), { forceRefresh: false, cachedOnly: true });
+    await store.startTrials(input({ ids: ["account-0"] }));
+    expect(resolveCodexCatalog).toHaveBeenLastCalledWith(expect.any(Array), { forceRefresh: true, cachedOnly: false });
+  });
   it("starts trials only on accounts entitled to the selected live model", async () => {
     fixture.codexModels = [{ id: "gpt-6.1-sol", supportedEffortLevels: ["xhigh"], connectionIds: ["account-0"] }];
     const result = await store.startTrials(input({ ids: ["account-0", "account-1"] }));
     expect(result.count).toBe(1);
+    expect(result.skipped).toEqual([{ connectionId: "account-1", name: "account-1", model: models[0].model, reason: "此账号未开放所选模型。" }]);
     expect(fixture.jobs.map(job => job.connectionId)).toEqual(["account-0"]);
+  });
+  it("reports the account whose model discovery failed instead of silently omitting it", async () => {
+    fixture.codexModels = [{ id: models[0].model, supportedEffortLevels: ["xhigh"], connectionIds: ["account-0"] }];
+    fixture.codexAccounts = [{ connectionId: "account-1", models: [], warning: "模型列表读取超时。" }];
+    const result = await store.startTrials(input({ ids: ["account-0", "account-1"] }));
+    expect(result.count).toBe(1);
+    expect(result.skipped).toEqual([{ connectionId: "account-1", name: "account-1", model: models[0].model, reason: "模型列表读取超时。" }]);
+    const catalog = (await store.listTrials()).providers.find(provider => provider.id === "codex");
+    expect(catalog.warning).toBe("account-1：模型列表读取超时。");
+    expect(fixture.jobs.map(job => job.connectionId)).toEqual(["account-0"]);
+  });
+  it("explains why no test was started when the only selected account cannot load models", async () => {
+    fixture.codexModels = [{ id: models[0].model, supportedEffortLevels: ["xhigh"], connectionIds: ["account-0"] }];
+    fixture.codexAccounts = [{ connectionId: "account-1", models: [], warning: "模型列表读取超时。" }];
+    await expect(store.startTrials(input({ ids: ["account-1"] }))).rejects.toThrow("account-1（gpt-6.1-sol）：模型列表读取超时。");
+    expect(fixture.jobs).toHaveLength(0);
   });
   it("rejects a model unavailable to the selected account before starting the CLI", async () => {
     fixture.codexModels = [{ id: "gpt-6.1-sol", supportedEffortLevels: ["xhigh"], connectionIds: ["account-0"] }];
@@ -287,6 +337,72 @@ describe("Codex trial scheduling", () => {
     await expect(store.startTrials(input({ provider: "openai-compatible-fixture", all: true, models: [{ model: "vendor/model", effort: "xhigh" }] }))).rejects.toMatchObject({ status: 400 });
     await expect(store.startTrials(input({ provider: "claude", all: true }))).rejects.toMatchObject({ status: 400 });
     expect(fixture.jobs).toHaveLength(0);
+  });
+  it("bulk deletes the selected model across accounts and preserves other models after reload", async () => {
+    await store.startTrials(input({ ids: ["account-0", "account-1"], models: [...models, { model: "gpt-5.6-terra" }] }));
+    const batch = globalThis.__ninerouterCodexTrials.batch;
+    fixture.jobs.forEach(job => job.finish());
+    await batch.promise;
+    const selected = (await records()).filter(record => record.model === "gpt-5.6-terra");
+    const { DELETE } = await import("@/app/api/codex-trials/route.js");
+    const response = await DELETE(new Request("http://localhost/api/codex-trials", {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ records: selected.map(({ id, runId }) => ({ id, runId })) }),
+    }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ deleted: selected.map(record => record.id) });
+    for (const record of selected) {
+      expect(store.getTrialRecord(record.id)).toBeNull();
+      expect(fs.existsSync(path.join(fixture.directory, "codex-trials", `${record.id}.json`))).toBe(false);
+    }
+    globalThis.__ninerouterCodexTrials.records.clear();
+    globalThis.__ninerouterCodexTrials.loaded = false;
+    const remaining = await records();
+    expect(remaining.map(record => record.model)).toEqual([models[0].model, models[0].model]);
+    expect(remaining.every(record => store.getTrialRecord(record.id).html === "<html>saved</html>")).toBe(true);
+  });
+  it.each(["running", "queued"])("rejects the entire bulk deletion when a selected result is %s", async status => {
+    await store.startTrials(input({ ids: ["account-0", "account-1", "account-2"], parallel: 1 }));
+    fixture.jobs[0].finish();
+    await vi.waitFor(() => expect(fixture.jobs).toHaveLength(2));
+    const all = await records();
+    const finished = all.find(record => record.status === "success");
+    const pending = all.find(record => record.status === status);
+    expect(() => store.deleteTrialRecords([finished, pending])).toThrow(/执行或排队/);
+    expect(store.getTrialRecord(finished.id).status).toBe("success");
+    expect(await records()).toHaveLength(3);
+  });
+  it("does not delete any results if a selected run was replaced after the confirmation opened", async () => {
+    await store.startTrials(input({ ids: ["account-0", "account-1"] }));
+    let batch = globalThis.__ninerouterCodexTrials.batch;
+    fixture.jobs.forEach(job => job.finish());
+    await batch.promise;
+    const selected = await records();
+    await store.startTrials(input({ ids: ["account-1"] }));
+    batch = globalThis.__ninerouterCodexTrials.batch;
+    fixture.jobs.at(-1).finish();
+    await batch.promise;
+    expect(() => store.deleteTrialRecords(selected)).toThrow(/已更新/);
+    expect(await records()).toHaveLength(2);
+    expect(store.getTrialRecord(selected[1].id).runId).not.toBe(selected[1].runId);
+    expect(() => store.deleteTrialRecords([selected[0], { id: "missing" }])).toThrow(/已删除/);
+    expect(store.getTrialRecord(selected[0].id)).not.toBeNull();
+  });
+  it("validates bulk deletion requests without removing results", async () => {
+    await store.startTrials(input({ ids: ["account-0"] }));
+    const batch = globalThis.__ninerouterCodexTrials.batch;
+    fixture.jobs[0].finish();
+    await batch.promise;
+    const [record] = await records();
+    const { DELETE } = await import("@/app/api/codex-trials/route.js");
+    for (const selected of [null, [], [null], [{ id: 1 }], [record, record]]) {
+      const response = await DELETE(new Request("http://localhost/api/codex-trials", {
+        method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ records: selected }),
+      }));
+      expect(response.status).toBe(400);
+    }
+    expect((await DELETE(new Request("http://localhost/api/codex-trials", { method: "DELETE" }))).status).toBe(415);
+    expect(await records()).toHaveLength(1);
   });
   it("reads legacy Codex records without replacing their saved HTML or URLs", async () => {
     fs.mkdirSync(path.join(fixture.directory, "codex-trials"), { recursive: true });
