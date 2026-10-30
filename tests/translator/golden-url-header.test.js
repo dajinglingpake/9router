@@ -24,8 +24,11 @@ const SPECIALIZED = new Set([
   "xiaomi-tokenplan", "mimo-free",
 ]);
 
-// Per-process / per-request values: kimi's random device name, minimax's session UUID.
-const VOLATILE_HEADERS = new Set(["x-msh-device-name", "x-mavis-session-id", "x-mavis-timezone-offset", "x-platform-version"]);
+// Per-process / per-request values: device names, session UUIDs and request IDs.
+const VOLATILE_HEADERS = new Set([
+  "x-msh-device-name", "x-mavis-session-id", "x-mavis-timezone-offset", "x-platform-version",
+  "x-request-id", "x-conversation-id", "x-conversation-request-id", "x-conversation-message-id",
+]);
 const APP_VERSION_HEADERS = new Set(["x-client-version", "x-core-version", "x-msh-version"]);
 
 // Sanitize header: khử token + field thời gian động (kimi X-Msh-Device-Id) để snapshot ổn định.
