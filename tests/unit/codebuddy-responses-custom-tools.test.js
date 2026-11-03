@@ -105,6 +105,13 @@ describe("CodeBuddy Codex custom tools through the real chat pipeline", () => {
     ] });
     await continuation.response.text();
     const history = executeMock.mock.calls.at(-1)[0].body.messages;
+    const assistantTurns = history.filter(message => message.role === "assistant");
+    expect(assistantTurns).toHaveLength(1);
+    expect(assistantTurns[0]).toMatchObject({
+      content: [{ type: "text", text: "Writing the file." }],
+      reasoning_content: "Need to write the file.",
+    });
+    expect(assistantTurns[0].tool_calls.map(tool => tool.id)).toEqual(["call_exec", "call_wait"]);
     expect(history.flatMap(message => message.tool_calls || [])).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "call_exec", function: { name: "exec", arguments: JSON.stringify({ input: program }) } }),
     ]));

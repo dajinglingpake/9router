@@ -137,6 +137,57 @@ describe("openai ↔ responses multi-turn reasoning", () => {
   });
 });
 
+describe("responses → openai assistant turn boundaries", () => {
+  it.each([undefined, "commentary"])("keeps a preamble and parallel tools in one turn (phase=%s)", (phase) => {
+    const out = openaiResponsesToOpenAIRequest("m", { input: [
+      { role: "user", content: "Run the checks." },
+      { type: "reasoning", summary: [{ text: "Inspect first." }], encrypted_content: "enc_before" },
+      { type: "message", role: "assistant", phase, content: [{ type: "output_text", text: "Checking now." }] },
+      { type: "reasoning", summary: [{ text: "Run both checks." }], encrypted_content: "enc_after" },
+      { type: "function_call", name: "check", call_id: "call_check", arguments: '{"path":"a"}' },
+      { type: "custom_tool_call", name: "exec", call_id: "call_exec", input: "run checks" },
+      { type: "function_call_output", call_id: "call_check", output: "ok" },
+      { type: "custom_tool_call_output", call_id: "call_exec", output: "passed" },
+      { type: "message", role: "assistant", content: "All checks passed." },
+    ] }, true, null);
+
+    expect(out.messages).toEqual([
+      { role: "user", content: "Run the checks." },
+      {
+        role: "assistant", content: [{ type: "text", text: "Checking now." }],
+        reasoning_content: "Inspect first.\nRun both checks.", encrypted_content: "enc_after",
+        tool_calls: [
+          { id: "call_check", type: "function", function: { name: "check", arguments: '{"path":"a"}' } },
+          { id: "call_exec", type: "function", function: { name: "exec", arguments: '{"input":"run checks"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_check", content: "ok" },
+      { role: "tool", tool_call_id: "call_exec", content: "passed" },
+      { role: "assistant", content: "All checks passed." },
+    ]);
+  });
+
+  it("does not merge tools across user messages or tool outputs", () => {
+    const out = openaiResponsesToOpenAIRequest("m", { input: [
+      { role: "assistant", content: "Which file?" },
+      { role: "user", content: "a.txt" },
+      { type: "function_call", name: "read", call_id: "read_a", arguments: "{}" },
+      { type: "function_call_output", call_id: "read_a", output: "contents" },
+      { type: "function_call", name: "check", call_id: "check_a", arguments: "{}" },
+      { type: "function_call_output", call_id: "check_a", output: "ok" },
+      { role: "assistant", content: "Done." },
+    ] }, true, null);
+
+    expect(out.messages.map(message => message.role)).toEqual([
+      "assistant", "user", "assistant", "tool", "assistant", "tool", "assistant",
+    ]);
+    expect(out.messages[0]).toEqual({ role: "assistant", content: "Which file?" });
+    expect(out.messages[2].tool_calls.map(tool => tool.id)).toEqual(["read_a"]);
+    expect(out.messages[4].tool_calls.map(tool => tool.id)).toEqual(["check_a"]);
+    expect(out.messages[6]).toEqual({ role: "assistant", content: "Done." });
+  });
+});
+
 describe("GrokCliExecutor multi-turn input", () => {
   it("keeps native Grok reasoning and item ids", () => {
     _resetGrokCliTurnStore();

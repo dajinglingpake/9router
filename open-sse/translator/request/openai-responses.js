@@ -55,7 +55,9 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   };
 
   const attachPendingReasoning = (msg) => {
-    if (pendingReasoning) msg.reasoning_content = pendingReasoning;
+    if (pendingReasoning) {
+      msg.reasoning_content = [msg.reasoning_content, pendingReasoning].filter(Boolean).join("\n");
+    }
     if (pendingReasoningEncrypted) msg.encrypted_content = pendingReasoningEncrypted;
     pendingReasoning = "";
     pendingReasoningEncrypted = "";
@@ -67,7 +69,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
     const itemType = item.type || (item.role ? RESPONSES_ITEM.MESSAGE : null);
 
     if (itemType === RESPONSES_ITEM.MESSAGE) {
-      // Flush any pending assistant message with tool calls
+      // Flush the previous assistant message before starting another message.
       if (currentAssistantMsg) {
         result.messages.push(currentAssistantMsg);
         currentAssistantMsg = null;
@@ -93,13 +95,16 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         })
         : item.content;
       const msg = { role: item.role, content };
-      // Attach buffered reasoning to assistant turn (required by xiaomi-mimo + store=false continuity)
-      if (item.role === ROLE.ASSISTANT) attachPendingReasoning(msg);
-      else {
+      // Responses emits a tool preamble and its calls as separate items.
+      // Preserve them as one Chat assistant turn when the calls arrive.
+      if (item.role === ROLE.ASSISTANT) {
+        attachPendingReasoning(msg);
+        currentAssistantMsg = msg;
+      } else {
         pendingReasoning = "";
         pendingReasoningEncrypted = "";
+        result.messages.push(msg);
       }
-      result.messages.push(msg);
     }
     else if (itemType === RESPONSES_ITEM.FUNCTION_CALL || itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL) {
       // Start or append to assistant message with tool_calls
@@ -109,15 +114,15 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           content: null,
           tool_calls: []
         };
-        attachPendingReasoning(currentAssistantMsg);
       }
+      attachPendingReasoning(currentAssistantMsg);
       // Skip items with empty/missing name — Codex/OpenAI reject nameless tool calls (#444)
       if (!item.name || typeof item.name !== "string" || item.name.trim() === "") continue;
       if (itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL) customToolNames.add(item.name);
       const toolInput = itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL
         ? { input: typeof item.input === "string" ? item.input : JSON.stringify(item.input ?? "") }
         : item.arguments;
-      currentAssistantMsg.tool_calls.push({
+      (currentAssistantMsg.tool_calls ??= []).push({
         id: item.call_id,
         type: OPENAI_BLOCK.FUNCTION,
         function: {
