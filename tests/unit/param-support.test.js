@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import { stripUnsupportedParams } from "../../open-sse/translator/concerns/paramSupport.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
+import { CodeBuddyExecutor } from "../../open-sse/executors/codebuddy-cn.js";
 
 describe("stripUnsupportedParams", () => {
   it("flattens Cloudflare AI OpenAI content-part arrays", () => {
@@ -183,5 +184,33 @@ describe("stripUnsupportedParams", () => {
     stripUnsupportedParams("groq", "qwen/qwen3.6-27b", body);
 
     expect(body).toEqual({ max_tokens: 50 });
+  });
+
+  it.each(["deepseek-v4.1-flash", "kimi-k3.1-pro"])("preserves the Chat output limit for CodeBuddy %s", (model) => {
+    const out = new CodeBuddyExecutor().transformRequest(model, {
+      messages: [{ role: "user", content: "Count to 500" }],
+      max_completion_tokens: 64,
+      reasoning_effort: "max",
+    }, true, {});
+
+    expect(out.max_tokens).toBe(64);
+    expect(out.max_completion_tokens).toBeUndefined();
+    expect(out.reasoning_effort).toBe("max");
+  });
+
+  it("keeps an explicit native max_tokens limit for CodeBuddy", () => {
+    const body = { max_tokens: 50, max_completion_tokens: 80 };
+
+    stripUnsupportedParams("codebuddy-cn", "deepseek-v4.1-flash", body);
+
+    expect(body).toEqual({ max_tokens: 50 });
+  });
+
+  it("does not invent a CodeBuddy output limit when the client omits it", () => {
+    const body = { messages: [{ role: "user", content: "hi" }] };
+
+    stripUnsupportedParams("codebuddy-cn", "deepseek-v4.1-flash", body);
+
+    expect(body).toEqual({ messages: [{ role: "user", content: "hi" }] });
   });
 });

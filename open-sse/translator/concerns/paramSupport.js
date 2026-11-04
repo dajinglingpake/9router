@@ -46,6 +46,9 @@ const STRIP_RULES = [
   // Current OpenAI models (gpt-5.x / gpt-6.x) reject `max_tokens` with HTTP 400
   // ("Use 'max_completion_tokens' instead"). Clients send `max_tokens`, so rename it.
   { provider: "openai", renameParams: { max_tokens: "max_completion_tokens" } },
+  // CodeBuddy silently ignores max_completion_tokens. Its Chat endpoint only
+  // enforces max_tokens; leaving the client spelling drops the output budget.
+  { provider: "codebuddy-cn", renameParams: { max_completion_tokens: "max_tokens" } },
 ];
 
 // Test a rule's match (regex or predicate) against the model id.
