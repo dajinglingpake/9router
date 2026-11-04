@@ -102,6 +102,7 @@ export async function listTrials({ discoverModels = false } = {}) {
           const { html, log, output, prompt, ...summary } = record;
           const session = state.batch?.sessions.get(record.id);
           return { ...summary, hasHtml: !!html, outputTail: active(record) ? output?.slice(-12000) || "" : undefined,
+            stopping: active(record) && (state.batch?.controller.signal.aborted || state.batch?.controllers?.get(record.id)?.signal.aborted) || false,
             cooldownUntil: session?.cooldown?.until || null,
             cooldownRetries: session?.cooldownRetries || record.cooldownRetries || 0,
             requests: session?.requests ?? record.requests, routerErrors: session?.errors ?? record.routerErrors };
@@ -163,7 +164,7 @@ export async function startTrials(input) {
     if (active(previous)) throw fail("该账号的此模型已在测试或排队，请等待完成。", 409);
     return { connectionId, provider, model, effort, previous };
   });
-  const batch = state.batch || { controller: new AbortController(), sessions: new Map(), queue: [], workers: 0, parallel };
+  const batch = state.batch || { controller: new AbortController(), controllers: new Map(), sessions: new Map(), queue: [], workers: 0, parallel };
   if (!batch.promise) batch.promise = new Promise(resolve => { batch.resolve = resolve; });
   state.batch = batch;
   try {
@@ -205,6 +206,9 @@ async function runTrial(batch, id) {
     return;
   }
   const session = createTrialSession(record.connectionId, record.model, record.effort, record.provider);
+  const controller = new AbortController();
+  batch.controllers.set(id, controller);
+  const signal = AbortSignal.any([batch.controller.signal, controller.signal]);
   batch.sessions.set(id, session.session);
   let progressTimer;
   const onProgress = progress => {
@@ -223,11 +227,11 @@ async function runTrial(batch, id) {
     const result = await runCodexCli({
       ...record, token: session.token, trialSession: session.session,
       directory: path.join(ROOT, "jobs", record.runId),
-      signal: batch.controller.signal,
+      signal,
       onProgress,
     });
     clearTimeout(progressTimer);
-    const status = batch.controller.signal.aborted ? "cancelled" : result.error ? "error" : "success";
+    const status = signal.aborted ? "cancelled" : result.error ? "error" : "success";
     const rate = getOutputThroughput({ kind: status, outputTokens: result.usage?.output_tokens, latencyMs: result.elapsedMs });
     save({
       ...state.records.get(id), ...result, html: result.html || null,
@@ -238,8 +242,30 @@ async function runTrial(batch, id) {
       cooldownRetries: session.session.cooldownRetries || 0,
     });
   } catch (error) {
-    save({ ...state.records.get(id), html: null, status: "error", error: error.message, failures: record.failures + 1, finishedAt: new Date().toISOString() });
-  } finally { clearTimeout(progressTimer); session.revoke(); batch.sessions.delete(id); }
+    const cancelled = signal.aborted;
+    save({ ...state.records.get(id), html: null, status: cancelled ? "cancelled" : "error", error: cancelled ? "测试已停止。" : error.message,
+      failures: record.failures + (cancelled ? 0 : 1), finishedAt: new Date().toISOString() });
+  } finally { clearTimeout(progressTimer); session.revoke(); batch.sessions.delete(id); batch.controllers.delete(id); }
+}
+
+export function stopTrialRecord(id, runId) {
+  const record = getTrialRecord(id);
+  if (!record) throw fail("测试记录不存在或已删除。", 404);
+  if (typeof runId !== "string" || !runId) throw fail("请指定要停止的测试轮次。");
+  if (record.runId !== runId) throw fail("测试已更新，请刷新后重试。", 409);
+  if (!active(record)) return { stopping: false };
+  const batch = state.batch;
+  if (!batch) throw fail("测试状态已变化，请刷新后重试。", 409);
+  if (record.status === "queued") {
+    batch.queue = batch.queue.filter(queuedId => queuedId !== id);
+    save({ ...record, status: "cancelled", error: "已取消排队。", finishedAt: new Date().toISOString() });
+    startWorkers(batch);
+  } else {
+    const controller = batch.controllers?.get(id);
+    if (!controller) throw fail("测试状态已变化，请刷新后重试。", 409);
+    controller.abort();
+  }
+  return { stopping: true };
 }
 
 export function stopTrials() {

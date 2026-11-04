@@ -1,8 +1,18 @@
-import { deleteTrialRecord, getTrialRecord } from "@/lib/codexTrials/store";
+import { deleteTrialRecord, getTrialRecord, stopTrialRecord } from "@/lib/codexTrials/store";
 import { CODEX_TRIAL_CSP, trialPreviewDocument } from "@/shared/utils/codexTrial";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function POST(request, { params }) {
+  try {
+    if (!request.headers.get("content-type")?.includes("application/json")) return Response.json({ error: "请求必须使用 JSON。" }, { status: 415 });
+    const { id } = await params;
+    const input = await request.json();
+    if (input?.action !== "stop") return Response.json({ error: "不支持的测试操作。" }, { status: 400 });
+    return Response.json(stopTrialRecord(id, input.runId), { headers: { "Cache-Control": "no-store" } });
+  } catch (error) { return Response.json({ error: error.message }, { status: error.status || 400 }); }
+}
 
 export async function DELETE(request, { params }) {
   try {

@@ -271,6 +271,48 @@ describe("Codex trial scheduling", () => {
     expect(batch.workers).toBe(0);
     expect(globalThis.__ninerouterCodexTrials.batch).toBeNull();
   });
+  it("stops only the selected running model and fills its slot from the queue", async () => {
+    await store.startTrials(input({ ids: ["account-0", "account-1"], models: [...models, { model: "gpt-5.6-terra" }], parallel: 2 }));
+    const batch = globalThis.__ninerouterCodexTrials.batch;
+    const selected = (await records()).find(record => record.connectionId === "account-0" && record.model === models[0].model);
+    const { POST } = await import("@/app/api/codex-trials/[id]/route.js");
+    const response = await POST(new Request(`http://localhost/api/codex-trials/${selected.id}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "stop", runId: selected.runId }),
+    }), { params: Promise.resolve({ id: selected.id }) });
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(fixture.jobs).toHaveLength(3));
+    expect(store.getTrialRecord(selected.id)).toMatchObject({ status: "cancelled", failures: 0 });
+    expect(fixture.jobs[0].signal.aborted).toBe(true);
+    expect(fixture.jobs[1].signal.aborted).toBe(false);
+    expect(fixture.jobs[2]).toMatchObject({ connectionId: "account-0", model: "gpt-5.6-terra" });
+    expect(batch.controller.signal.aborted).toBe(false);
+    expect(batch.controllers.size).toBe(2);
+    expect(fixture.sessions.size).toBe(2);
+  });
+  it("cancels a queued test without starting its CLI or stopping running tests", async () => {
+    await store.startTrials(input({ ids: ["account-0", "account-1", "account-2"], parallel: 1 }));
+    const selected = (await records()).find(record => record.connectionId === "account-1");
+    store.stopTrialRecord(selected.id, selected.runId);
+    expect(store.getTrialRecord(selected.id).status).toBe("cancelled");
+    expect(fixture.jobs[0].signal.aborted).toBe(false);
+    expect(fixture.jobs).toHaveLength(1);
+    fixture.jobs[0].finish();
+    await vi.waitFor(() => expect(fixture.jobs).toHaveLength(2));
+    expect(fixture.jobs[1].connectionId).toBe("account-2");
+  });
+  it("rejects a stale stop request after the model has been retested", async () => {
+    await store.startTrials(input({ ids: ["account-0"] }));
+    const previous = (await records())[0];
+    const batch = globalThis.__ninerouterCodexTrials.batch;
+    fixture.jobs[0].finish();
+    await batch.promise;
+    expect(store.stopTrialRecord(previous.id, previous.runId)).toEqual({ stopping: false });
+    await store.startTrials(input({ ids: ["account-0"] }));
+    expect(() => store.stopTrialRecord(previous.id, previous.runId)).toThrow(/已更新/);
+    expect(() => store.stopTrialRecord(previous.id)).toThrow(/轮次/);
+    expect(() => store.stopTrialRecord("missing", previous.runId)).toThrow(/不存在/);
+    expect(fixture.jobs[1].signal.aborted).toBe(false);
+  });
   it.each([0, 11, 1.5, "invalid"])("rejects invalid parallel limits without starting a process: %s", async parallel => {
     await expect(store.startTrials(input({ all: true, parallel }))).rejects.toMatchObject({ status: 400 });
     expect(fixture.jobs).toHaveLength(0);

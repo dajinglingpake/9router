@@ -31,7 +31,7 @@ function Metric({ label, children, danger }) {
   return <div><dt className="text-[11px] text-text-muted">{label}</dt><dd className={`mt-1 text-base font-semibold tabular-nums ${danger ? "text-red-600 dark:text-red-400" : "text-text-main"}`}>{children}</dd></div>;
 }
 
-function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, onInspect, onUpdated, canRetest }) {
+function AccountCard({ account, busy, deleting, models, now, onRun, onStop, onDelete, onInspect, onUpdated, canRetest }) {
   const result = account.result;
   const lowMetrics = getTrialDegradationMetrics(result);
   const degraded = lowMetrics.length > 0;
@@ -97,7 +97,9 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onDelete, on
       {result?.finishedAt && <p className="mt-1 text-[11px] text-text-muted">{new Date(result.finishedAt).toLocaleString("zh-CN")}</p>}
       {result && result.routerStatsVersion !== 3 && <p className="mt-1 text-[11px] text-text-muted">旧记录的中转错误计数需重新测试后更新。</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" disabled={busy || active(result) || !canRetest} title={!canRetest ? "此账号当前未开放该模型" : undefined} icon="play_arrow" onClick={() => onRun(account, result)}>{result ? "重测此模型" : "测试此账号"}</Button>
+        <Button size="sm" variant="secondary" disabled={busy || active(result) || !canRetest || (!result && !selectedModels.length)} title={!canRetest ? "此账号当前未开放该模型" : undefined} icon="play_arrow" onClick={() => onRun(account, result)}>{result ? "重测此模型" : "测试此账号"}</Button>
+        {active(result) && <Button size="sm" variant="danger" icon="stop" disabled={deleting || result.stopping}
+          onClick={() => onStop(result)}>{result.stopping ? "正在停止…" : result.status === "queued" ? "取消排队" : "停止此测试"}</Button>}
         {result && account.firstResult && selectedModels.length > 0 && <Button size="sm" variant="ghost" disabled={busy || selectedActive} onClick={() => onRun(account)}>测试所选模型</Button>}
         {result?.hasHtml && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "preview")}>放大</Button>}
         {result && <Button size="sm" variant="ghost" onClick={() => onInspect(account, "log")}>执行输出</Button>}
@@ -137,7 +139,7 @@ export default function CodexTrialsPanel() {
   const models = modelSelections || (initialProvider ? [{ provider: initialProvider.id, model: initialProvider.defaultModel,
     effort: trialDefaultEffort(initialProvider.id, initialProvider.defaultModel, initialProvider.models.find(item => item.id === initialProvider.defaultModel)?.efforts) }] : []);
   const validParallel = Number.isInteger(parallel) && parallel >= 1 && parallel <= CODEX_TRIAL_MAX_PARALLEL;
-  const busy = submitting || data?.stopping || !data?.cli?.available || !validParallel || !models.length || models.some(item => !item.model);
+  const busy = submitting || data?.stopping || !data?.cli?.available || (!data?.running && !validParallel) || !prompt.trim();
   const load = useCallback(async signal => {
     const current = ++sequence.current;
     try {
@@ -199,13 +201,14 @@ export default function CodexTrialsPanel() {
     Promise.resolve().then(refresh);
     return () => { controller.abort(); clearTimeout(timer); };
   }, [inspector]);
-  async function submit(payload) {
+  async function submit(payload, url = "/api/codex-trials") {
     setSubmitting(true); setError(""); setNotice(""); setSkippedNotice("");
     try {
-      const response = await fetch("/api/codex-trials", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "启动测试失败。");
+      if (!response.ok) throw new Error(result.error || "测试操作失败。");
       if (result.count) setNotice(`已加入 ${result.count} 项测试。`);
+      if (payload.action === "stop") setNotice(url === "/api/codex-trials" ? "已请求停止全部测试。" : "已请求停止此测试。");
       if (result.skipped?.length) setSkippedNotice(`以下 ${result.skipped.length} 项未加入测试：${result.skipped.map(item => `${item.name}（${item.model}）：${item.reason}`).join("；")}`);
       await load();
     } catch (cause) { setError(cause.message); }
@@ -238,6 +241,7 @@ export default function CodexTrialsPanel() {
     models: result ? [{ provider: account.provider, model: result.model, effort: result.effort }]
       : models.filter(item => !account || supportsModel(account, item)), ...(account ? { ids: [account.id] } : { all: true }) });
   const inspect = (account, mode) => { setDetail(null); setInspector({ account, mode }); };
+  const stopResult = result => submit({ action: "stop", runId: result.runId }, `/api/codex-trials/${encodeURIComponent(result.id)}`);
   const accounts = data?.accounts || [];
   const supportsModel = (account, item) => item.provider === account.provider && (item.provider !== "codex"
     || providers.find(provider => provider.id === "codex")?.models.find(model => model.id === item.model)?.connectionIds?.includes(account.id));
@@ -306,7 +310,7 @@ export default function CodexTrialsPanel() {
       <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
       <p>速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。</p>
     </div>
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy || !models.some(item => supportsModel(account, item))} deleting={submitting} models={models.filter(item => supportsModel(account, item))} canRetest={!account.result || supportsModel(account, { provider: account.provider, model: account.result.model })} now={now} onRun={run} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} deleting={submitting} models={models.filter(item => supportsModel(account, item) && item.model.trim())} canRetest={!account.result || supportsModel(account, { provider: account.provider, model: account.result.model })} now={now} onRun={run} onStop={stopResult} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
     {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加可测试的供应商账号。"}</div>}
     <ConfirmModal isOpen={!!deleteSelection} onClose={() => { if (!submitting) setDeleteSelection(null); }} onConfirm={removeSelectedResults}
       title="删除筛选结果" confirmText={`删除 ${deleteSelection?.length || 0} 条结果`} cancelText="取消" loading={submitting}
