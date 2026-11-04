@@ -92,6 +92,15 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
           )}
         </p>
 
+        <p className="text-xs text-text-muted">
+          登录 ChatGPT 后，打开{" "}
+          <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer" className="text-primary underline">
+            /api/auth/session
+          </a>
+          ，复制完整 JSON 并粘贴到下方即可导入，也支持多个 session 组成的数组。
+          网页 session 不含 refresh token，令牌过期后需要重新复制导入。
+        </p>
+
         <textarea
           className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[240px] focus:outline-none focus:ring-1 focus:ring-primary"
           placeholder={PLACEHOLDER}

@@ -9,6 +9,7 @@ import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import CodexReloginButton from "@/shared/components/CodexReloginButton";
 import CodexLogoutAllButton from "@/shared/components/CodexLogoutAllButton";
 import CodexSessionsButton from "@/shared/components/CodexSessionsButton";
+import CodexSessionDownloadButton from "@/shared/components/CodexSessionDownloadButton";
 import AccountOverloadWarning from "@/shared/components/AccountOverloadWarning";
 import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
@@ -1310,6 +1311,7 @@ export default function ProviderLimits() {
                       onSuccess={async () => { await fetchConnections(); await refreshProvider(conn.id, conn.provider); }} />
                     <CodexLogoutAllButton connection={conn} iconOnly disabled={rowBusy} onSuccess={fetchConnections} />
                     <CodexSessionsButton connection={conn} iconOnly disabled={rowBusy} />
+                    <CodexSessionDownloadButton connection={conn} iconOnly disabled={rowBusy} />
                     <Tooltip text="Refresh quota">
                       <button
                         type="button"

@@ -127,7 +127,7 @@ async function logout(connectionId) {
     }
     const loggedOutAt = new Date().toISOString();
     const updated = await updateProviderConnection(connectionId, {
-      isActive: false, accessToken: null, refreshToken: null, idToken: null,
+      isActive: false, accessToken: null, refreshToken: null, idToken: null, chatgptSession: null,
       expiresAt: null, expiresIn: null, lastRefreshAt: null,
       testStatus: "logged_out", lastError: "已提交退出所有设备，请重新登录。", lastErrorAt: loggedOutAt,
       providerSpecificData: { ...latest.providerSpecificData,

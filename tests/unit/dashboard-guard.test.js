@@ -54,6 +54,12 @@ function localRequest(pathname, headers = {}) {
 }
 
 describe("dashboard guard public LLM API access", () => {
+  it("requires dashboard authentication for downloading account sessions", async () => {
+    expect((await proxy(request("/api/providers/account/session-export"))).status).toBe(401);
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    expect(await proxy(request("/api/providers/account/session-export"))).toBe(mocks.nextResponse);
+  });
+
   it("requires dashboard authentication to clear error logs even with login disabled", async () => {
     mocks.getSettings.mockResolvedValue({ requireLogin: false });
     const req = { ...request("/api/system/errors"), method: "DELETE" };

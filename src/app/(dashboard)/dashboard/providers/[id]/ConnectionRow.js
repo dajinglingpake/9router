@@ -12,6 +12,7 @@ import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
 import CodexReloginButton from "@/shared/components/CodexReloginButton";
 import CodexLogoutAllButton from "@/shared/components/CodexLogoutAllButton";
 import CodexSessionsButton from "@/shared/components/CodexSessionsButton";
+import CodexSessionDownloadButton from "@/shared/components/CodexSessionDownloadButton";
 
 export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, onRelogin, oneByOneStatus = null, autoPing = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
@@ -325,6 +326,7 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
           <CodexReloginButton connection={connection} onSuccess={onRelogin} />
           <CodexLogoutAllButton connection={connection} onSuccess={onRelogin} />
           <CodexSessionsButton connection={connection} />
+          <CodexSessionDownloadButton connection={connection} />
           <button onClick={onEdit} className="flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5">
             <span className="material-symbols-outlined text-[18px]">edit</span>
             <span className="text-[10px] leading-tight">Edit</span>

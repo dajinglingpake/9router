@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createProviderConnection } from "@/models";
 import { extractCodexAccountInfo } from "@/lib/oauth/providers";
+import { normalizeCodexSession } from "@/lib/oauth/codexSessionImport";
 
 /**
  * POST /api/oauth/codex/bulk-import
@@ -67,7 +68,7 @@ export async function POST(request) {
         createdAt: _createdAt,
         updatedAt: _updatedAt,
         ...item
-      } = raw;
+      } = normalizeCodexSession(raw);
 
       if (!item.accessToken || typeof item.accessToken !== "string") {
         throw new Error("Missing accessToken");

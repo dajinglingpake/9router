@@ -39,6 +39,7 @@ export async function reloginCodexConnection(connectionId, data) {
   Object.assign(patch, {
     refreshToken: data.refreshToken ?? null,
     idToken: data.idToken ?? null,
+    chatgptSession: null,
     expiresAt: data.expiresAt ?? null,
     lastRefreshAt: data.lastRefreshAt || new Date().toISOString(),
     providerSpecificData: { ...providerSpecificData, ...data.providerSpecificData,

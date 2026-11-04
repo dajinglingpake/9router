@@ -6,7 +6,7 @@ export function usesAwsCredentialForm(provider) {
 }
 
 export function toProviderConnectionResponse(connection) {
-  const { apiKey, openaiAdminKey, accessToken, refreshToken, idToken, ...safe } = connection;
+  const { apiKey, openaiAdminKey, accessToken, refreshToken, idToken, chatgptSession, ...safe } = connection;
   if (connection.provider === "openai") safe.hasOpenaiAdminKey = !!openaiAdminKey;
   const accountPlan = getAccountPlan(connection);
   if (accountPlan) safe.accountPlan = accountPlan;
