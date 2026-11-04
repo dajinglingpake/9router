@@ -27,15 +27,17 @@ function processSSEMessage(msg, state) {
     state.created = parsed.response?.created_at || state.created;
   } else if (eventType === "response.output_item.done") {
     state.items.set(parsed.output_index ?? 0, parsed.item);
-  } else if (eventType === "response.completed" || eventType === "response.done") {
-    state.status = "completed";
-    if (parsed.response?.usage) {
-      state.usage.input_tokens = parsed.response.usage.input_tokens || 0;
-      state.usage.output_tokens = parsed.response.usage.output_tokens || 0;
-      state.usage.total_tokens = parsed.response.usage.total_tokens || 0;
+  } else if (["response.completed", "response.done", "response.incomplete", "response.failed"].includes(eventType)) {
+    state.status = parsed.response?.status || (eventType === "response.done" ? "completed" : eventType.slice("response.".length));
+    state.responseId = parsed.response?.id || state.responseId;
+    state.incompleteDetails = parsed.response?.incomplete_details;
+    state.error = parsed.response?.error;
+    if (Array.isArray(parsed.response?.output)) {
+      state.items = new Map(parsed.response.output.map((item, index) => [index, item]));
     }
-  } else if (eventType === "response.failed") {
-    state.status = "failed";
+    if (parsed.response?.usage) {
+      state.usage = { ...state.usage, ...parsed.response.usage };
+    }
   }
 }
 
@@ -97,6 +99,8 @@ export async function convertResponsesStreamToJson(stream) {
     object: "response",
     created_at: state.created,
     status: state.status || "completed",
+    ...(state.incompleteDetails ? { incomplete_details: state.incompleteDetails } : {}),
+    ...(state.error ? { error: state.error } : {}),
     output,
     usage: state.usage
   };

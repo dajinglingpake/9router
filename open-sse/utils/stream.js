@@ -141,6 +141,7 @@ export function createSSEStream(options = {}) {
         content: accumulatedContent,
         thinking: accumulatedThinking,
         successful: monitor.isSuccessful(),
+        finishReason: state?.responsesFinishReason,
       }, finalUsage, ttftAt);
     }
   };
@@ -151,6 +152,7 @@ export function createSSEStream(options = {}) {
     const completed = translateResponse(targetFormat, sourceFormat, null, state);
     for (const item of completed || []) {
       if (item === null || item === undefined) continue;
+      observeOutcome(item.data || item, item.event);
       const output = formatSSE(item, sourceFormat);
       reqLogger?.appendConvertedChunk?.(output);
       monitor.enqueue(controller, sharedEncoder.encode(output));
@@ -448,6 +450,7 @@ export function createSSEStream(options = {}) {
             if (!hasValuableContent(item, sourceFormat)) {
               continue; // Skip this empty chunk
             }
+            observeOutcome(item.data || item, item.event);
 
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
@@ -552,6 +555,7 @@ export function createSSEStream(options = {}) {
             if (translated?.length > 0) {
               for (const item of translated) {
                 if (item === null || item === undefined) continue;
+                observeOutcome(item.data || item, item.event);
                 const output = formatSSE(item, sourceFormat);
                 reqLogger?.appendConvertedChunk?.(output);
                 enqueue(sharedEncoder.encode(output));
@@ -572,6 +576,7 @@ export function createSSEStream(options = {}) {
         if (flushed?.length > 0) {
           for (const item of flushed) {
             if (item === null || item === undefined) continue;
+            observeOutcome(item.data || item, item.event);
             const output = formatSSE(item, sourceFormat);
             reqLogger?.appendConvertedChunk?.(output);
             enqueue(sharedEncoder.encode(output));

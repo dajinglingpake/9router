@@ -6,6 +6,7 @@
 
 import fs from "fs";
 import path from "path";
+import { toResponsesCompletion } from "../translator/concerns/finishReason.js";
 
 // Create log directory for responses (Node.js only)
 export function createResponsesLogger(model, logsDir = null) {
@@ -222,16 +223,18 @@ export function createResponsesApiTransformStream(logger = null) {
     }
   };
 
-  const sendCompleted = (controller) => {
+  const sendTerminal = (controller) => {
     if (!state.completedSent) {
       state.completedSent = true;
-      emit(controller, "response.completed", {
-        type: "response.completed",
+      const completion = toResponsesCompletion(state.finishReason);
+      const event = `response.${completion.status}`;
+      emit(controller, event, {
+        type: event,
         response: {
           id: state.responseId,
           object: "response",
           created_at: state.created,
-          status: "completed",
+          ...completion,
           background: false,
           error: null
         }
@@ -269,6 +272,7 @@ export function createResponsesApiTransformStream(logger = null) {
         const choice = parsed.choices[0];
         const idx = choice.index || 0;
         const delta = choice.delta || {};
+        if (choice.finish_reason) state.finishReason = choice.finish_reason;
 
         // Emit initial events
         if (!state.started) {
@@ -328,7 +332,7 @@ export function createResponsesApiTransformStream(logger = null) {
 
           if (state.inThinking && content) {
             emitReasoningDelta(controller, content);
-            continue;
+            content = "";
           }
 
           // Regular text content
@@ -423,7 +427,7 @@ export function createResponsesApiTransformStream(logger = null) {
           for (const i in state.msgItemAdded) closeMessage(controller, i);
           closeReasoning(controller);
           for (const i in state.funcCallIds) closeToolCall(controller, i);
-          sendCompleted(controller);
+          sendTerminal(controller);
         }
       }
     },
@@ -432,7 +436,7 @@ export function createResponsesApiTransformStream(logger = null) {
       for (const i in state.msgItemAdded) closeMessage(controller, i);
       closeReasoning(controller);
       for (const i in state.funcCallIds) closeToolCall(controller, i);
-      sendCompleted(controller);
+      sendTerminal(controller);
 
       logger?.logOutput("data: [DONE]");
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));

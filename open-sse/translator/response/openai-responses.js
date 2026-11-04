@@ -8,7 +8,8 @@ import { buildChunk } from "../concerns/chunk.js";
 import { buildUsage } from "../concerns/usage.js";
 import { fallbackToolCallId } from "../concerns/toolCall.js";
 import { reasoningDelta, extractReasoningText } from "../concerns/reasoning.js";
-import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM, OPENAI_FINISH, MODEL_FALLBACK } from "../schema/index.js";
+import { toResponsesCompletion } from "../concerns/finishReason.js";
+import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM, OPENAI_FINISH, RESPONSES_STATUS, RESPONSES_INCOMPLETE_REASON, MODEL_FALLBACK } from "../schema/index.js";
 
 /**
  * Translate OpenAI chunk to Responses API events
@@ -72,6 +73,7 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
   const choice = chunk.choices[0];
   const idx = choice.index || 0;
   const delta = choice.delta || {};
+  if (choice.finish_reason) state.responsesFinishReason = choice.finish_reason;
 
   // Emit initial events
   if (!state.started) {
@@ -131,7 +133,7 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
 
     if (state.inThinking && content) {
       emitReasoningDelta(state, emit, content);
-      return events;
+      content = "";
     }
 
     if (content) {
@@ -169,7 +171,7 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
     // it, leaving nothing to iterate — so flushEvents() is never called and deferring
     // would swallow the terminal event entirely. Keep the old behaviour there.
     const flushReachesUs = state.targetFormat == null || state.targetFormat === FORMATS.OPENAI;
-    if (state.responsesUsage || !flushReachesUs) sendCompleted(state, emit);
+    if (state.responsesUsage || !flushReachesUs) sendTerminal(state, emit);
     else state.completionPending = true;
   }
 
@@ -476,16 +478,18 @@ function collectCompletedOutputItems(state) {
     .map(([, item]) => item);
 }
 
-function sendCompleted(state, emit) {
+function sendTerminal(state, emit) {
   if (!state.completedSent) {
     state.completedSent = true;
-    emit("response.completed", {
-      type: "response.completed",
+    const completion = toResponsesCompletion(state.responsesFinishReason);
+    const event = `response.${completion.status}`;
+    emit(event, {
+      type: event,
       response: {
         id: state.responseId,
         object: "response",
         created_at: state.created,
-        status: "completed",
+        ...completion,
         background: false,
         error: null,
         output: collectCompletedOutputItems(state),
@@ -508,7 +512,7 @@ function flushEvents(state) {
   for (const i in state.msgItemAdded) closeMessage(state, emit, i);
   closeReasoning(state, emit);
   for (const i in state.funcCallIds) closeToolCall(state, emit, i);
-  sendCompleted(state, emit);
+  sendTerminal(state, emit);
   
   return events;
 }
@@ -651,9 +655,9 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     return null;
   }
 
-  // Response completed
-  if (eventType === "response.completed" || eventType === "response.done") {
-    // Extract usage from response.completed event
+  // Preserve incomplete terminal events when converting back to Chat as well.
+  if (eventType === "response.completed" || eventType === "response.done" || eventType === "response.incomplete") {
+    // Extract usage from the terminal event.
     const responseUsage = data.response?.usage;
     if (responseUsage && typeof responseUsage === "object") {
       const inputTokens = responseUsage.input_tokens || responseUsage.prompt_tokens || 0;
@@ -666,7 +670,10 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     }
     
     if (!state.finishReasonSent) {
-      const finishReason = computeFinishReason(state);
+      const incomplete = eventType === "response.incomplete" || data.response?.status === RESPONSES_STATUS.INCOMPLETE;
+      const finishReason = incomplete
+        ? (data.response?.incomplete_details?.reason === RESPONSES_INCOMPLETE_REASON.CONTENT_FILTER ? OPENAI_FINISH.CONTENT_FILTER : OPENAI_FINISH.LENGTH)
+        : computeFinishReason(state);
 
       state.finishReasonSent = true;
       state.finishReason = finishReason; // Mark for usage injection in stream.js

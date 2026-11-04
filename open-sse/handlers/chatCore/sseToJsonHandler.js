@@ -9,6 +9,7 @@ import { PROVIDERS } from "../../config/providers.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { ROLE, RESPONSES_ITEM } from "../../translator/schema/index.js";
 import { extractReasoningText } from "../../translator/concerns/reasoning.js";
+import { toResponsesCompletion } from "../../translator/concerns/finishReason.js";
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
@@ -98,7 +99,7 @@ function chatCompletionToResponses(responseBody, customToolNames = null, toolNam
     object: "response",
     created_at: responseBody.created || Math.floor(Date.now() / 1000),
     model: responseBody.model || "unknown",
-    status: "completed",
+    ...toResponsesCompletion(choice.finish_reason),
     background: false,
     error: null,
     output,

@@ -1,6 +1,17 @@
 // Concern #6: finish_reason / stop_reason mapping.
 // One entry per direction; switch by special format, default handles common providers.
-import { OPENAI_FINISH, CLAUDE_STOP, GEMINI_FINISH } from "../schema/finishReasons.js";
+import { OPENAI_FINISH, CLAUDE_STOP, GEMINI_FINISH, RESPONSES_STATUS, RESPONSES_INCOMPLETE_REASON } from "../schema/finishReasons.js";
+
+// A terminal upstream chunk is not necessarily a completed response. Preserve
+// truncation/filtering for both SSE and JSON clients, including reasoning-only turns.
+export function toResponsesCompletion(reason) {
+  const incompleteReason = reason === OPENAI_FINISH.LENGTH
+    ? RESPONSES_INCOMPLETE_REASON.MAX_OUTPUT_TOKENS
+    : reason === OPENAI_FINISH.CONTENT_FILTER ? RESPONSES_INCOMPLETE_REASON.CONTENT_FILTER : null;
+  return incompleteReason
+    ? { status: RESPONSES_STATUS.INCOMPLETE, incomplete_details: { reason: incompleteReason } }
+    : { status: RESPONSES_STATUS.COMPLETED };
+}
 
 // upstream finish/stop reason → OpenAI finish_reason
 export function toOpenAIFinish(reason, format) {

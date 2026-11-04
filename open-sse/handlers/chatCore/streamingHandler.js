@@ -1,4 +1,5 @@
 import { FORMATS } from "../../translator/formats.js";
+import { toResponsesCompletion } from "../../translator/concerns/finishReason.js";
 import { needsTranslation } from "../../translator/index.js";
 import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger } from "../../utils/stream.js";
 import { pipeWithDisconnect } from "../../utils/streamHandler.js";
@@ -131,6 +132,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     };
     const safeContent = contentObj?.content || "[Empty streaming response]";
     const safeThinking = contentObj?.thinking || null;
+    const completion = contentObj?.finishReason ? toResponsesCompletion(contentObj.finishReason) : null;
 
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId, apiKey, clientIp: clientRawRequest?.clientIp,
@@ -139,9 +141,12 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       request: extractRequestConfig(body, stream),
       providerRequest: finalBody || translatedBody || null,
       providerResponse: safeContent,
-      response: { content: safeContent, thinking: safeThinking, type: "streaming" },
+      response: {
+        ...(completion && { ...completion, finish_reason: contentObj.finishReason }),
+        content: safeContent, thinking: safeThinking, type: "streaming"
+      },
       pxpipe,
-      status: "success"
+      status: contentObj?.successful === false ? "error" : "success"
     }, { id: streamDetailId, endpoint: clientRawRequest?.endpoint || null })).catch(err => {
       console.error("[RequestDetail] Failed to update streaming content:", err.message);
     });

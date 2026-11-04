@@ -14,6 +14,7 @@ import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { restoreToolNames } from "../../utils/opencodeFingerprint.js";
 import { ROLE, RESPONSES_ITEM } from "../../translator/schema/index.js";
+import { toResponsesCompletion } from "../../translator/concerns/finishReason.js";
 
 /**
  * Convert an OpenAI Chat Completions non-streaming response body into the
@@ -74,14 +75,13 @@ function openAICompletionToResponses(responseBody, customToolNames = null, toolN
   }
 
   const usage = responseBody.usage || {};
-  const status = choice.finish_reason === "tool_calls" ? "completed" : (choice.finish_reason === "stop" ? "completed" : (choice.finish_reason || "completed"));
 
   return {
     id: `resp_${responseBody.id || ""}`.replace(/^resp_chatcmpl-/, "resp_"),
     object: "response",
     created_at: responseBody.created || Math.floor(Date.now() / 1000),
     model: responseBody.model || "unknown",
-    status,
+    ...toResponsesCompletion(choice.finish_reason),
     background: false,
     error: null,
     output,
