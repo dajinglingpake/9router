@@ -1,25 +1,68 @@
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
+import { CHAT_TOOL_NAME_MAX_LENGTH } from "../../config/runtimeConfig.js";
 
-// Chat tools have no namespace field. Recover it from the original Responses
-// declarations/history when returning tool calls, including deferred tools.
-export function collectResponsesToolNamespaces(body) {
-  const namespaces = new Map();
+// Chat tools share one flat name space. Keep same-name tools from distinct
+// Responses namespaces callable, and use the same aliases for history/choices.
+export function collectResponsesToolNames(body) {
+  const entries = new Map();
+  const key = (name, namespace) => JSON.stringify([namespace || "", name]);
+  const add = (name, namespace) => {
+    if (typeof name !== "string" || !name.trim()) return;
+    const id = key(name, namespace);
+    if (!entries.has(id)) entries.set(id, { name, namespace });
+  };
   const collect = (tools) => {
     for (const tool of Array.isArray(tools) ? tools : []) {
-      if (tool?.type !== "namespace" || !tool.name || !Array.isArray(tool.tools)) continue;
-      for (const nested of tool.tools) {
-        if ([OPENAI_BLOCK.FUNCTION, "custom"].includes(nested?.type) && nested.name) namespaces.set(nested.name, tool.name);
+      if (tool?.type === "namespace" && tool.name && Array.isArray(tool.tools)) {
+        for (const nested of tool.tools) {
+          if ([OPENAI_BLOCK.FUNCTION, "custom"].includes(nested?.type)) add(nested.name, tool.name);
+        }
+      } else {
+        add(tool?.function?.name || tool?.name);
       }
     }
   };
-  for (const item of Array.isArray(body?.input) ? body.input : []) {
+  collect(body?.tools);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  for (const item of input) {
     if (item?.type === RESPONSES_ITEM.ADDITIONAL_TOOLS) collect(item.tools);
-    else if ([RESPONSES_ITEM.FUNCTION_CALL, RESPONSES_ITEM.CUSTOM_TOOL_CALL].includes(item?.type) && item.name && item.namespace) {
-      namespaces.set(item.name, item.namespace);
+  }
+  for (const item of input) {
+    if ([RESPONSES_ITEM.FUNCTION_CALL, RESPONSES_ITEM.CUSTOM_TOOL_CALL].includes(item?.type)) {
+      // Older clients omit namespace when the name is already unambiguous.
+      if (item.namespace || ![...entries.values()].some(entry => entry.name === item.name)) add(item.name, item.namespace);
     }
   }
-  collect(body?.tools);
-  return namespaces;
+  const counts = new Map();
+  for (const { name } of entries.values()) counts.set(name, (counts.get(name) || 0) + 1);
+  const reserved = new Set(counts.keys());
+  for (const entry of entries.values()) {
+    entry.upstreamName = entry.name;
+    if (!entry.namespace || counts.get(entry.name) === 1) continue;
+    const base = `${entry.namespace}__${entry.name}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, CHAT_TOOL_NAME_MAX_LENGTH);
+    let alias = base;
+    for (let i = 2; reserved.has(alias); i++) {
+      const suffix = `_${i}`;
+      alias = base.slice(0, CHAT_TOOL_NAME_MAX_LENGTH - suffix.length) + suffix;
+    }
+    reserved.add(alias);
+    entry.upstreamName = alias;
+  }
+  return {
+    entries: [...entries.values()],
+    resolve(name, namespace) {
+      return entries.get(key(name, namespace))?.upstreamName
+        || [...entries.values()].find(entry => entry.name === name)?.upstreamName
+        || name;
+    },
+  };
+}
+
+// Recover the namespace using the name actually sent to the Chat provider.
+export function collectResponsesToolNamespaces(body) {
+  return new Map(collectResponsesToolNames(body).entries
+    .filter(entry => entry.namespace)
+    .map(entry => [entry.upstreamName, entry.namespace]));
 }
 
 /**

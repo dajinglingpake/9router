@@ -18,6 +18,7 @@ const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 const { CodeBuddyExecutor } = await import("../../open-sse/executors/codebuddy-cn.js");
 const { translateNonStreamingResponse } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
 const { collectResponsesToolNamespaces } = await import("../../open-sse/translator/formats/responsesApi.js");
+const { restoreToolNames } = await import("../../open-sse/utils/opencodeFingerprint.js");
 
 const program = 'await tools.apply_patch("*** Begin Patch\\n*** Add File: pelican.svg\\n+<svg>鹈鹕</svg>\\n*** End Patch");';
 const namespace = { type: "namespace", name: "functions", tools: [
@@ -125,6 +126,73 @@ describe("CodeBuddy Codex custom tools through the real chat pipeline", () => {
     const response = { choices: [{ message: { tool_calls: [{ id: "call_exec", function: { name: "exec", arguments: JSON.stringify({ input: program }) } }] }, finish_reason: "tool_calls" }] };
     const out = translateNonStreamingResponse(response, "openai", "openai-responses", new Set(["exec"]), collectResponsesToolNamespaces({ tools: [namespace] }));
     expect(out.output[0]).toMatchObject({ type: "custom_tool_call", name: "exec", namespace: "functions", input: program });
+  });
+
+  it.each([
+    { stream: true }, { stream: false },
+  ])("keeps both desktop REPL tools callable across a round trip: %j", async ({ stream }) => {
+    const tools = ["mcp__cua_repl", "mcp__node_repl"].map((name, index) => ({
+      type: "namespace", name, tools: [{
+        type: index ? "custom" : "function", name: "js", description: `${name} JavaScript`,
+        parameters: { type: "object", properties: { code: { type: "string" } }, required: ["code"] },
+      }],
+    }));
+    executeMock.mockImplementation(async ({ body }) => {
+      const calls = body.tools.map((tool, index) => ({
+        index, id: `call_${index}`, type: "function",
+        function: { name: tool.function.name, arguments: JSON.stringify(index ? { input: "2+2" } : { code: "1+1" }) },
+      }));
+      return { response: new Response([
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: calls }, finish_reason: null }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join(""), { headers: { "content-type": "text/event-stream" } }), transformedBody: body };
+    });
+    const input = [{ role: "user", content: "Use both JavaScript runtimes." }];
+    const result = await route({ tools, input, stream });
+    const text = await result.response.text();
+    const events = stream ? text.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6))) : [];
+    const output = stream ? events.find(event => event.type === "response.completed").response.output : JSON.parse(text).output;
+    expect(output).toEqual([
+      expect.objectContaining({ type: "function_call", namespace: "mcp__cua_repl", name: "js", call_id: "call_0", arguments: '{"code":"1+1"}' }),
+      expect.objectContaining({ type: "custom_tool_call", namespace: "mcp__node_repl", name: "js", call_id: "call_1", input: "2+2" }),
+    ]);
+    if (stream) {
+      for (const type of ["response.output_item.added", "response.output_item.done"]) {
+        expect(events.filter(event => event.type === type).map(event => [event.item.namespace, event.item.name]))
+          .toEqual([["mcp__cua_repl", "js"], ["mcp__node_repl", "js"]]);
+      }
+    }
+    const sent = executeMock.mock.calls[0][0].body;
+    expect(sent.tools.map(tool => tool.function.name)).toEqual(["mcp__cua_repl__js", "mcp__node_repl__js"]);
+    expect(sent._toolNameMap).toBeUndefined();
+    const continuation = await route({ tools, stream: false,
+      tool_choice: { type: "custom", namespace: "mcp__node_repl", name: "js" },
+      input: [...input, ...output,
+        { type: "function_call_output", call_id: "call_0", output: "2" },
+        { type: "custom_tool_call_output", call_id: "call_1", output: "4" },
+      ],
+    });
+    await continuation.response.text();
+    const next = executeMock.mock.calls.at(-1)[0].body;
+    expect(next.tool_choice.function.name).toBe("mcp__node_repl__js");
+    expect(next.messages.flatMap(message => message.tool_calls || []).map(call => [call.id, call.function.name]))
+      .toEqual([["call_0", "mcp__cua_repl__js"], ["call_1", "mcp__node_repl__js"]]);
+    expect(next.messages.filter(message => message.role === "tool").map(message => [message.tool_call_id, message.content]))
+      .toEqual([["call_0", "2"], ["call_1", "4"]]);
+  });
+
+  it("restores aliased custom tools in native JSON responses", () => {
+    const response = { choices: [{ message: { tool_calls: [
+      { id: "call_browser", function: { name: "browser__js", arguments: '{"code":"1+1"}' } },
+      { id: "call_node", function: { name: "node__js", arguments: '{"input":"2+2"}' } },
+    ] }, finish_reason: "tool_calls" }] };
+    const out = translateNonStreamingResponse(response, "openai", "openai-responses", new Set(["node__js"]), new Map([["browser__js", "browser"], ["node__js", "node"]]));
+    const restored = restoreToolNames(out, new Map([["browser__js", "js"], ["node__js", "js"]]));
+    expect(restored.output).toEqual([
+      expect.objectContaining({ type: "function_call", namespace: "browser", name: "js", call_id: "call_browser", arguments: '{"code":"1+1"}' }),
+      expect.objectContaining({ type: "custom_tool_call", namespace: "node", name: "js", call_id: "call_node", input: "2+2" }),
+    ]);
   });
 
   it("forwards a Codex screenshot as an image instead of base64 tool text", async () => {

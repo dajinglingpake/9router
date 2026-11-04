@@ -476,14 +476,23 @@ export function restoreToolNames(payload, map) {
   // OpenAI Responses final JSON body.
   if (Array.isArray(payload.output)) {
     put("output", payload.output.map((item) =>
-      item?.type === "function_call" && typeof item.name === "string" && map.has(item.name)
+      ["function_call", "custom_tool_call"].includes(item?.type) && typeof item.name === "string" && map.has(item.name)
         ? { ...item, name: map.get(item.name) }
         : item));
   }
 
+  // Terminal Responses SSE events wrap their final output in response.
+  if (payload.response && typeof payload.response === "object") {
+    put("response", restoreToolNames(payload.response, map));
+  }
+  // Translators return SSE envelopes before stream.js serializes their data.
+  if (payload.event && payload.data && typeof payload.data === "object") {
+    put("data", restoreToolNames(payload.data, map));
+  }
+
   // OpenAI Responses SSE events such as response.output_item.added/done.
   const item = payload.item;
-  if (item?.type === "function_call" && typeof item.name === "string" && map.has(item.name)) {
+  if (["function_call", "custom_tool_call"].includes(item?.type) && typeof item.name === "string" && map.has(item.name)) {
     put("item", { ...item, name: map.get(item.name) });
   }
 

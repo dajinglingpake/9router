@@ -22,6 +22,9 @@ export const CHAT_REQUEST_BODY_LIMITS = {
   decodedBytes: 128 * 1024 * 1024,
 };
 
+// Chat-compatible providers share a flat function namespace with 64-character names.
+export const CHAT_TOOL_NAME_MAX_LENGTH = 64;
+
 // Re-export error config (backward compat)
 export {
   ERROR_TYPES,

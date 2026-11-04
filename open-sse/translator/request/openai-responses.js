@@ -8,6 +8,7 @@ import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
 import {
   normalizeResponsesInput,
+  collectResponsesToolNames,
   clampResponsesCallId,
   coerceResponsesArguments,
   coerceResponsesOutput,
@@ -38,6 +39,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   let pendingReasoningEncrypted = "";
   const additionalTools = [];
   const customToolNames = new Set();
+  const toolNames = collectResponsesToolNames(body);
 
   const inputItems = normalizeResponsesInput(body.input);
   if (!inputItems) return body;
@@ -126,7 +128,8 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       attachPendingReasoning(currentAssistantMsg);
       // Skip items with empty/missing name — Codex/OpenAI reject nameless tool calls (#444)
       if (!item.name || typeof item.name !== "string" || item.name.trim() === "") continue;
-      if (itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL) customToolNames.add(item.name);
+      const toolName = toolNames.resolve(item.name, item.namespace);
+      if (itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL) customToolNames.add(toolName);
       const toolInput = itemType === RESPONSES_ITEM.CUSTOM_TOOL_CALL
         ? { input: typeof item.input === "string" ? item.input : JSON.stringify(item.input ?? "") }
         : item.arguments;
@@ -134,7 +137,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         id: item.call_id,
         type: OPENAI_BLOCK.FUNCTION,
         function: {
-          name: item.name,
+          name: toolName,
           arguments: typeof toolInput === "string" ? toolInput : JSON.stringify(toolInput ?? {})
         }
       });
@@ -223,6 +226,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
             .filter(nestedTool => [OPENAI_BLOCK.FUNCTION, "custom"].includes(nestedTool?.type) && nestedTool.name)
             .map(nestedTool => ({
               ...nestedTool,
+              name: toolNames.resolve(nestedTool.name, tool.name),
               description: nestedTool.description || tool.description || "",
             }));
         }
@@ -272,11 +276,21 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         };
       })
       .filter(Boolean);
+    // Repeated declarations of the same scoped tool are one callable tool.
+    const seen = new Set();
+    result.tools = result.tools.filter(tool => {
+      const name = tool.function?.name;
+      if (seen.has(name)) return false;
+      seen.add(name);
+      return true;
+    });
   }
+  const renamed = toolNames.entries.filter(entry => entry.upstreamName !== entry.name);
+  if (renamed.length) result._toolNameMap = new Map(renamed.map(entry => [entry.upstreamName, entry.name]));
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
 
   if ([OPENAI_BLOCK.FUNCTION, "custom"].includes(body.tool_choice?.type) && body.tool_choice.name) {
-    result.tool_choice = { type: OPENAI_BLOCK.FUNCTION, function: { name: body.tool_choice.name } };
+    result.tool_choice = { type: OPENAI_BLOCK.FUNCTION, function: { name: toolNames.resolve(body.tool_choice.name, body.tool_choice.namespace) } };
   }
 
   // Cleanup Responses API specific fields

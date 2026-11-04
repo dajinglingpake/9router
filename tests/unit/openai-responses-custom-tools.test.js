@@ -5,6 +5,7 @@ import {
 import { openaiToOpenAIResponsesResponse } from "../../open-sse/translator/response/openai-responses.js";
 import { initState } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
+import { collectResponsesToolNamespaces } from "../../open-sse/translator/formats/responsesApi.js";
 
 const EXEC_TOOL = {
   type: "custom",
@@ -76,6 +77,36 @@ describe("Codex Responses Lite custom tools → OpenAI Chat", () => {
 
     expect(out.tools.map((tool) => tool.function.name)).toEqual(["search", "exec"]);
     expect(out._customToolNames).toEqual(["exec"]);
+  });
+
+  it("deduplicates repeated scoped declarations without losing another namespace or a top-level tool", () => {
+    const fn = { type: "function", name: "js", parameters: { type: "object", properties: { code: { type: "string" } } } };
+    const browser = { type: "namespace", name: "browser", tools: [fn] };
+    const node = { type: "namespace", name: "node", tools: [{ ...fn, description: "Node runtime" }] };
+    const body = {
+      tools: [fn, browser, { ...fn, name: "browser__js" }],
+      input: [{ type: "additional_tools", tools: [browser, node] }, { role: "user", content: "Run JavaScript" }],
+    };
+    const original = structuredClone(body);
+    const out = openaiResponsesToOpenAIRequest("kimi-k3.1-pro", body, true, null);
+    expect(out.tools.map(tool => tool.function.name)).toEqual(["js", "browser__js_2", "browser__js", "node__js"]);
+    expect(out.tools.at(-1).function.description).toBe("Node runtime");
+    expect(collectResponsesToolNamespaces(body)).toEqual(new Map([["browser__js_2", "browser"], ["node__js", "node"]]));
+    expect(body).toEqual(original);
+  });
+
+  it("keeps long or punctuated namespace aliases unique and preserves undeclared history", () => {
+    const name = "n".repeat(80);
+    const body = { tools: [], input: [
+      { type: "function_call", namespace: name + ".a", name: "js", call_id: "a", arguments: "{}" },
+      { type: "function_call", namespace: name + ".b", name: "js", call_id: "b", arguments: "{}" },
+    ] };
+    const out = openaiResponsesToOpenAIRequest("kimi-k3.1-pro", body, true, null);
+    const names = out.messages[0].tool_calls.map(call => call.function.name);
+    expect(new Set(names).size).toBe(2);
+    for (const alias of names) expect(alias).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+    expect([...collectResponsesToolNamespaces(body).keys()]).toEqual(names);
+    expect([...out._toolNameMap.values()]).toEqual(["js", "js"]);
   });
 });
 
