@@ -1,4 +1,28 @@
 import { DefaultExecutor } from "./default.js";
+import { ROLE, OPENAI_BLOCK } from "../translator/schema/index.js";
+
+const NEUTRAL_PROMPT = "You are a helpful AI assistant that helps with software engineering tasks.";
+const AGENT_PATTERN = /you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>/i;
+// Only client/model introductions are replaceable, never the rules after them.
+const IDENTITY_PREFIX = /^(\s*)You are (?:an? (?:AI |coding |code )?agent powered by (?:DeepSeek Harness|(?:the )?[\w./:-]+(?: model)?)|Claude Code(?:,\s*(?:Anthropic|Anxthxropic)'s official CLI(?: for Claude)?)?|Cursor|Windsurf|Cline|Aider|Continue|Copilot|Cody)(?:[.!?](?=\s|$)|$)/i;
+
+function preserveAgentInstructions(block) {
+  if (typeof block?.text !== "string") return [block];
+  let text = block.text;
+  let replacedIdentity = false;
+  while (IDENTITY_PREFIX.test(text)) {
+    text = text.replace(IDENTITY_PREFIX, "$1");
+    replacedIdentity = true;
+  }
+  if (replacedIdentity) text = NEUTRAL_PROMPT + text;
+
+  // CodeBuddy accepts these rules as separate text blocks, but rejects the
+  // same long CLI prompt in one block. Keep every separator and instruction.
+  const parts = text.split(/(?<=[.!?。！？])(?=\s)/u);
+  return parts.map((text, index) => index === parts.length - 1
+    ? { ...block, text }
+    : { type: block.type, text });
+}
 
 /**
  * CodeBuddyExecutor — talks to https://copilot.tencent.com/v2/chat/completions
@@ -18,16 +42,8 @@ export class CodeBuddyExecutor extends DefaultExecutor {
     const transformed = super.transformRequest(model, body, stream, credentials);
     transformed.stream = true;
 
-    // Tencent's content filter flags CLI agent system prompts ("You are Claude
-    // Code, Anthropic's official CLI...") as prompt injection / sensitive content
-    // and rejects the whole request. Detect known agent identity markers and
-    // replace those prompts with a neutral one. Length alone does not identify
-    // a CLI prompt: long application instructions must survive unchanged.
-    // content may be a string or typed
-    // blocks ([{type:"text",text}]) depending on the incoming client format, so
-    // flatten before matching and preserve the original shape on replacement.
-    const NEUTRAL_PROMPT = "You are a helpful AI assistant that helps with software engineering tasks.";
-    const AGENT_PATTERN = /you are claude code|claude.?code.+official.+cli|anthropic.+official.+cli|anxthxropic.+official.+cli|you are (?:cursor|windsurf|cline|aider|continue|copilot|cody)|you are an? (?:ai )?(?:coding |code )?agent|cc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)|claude.?code.+issues|give feedback.+claude.?code|you are .{0,30}(?:powerful )?ai agent|orchestration capabilities|OhMyOpenCode|<agent-identity>|<Role>|<Behavior_Instructions>/i;
+    // Adapt agent identity and text-block layout without discarding the
+    // client's tool-use, completion, or application instructions.
     const flatten = (content) =>
       typeof content === "string"
         ? content
@@ -36,13 +52,18 @@ export class CodeBuddyExecutor extends DefaultExecutor {
           : "";
     if (Array.isArray(transformed.messages)) {
       transformed.messages = transformed.messages.map((message) => {
-        if (!message || message.role !== "system") return message;
+        if (!message || message.role !== ROLE.SYSTEM) return message;
         const text = flatten(message.content);
         if (!text) return message;
         if (AGENT_PATTERN.test(text)) {
-          return typeof message.content === "string"
-            ? { ...message, content: NEUTRAL_PROMPT }
-            : { ...message, content: [{ type: "text", text: NEUTRAL_PROMPT }] };
+          const blocks = Array.isArray(message.content)
+            ? message.content
+            : [{ type: OPENAI_BLOCK.TEXT, text: message.content }];
+          const content = blocks.flatMap(preserveAgentInstructions);
+          // Preserve the existing string shape for a bare identity statement.
+          return { ...message, content: typeof message.content === "string" && content.length === 1
+            ? content[0].text
+            : content };
         }
         return message;
       });
