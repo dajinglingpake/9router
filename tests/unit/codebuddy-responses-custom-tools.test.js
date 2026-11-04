@@ -127,6 +127,28 @@ describe("CodeBuddy Codex custom tools through the real chat pipeline", () => {
     expect(out.output[0]).toMatchObject({ type: "custom_tool_call", name: "exec", namespace: "functions", input: program });
   });
 
+  it("forwards a Codex screenshot as an image instead of base64 tool text", async () => {
+    const image = "data:image/png;base64,iVBORw0KGgo=";
+    const result = await route({ stream: false, reasoning: { effort: "max" }, tools: [namespace], input: [
+      { role: "user", content: "Inspect the generated page." },
+      { type: "custom_tool_call", call_id: "screenshot", namespace: "functions", name: "exec", input: "image(await tools.view_image({path: 'preview.png'}));" },
+      { type: "custom_tool_call_output", call_id: "screenshot", output: [
+        { type: "input_text", text: "Script completed" },
+        { type: "input_image", image_url: image },
+      ] },
+    ] });
+    await result.response.text();
+    const body = executeMock.mock.calls[0][0].body;
+    expect(body.reasoning_effort).toBe("max");
+    expect(body.messages.find(message => message.role === "tool")).toEqual({
+      role: "tool", tool_call_id: "screenshot", content: "Script completed",
+    });
+    expect(body.messages.at(-1)).toMatchObject({ role: "user", content: [
+      { type: "text", text: "[Image from tool result screenshot]" },
+      { type: "image_url", image_url: { url: image } },
+    ] });
+  });
+
   it("recovers namespaces from custom and function call history", () => {
     expect(collectResponsesToolNamespaces({ input: [
       { type: "custom_tool_call", namespace: "functions", name: "exec" },

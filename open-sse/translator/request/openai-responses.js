@@ -33,6 +33,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   // Group items by conversation turn
   let currentAssistantMsg = null;
   let pendingToolResults = [];
+  let pendingToolImages = [];
   let pendingReasoning = "";
   let pendingReasoningEncrypted = "";
   const additionalTools = [];
@@ -67,6 +68,13 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
     // Determine item type - Droid CLI sends role-based items without 'type' field
     // Fallback: if no type but has role property, treat as message
     const itemType = item.type || (item.role ? RESPONSES_ITEM.MESSAGE : null);
+
+    // Chat tool messages are text-only. Keep screenshots after all parallel
+    // tool results so images neither become base64 text nor interrupt the calls.
+    if (pendingToolImages.length && ![RESPONSES_ITEM.FUNCTION_CALL_OUTPUT, RESPONSES_ITEM.CUSTOM_TOOL_CALL_OUTPUT].includes(itemType)) {
+      result.messages.push({ role: ROLE.USER, content: pendingToolImages });
+      pendingToolImages = [];
+    }
 
     if (itemType === RESPONSES_ITEM.MESSAGE) {
       // Flush the previous assistant message before starting another message.
@@ -144,11 +152,28 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         }
         pendingToolResults = [];
       }
+      let output = item.output;
+      if (Array.isArray(output)) {
+        const text = [];
+        for (const part of output) {
+          if (part?.type === RESPONSES_ITEM.INPUT_IMAGE && part.image_url) {
+            pendingToolImages.push(
+              { type: OPENAI_BLOCK.TEXT, text: `[Image from tool result ${item.call_id}]` },
+              { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: part.image_url, detail: part.detail || "auto" } }
+            );
+          } else if ([RESPONSES_ITEM.INPUT_TEXT, RESPONSES_ITEM.OUTPUT_TEXT, OPENAI_BLOCK.TEXT].includes(part?.type)) {
+            text.push(part.text || "");
+          } else {
+            text.push(JSON.stringify(part));
+          }
+        }
+        output = text.join("\n");
+      }
       // Add tool result immediately
       result.messages.push({
         role: ROLE.TOOL,
         tool_call_id: item.call_id,
-        content: typeof item.output === "string" ? item.output : JSON.stringify(item.output)
+        content: typeof output === "string" ? output : JSON.stringify(output)
       });
     }
     else if (itemType === RESPONSES_ITEM.ADDITIONAL_TOOLS) {
@@ -177,6 +202,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       result.messages.push(tr);
     }
   }
+  if (pendingToolImages.length) result.messages.push({ role: ROLE.USER, content: pendingToolImages });
 
   // Convert tools format.
   // Responses API supports "hosted" tools (e.g. { type: "request_user_input" }) that carry no
