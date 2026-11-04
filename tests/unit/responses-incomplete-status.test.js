@@ -35,6 +35,53 @@ async function transform(chunks, options = {}) {
 }
 
 describe("Responses incomplete termination", () => {
+  it.each(["finish", "trailer", "absent"])("reports upstream error as failed with %s usage", async placement => {
+    const chunks = [reasoning, finish("error", placement === "finish" ? usage : undefined)];
+    if (placement === "trailer") chunks.push({ choices: [], usage });
+    const { events, onStreamComplete } = await transform(chunks);
+    expect(terminalEvents(events)).toEqual([expect.objectContaining({
+      type: "response.failed", response: expect.objectContaining({
+        status: "failed", error: expect.objectContaining({ code: "server_error", message: expect.stringContaining("finish_reason=error") }),
+      }),
+    })]);
+    expect(onStreamComplete).toHaveBeenCalledWith(expect.objectContaining({ successful: false, finishReason: "error" }), expect.anything(), expect.anything());
+  });
+
+  it("preserves upstream error in the legacy stream adapter and JSON adapters", async () => {
+    const events = parse(await new Response(inputStream(wire([reasoning, finish("error", usage)])).pipeThrough(createResponsesApiTransformStream())).text());
+    expect(terminalEvents(events)[0]).toMatchObject({ type: "response.failed", response: { error: { code: "server_error" } } });
+    const response = translateNonStreamingResponse({ choices: [{ message: { content: "" }, finish_reason: "error" }] }, FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES);
+    expect(response).toMatchObject({ status: "failed", error: { code: "server_error" } });
+    const result = await handleForcedSSEToJson({
+      providerResponse: new Response(inputStream(wire([reasoning, finish("error", usage)])), { headers: { "content-type": "text/event-stream" } }),
+      sourceFormat: FORMATS.OPENAI_RESPONSES, targetFormat: FORMATS.OPENAI,
+      provider: "test", model: "test", body: {}, stream: false,
+      requestStartTime: Date.now(), clientRawRequest: { endpoint: "/v1/responses" },
+      trackDone: vi.fn(), appendLog: vi.fn(),
+    });
+    expect(await result.response.json()).toMatchObject({ status: "failed", error: { code: "server_error" } });
+  });
+
+  it("does not mark an upstream error as a successful request", async () => {
+    const onRequestComplete = vi.fn();
+    const { onStreamComplete } = buildOnStreamComplete({ provider: "test", model: "test", body: {}, requestStartTime: Date.now(), onRequestComplete });
+    await transform([reasoning, finish("error")], { onStreamComplete });
+    expect(onRequestComplete).not.toHaveBeenCalled();
+    expect(saveRequestDetail).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: "error", response: expect.objectContaining({ status: "failed", finish_reason: "error", error: { code: "server_error", message: expect.any(String) } }),
+    }));
+  });
+
+  it("does not dispatch unfinished tool arguments on an error", async () => {
+    const { events } = await transform([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_partial", function: { name: "write", arguments: '{"path":' } }] } }] },
+      finish("error"),
+    ]);
+    expect(events.some(e => e.type === "response.function_call_arguments.done")).toBe(false);
+    expect(events.some(e => e.type === "response.output_item.done" && e.item?.type === "function_call")).toBe(false);
+    expect(terminalEvents(events)[0]).toMatchObject({ type: "response.failed", response: { output: [] } });
+  });
+
   it.each(["finish", "trailer", "absent"])("preserves reasoning-only length with %s usage", async placement => {
     const chunks = [reasoning, finish("length", placement === "finish" ? usage : undefined)];
     if (placement === "trailer") chunks.push({ choices: [], usage });

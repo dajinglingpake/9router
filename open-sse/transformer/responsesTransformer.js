@@ -7,6 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { toResponsesCompletion } from "../translator/concerns/finishReason.js";
+import { OPENAI_FINISH } from "../translator/schema/finishReasons.js";
 
 // Create log directory for responses (Node.js only)
 export function createResponsesLogger(model, logsDir = null) {
@@ -234,9 +235,9 @@ export function createResponsesApiTransformStream(logger = null) {
           id: state.responseId,
           object: "response",
           created_at: state.created,
-          ...completion,
           background: false,
-          error: null
+          error: null,
+          ...completion,
         }
       });
     }
@@ -426,7 +427,9 @@ export function createResponsesApiTransformStream(logger = null) {
         if (choice.finish_reason) {
           for (const i in state.msgItemAdded) closeMessage(controller, i);
           closeReasoning(controller);
-          for (const i in state.funcCallIds) closeToolCall(controller, i);
+          if (choice.finish_reason !== OPENAI_FINISH.ERROR) {
+            for (const i in state.funcCallIds) closeToolCall(controller, i);
+          }
           sendTerminal(controller);
         }
       }
@@ -435,7 +438,9 @@ export function createResponsesApiTransformStream(logger = null) {
     flush(controller) {
       for (const i in state.msgItemAdded) closeMessage(controller, i);
       closeReasoning(controller);
-      for (const i in state.funcCallIds) closeToolCall(controller, i);
+      if (state.finishReason !== OPENAI_FINISH.ERROR) {
+        for (const i in state.funcCallIds) closeToolCall(controller, i);
+      }
       sendTerminal(controller);
 
       logger?.logOutput("data: [DONE]");

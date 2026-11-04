@@ -6,6 +6,8 @@ export const OPENAI_FINISH = {
   LENGTH: "length",
   TOOL_CALLS: "tool_calls",
   CONTENT_FILTER: "content_filter",
+  // OpenAI-compatible gateways can report an upstream failure in-band.
+  ERROR: "error",
 };
 
 // Claude stop_reason values.

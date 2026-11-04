@@ -5,6 +5,12 @@ import { OPENAI_FINISH, CLAUDE_STOP, GEMINI_FINISH, RESPONSES_STATUS, RESPONSES_
 // A terminal upstream chunk is not necessarily a completed response. Preserve
 // truncation/filtering for both SSE and JSON clients, including reasoning-only turns.
 export function toResponsesCompletion(reason) {
+  if (reason === OPENAI_FINISH.ERROR) {
+    return {
+      status: RESPONSES_STATUS.FAILED,
+      error: { code: "server_error", message: "Upstream generation failed (finish_reason=error). Please retry the request." },
+    };
+  }
   const incompleteReason = reason === OPENAI_FINISH.LENGTH
     ? RESPONSES_INCOMPLETE_REASON.MAX_OUTPUT_TOKENS
     : reason === OPENAI_FINISH.CONTENT_FILTER ? RESPONSES_INCOMPLETE_REASON.CONTENT_FILTER : null;

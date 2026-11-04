@@ -81,9 +81,9 @@ function openAICompletionToResponses(responseBody, customToolNames = null, toolN
     object: "response",
     created_at: responseBody.created || Math.floor(Date.now() / 1000),
     model: responseBody.model || "unknown",
-    ...toResponsesCompletion(choice.finish_reason),
     background: false,
     error: null,
+    ...toResponsesCompletion(choice.finish_reason),
     output,
     usage: {
       input_tokens: usage.prompt_tokens || usage.input_tokens || 0,

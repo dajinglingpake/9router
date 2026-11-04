@@ -1,4 +1,5 @@
 import { FORMATS } from "../translator/formats.js";
+import { OPENAI_FINISH } from "../translator/schema/finishReasons.js";
 import { getOpenAIResponsesEventName } from "./responsesStreamHelpers.js";
 import { recordTraffic, recordOutputChunk, beginOutputStream, endOutputStream } from "@/lib/runtimeTraffic.js";
 
@@ -14,6 +15,7 @@ export function createLocalStreamMonitor({ targetFormat, connectionId, provider,
       const type = getOpenAIResponsesEventName(eventName, parsed);
       if (type?.startsWith("response.")) responsesStream = true;
       if (parsed?.error || parsed?.response?.error || type === "error"
+        || parsed?.choices?.some(choice => choice.finish_reason === OPENAI_FINISH.ERROR)
         || type === "response.failed" || type === "response.incomplete"
         || ["failed", "incomplete"].includes(parsed?.response?.status)) failed = true;
       if (type === "response.completed" || type === "response.done" || parsed?.response?.status === "completed") completed = true;

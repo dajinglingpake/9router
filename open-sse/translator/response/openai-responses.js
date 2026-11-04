@@ -157,7 +157,10 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
   if (choice.finish_reason) {
     for (const i in state.msgItemAdded) closeMessage(state, emit, i);
     closeReasoning(state, emit);
-    for (const i in state.funcCallIds) closeToolCall(state, emit, i);
+    // A failed generation may leave partial arguments; never dispatch that tool.
+    if (choice.finish_reason !== OPENAI_FINISH.ERROR) {
+      for (const i in state.funcCallIds) closeToolCall(state, emit, i);
+    }
     state.finishSeen = true;
     // Upstreams report usage either on the finish chunk itself or on a trailing chunk
     // whose `choices` array is empty (OpenAI does the latter). Emitting
@@ -489,9 +492,9 @@ function sendTerminal(state, emit) {
         id: state.responseId,
         object: "response",
         created_at: state.created,
-        ...completion,
         background: false,
         error: null,
+        ...completion,
         output: collectCompletedOutputItems(state),
         ...(state.responsesUsage ? { usage: state.responsesUsage } : {})
       }
@@ -511,7 +514,9 @@ function flushEvents(state) {
 
   for (const i in state.msgItemAdded) closeMessage(state, emit, i);
   closeReasoning(state, emit);
-  for (const i in state.funcCallIds) closeToolCall(state, emit, i);
+  if (state.responsesFinishReason !== OPENAI_FINISH.ERROR) {
+    for (const i in state.funcCallIds) closeToolCall(state, emit, i);
+  }
   sendTerminal(state, emit);
   
   return events;
