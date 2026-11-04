@@ -113,6 +113,7 @@ require_cmd curl
 require_cmd git
 if [ "$LOCAL_DEPLOY" = false ]; then
   require_cmd sshpass
+  require_cmd gzip
   require_var REMOTE_HOST
   require_var REMOTE_USER
   require_var REMOTE_PASS
@@ -145,7 +146,7 @@ if [ "$LOCAL_DEPLOY" = true ]; then
 else
   echo "[4/7] Loading image on remote host..."
   REMOTE_IMAGE_TAR="$REMOTE_DIR/.9router-image-$(date +%s).tar"
-  docker save "$IMAGE_NAME" | ssh_remote "cat > $(shell_quote "$REMOTE_IMAGE_TAR")"
+  docker save "$IMAGE_NAME" | gzip -1 | ssh_remote "cat > $(shell_quote "$REMOTE_IMAGE_TAR")"
   sudo_remote "docker load -i $(shell_quote "$REMOTE_IMAGE_TAR") && rm -f $(shell_quote "$REMOTE_IMAGE_TAR")"
 fi
 
