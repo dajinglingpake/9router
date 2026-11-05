@@ -691,7 +691,7 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "kimi":
-        // Weekly / Ratelimit from /v1/usages. Prefer remainingPercentage only.
+        // Current 5h/monthly windows and legacy quotas. Prefer remainingPercentage only.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({

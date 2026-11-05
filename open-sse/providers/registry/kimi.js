@@ -6,6 +6,16 @@ export const KIMI_MODELS_CONFIG = {
   cacheTtlMs: 5 * 60 * 1000,
 };
 
+export const KIMI_USAGE_CONFIG = {
+  url: "https://api.kimi.com/coding/v1/usages",
+  quotaNames: {
+    limit_5h: "5h",
+    limit_month_total: "Monthly (Total)",
+    limit_month_code: "Monthly (Code)",
+  },
+  fiveHourWindow: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+};
+
 // Dual auth (same pattern as xai): OAuth = Kimi Code subscription (device code),
 // API key = platform.moonshot / api.kimi.com. Transport is shared.
 // CLIProxyAPI parity: client_id, auth.kimi.com device+token, X-Msh-* headers, device_id.

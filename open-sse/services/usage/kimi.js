@@ -12,8 +12,7 @@
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { parseResetTime, toFiniteNumber } from "./shared.js";
 import { buildKimiHeaders } from "../../config/appConstants.js";
-
-const USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+import { KIMI_USAGE_CONFIG } from "../../providers/registry/kimi.js";
 
 const PLAN_LEVELS = {
   LEVEL_BASIC: "Moderato",
@@ -122,7 +121,7 @@ export async function getKimiUsage(
 
   try {
     const response = await proxyAwareFetch(
-      USAGE_URL,
+      KIMI_USAGE_CONFIG.url,
       {
         method: "GET",
         headers: {
@@ -154,6 +153,19 @@ export async function getKimiUsage(
     }
 
     const quotas = {};
+    // Current API reports precise used ratios for independent 5h and monthly
+    // windows. Prefer these over the rounded, legacy limits representation.
+    for (const [key, name] of Object.entries(KIMI_USAGE_CONFIG.quotaNames)) {
+      const entry = data?.usages?.[key];
+      const ratio = toFiniteNumber(entry?.used_ratio, NaN);
+      if (!Number.isFinite(ratio) || ratio < 0) continue;
+      quotas[name] = makeQuota({
+        used: Math.min(1, ratio) * 100,
+        total: 100,
+        resetAt: parseResetTime(entry.reset_time),
+      });
+    }
+
     const usageObj = data?.usage && typeof data.usage === "object" ? data.usage : {};
     const usageLimit = toFiniteNumber(usageObj.limit ?? usageObj.Limit, 0);
     const usageUsed = toFiniteNumber(usageObj.used ?? usageObj.Used, 0);
@@ -182,8 +194,13 @@ export async function getKimiUsage(
       const remaining = toFiniteNumber(detail.remaining ?? detail.Remaining, NaN);
       const resetTime = detail.resetTime || detail.reset_at || detail.resetAt;
       if (limit > 0) {
+        const window = item.window;
+        const isFiveHour = Number(window?.duration) === KIMI_USAGE_CONFIG.fiveHourWindow.duration
+          && window?.timeUnit === KIMI_USAGE_CONFIG.fiveHourWindow.timeUnit;
+        const name = isFiveHour ? KIMI_USAGE_CONFIG.quotaNames.limit_5h : "Ratelimit";
+        if (quotas[name]) continue;
         const rem = Number.isFinite(remaining) ? remaining : Math.max(0, limit);
-        quotas.Ratelimit = makeQuota({
+        quotas[name] = makeQuota({
           used: Math.max(0, limit - rem),
           total: limit,
           remaining: rem,

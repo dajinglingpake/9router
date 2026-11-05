@@ -158,6 +158,69 @@ describe("getUsageForProvider(kimi) auth selection", () => {
     expect(usage.quotas.Ratelimit.remaining).toBeUndefined();
   });
 
+  it.each([{ accessToken: "tok" }, { apiKey: "sk-test" }])("shows current 5h/monthly ratios with %j", async credentials => {
+    // Captured /coding/v1/usages shape: limits repeats 5h rounded to an integer.
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({
+      usages: {
+        limit_5h: { used_ratio: 0.0166, reset_time: "2026-11-05T12:37:30Z" },
+        limit_month_total: { used_ratio: 0.0104, reset_time: "2026-12-06T00:00:00Z" },
+        limit_month_code: { used_ratio: 0.0104, reset_time: "2026-12-06T00:00:00Z" },
+      },
+      limits: [{
+        window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+        detail: { limit: "100", used: "2", remaining: "98", resetTime: "2026-11-05T12:37:30.543877Z" },
+      }],
+    }));
+    const usage = await getUsageForProvider({ provider: "kimi", ...credentials });
+    const rows = parseQuotaData("kimi", usage);
+    expect(rows.map(row => row.name)).toEqual(["5h", "Monthly (Total)", "Monthly (Code)"]);
+    expect(rows[0]).toMatchObject({
+      used: expect.closeTo(1.66, 5), total: 100,
+      remainingPercentage: expect.closeTo(98.34, 5), resetAt: "2026-11-05T12:37:30.000Z",
+    });
+    for (const row of rows.slice(1)) {
+      expect(row).toMatchObject({ remainingPercentage: expect.closeTo(98.96, 5), resetAt: "2026-12-06T00:00:00.000Z" });
+    }
+    expect(usage.quotas.Ratelimit).toBeUndefined();
+  });
+
+  it("identifies the legacy 300-minute rate window as 5h", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({
+      ...ACTIVE_USAGE,
+      limits: [{ ...ACTIVE_USAGE.limits[0], window: { duration: "300", timeUnit: "TIME_UNIT_MINUTE" } }],
+    }));
+    const usage = await getUsageForProvider({ provider: "kimi", accessToken: "tok" });
+    expect(Object.keys(usage.quotas)).toEqual(["Weekly", "5h"]);
+    expect(usage.quotas["5h"].remainingPercentage).toBeCloseTo(40 / 60 * 100, 5);
+  });
+
+  it("preserves zero usage, clamps exhausted quotas and falls back when a ratio is invalid", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({
+      usages: {
+        limit_5h: { used_ratio: "invalid" },
+        limit_month_total: { used_ratio: 0 },
+        limit_month_code: { used_ratio: "1.05" },
+      },
+      limits: [{
+        window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+        detail: { limit: 100, remaining: 80 },
+      }],
+    }));
+    const usage = await getUsageForProvider({ provider: "kimi", accessToken: "tok" });
+    expect(usage.quotas["5h"].remainingPercentage).toBe(80);
+    expect(usage.quotas["Monthly (Total)"].remainingPercentage).toBe(100);
+    expect(usage.quotas["Monthly (Code)"].remainingPercentage).toBe(0);
+  });
+
+  it("does not invent a 5h quota when upstream only supplies monthly usage", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({
+      usages: { limit_month_total: { used_ratio: 0.2 }, limit_5h: { used_ratio: null } },
+    }));
+    const usage = await getUsageForProvider({ provider: "kimi", accessToken: "tok" });
+    expect(Object.keys(usage.quotas)).toEqual(["Monthly (Total)"]);
+    expect(usage.quotas["Monthly (Total)"].remainingPercentage).toBe(80);
+  });
+
   it("surfaces re-authorize message only on 401 unauthenticated", async () => {
     proxyAwareFetch.mockResolvedValueOnce(
       jsonResponse(
