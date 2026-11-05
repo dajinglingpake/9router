@@ -130,7 +130,11 @@ export const MODEL_PRICING = {
   // Official platform.kimi.ai: cache-hit / cache-miss / output per 1M tokens
   "kimi-k3":                      { input: 3.00,  output: 15.00, cached: 0.30,  reasoning: 15.00,  cache_creation: 3.00  },
   "k3":                           { input: 3.00,  output: 15.00, cached: 0.30,  reasoning: 15.00,  cache_creation: 3.00  },
+  "k3-256k":                      { input: 3.00,  output: 15.00, cached: 0.30,  reasoning: 15.00,  cache_creation: 3.00  },
   "kimi-k3.1-pro":                { input: 2.00,  output: 10.00, cached: 0.20,  reasoning: 10.00,  cache_creation: 2.00  },
+  "k3.1-pro":                     { input: 2.00,  output: 10.00, cached: 0.20,  reasoning: 10.00,  cache_creation: 2.00  },
+  "kimi-k3.1-pro-highspeed":      { input: 4.00,  output: 20.00, cached: 0.20,  reasoning: 20.00,  cache_creation: 4.00  },
+  "k3.1-pro-highspeed":           { input: 4.00,  output: 20.00, cached: 0.20,  reasoning: 20.00,  cache_creation: 4.00  },
   "kimi-k2.7-code":               { input: 0.95,  output: 4.00,  cached: 0.19,  reasoning: 4.00,   cache_creation: 0.95  },
   "kimi-k2.7-code-highspeed":     { input: 1.90,  output: 8.00,  cached: 0.38,  reasoning: 8.00,   cache_creation: 1.90  },
   "kimi-for-coding":              { input: 0.95,  output: 4.00,  cached: 0.19,  reasoning: 4.00,   cache_creation: 0.95  },
@@ -487,9 +491,13 @@ export function calculateCostFromTokens(tokens, pricing) {
   }
 
   const outputTokens = tokens.completion_tokens || tokens.output_tokens || 0;
-  cost += outputTokens * (pricing.output / 1000000);
+  // OpenAI/Responses details describe a subset of output, unlike Gemini's
+  // separate top-level reasoning count. Do not charge that subset twice.
+  const includedReasoning = tokens.completion_tokens_details?.reasoning_tokens
+    ?? tokens.output_tokens_details?.reasoning_tokens ?? 0;
+  cost += Math.max(0, outputTokens - includedReasoning) * (pricing.output / 1000000);
 
-  const reasoningTokens = tokens.reasoning_tokens || 0;
+  const reasoningTokens = tokens.reasoning_tokens ?? includedReasoning;
   if (reasoningTokens > 0) {
     cost += reasoningTokens * ((pricing.reasoning || pricing.output) / 1000000);
   }

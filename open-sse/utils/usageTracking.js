@@ -273,6 +273,7 @@ export function extractUsage(chunk) {
       completion_tokens: usage.output_tokens || usage.completion_tokens || 0,
       cached_tokens: cachedTokens,
       reasoning_tokens: usage.output_tokens_details?.reasoning_tokens,
+      completion_tokens_details: usage.output_tokens_details,
       prompt_tokens_details: cachedTokens ? { cached_tokens: cachedTokens } : undefined
     });
   }
