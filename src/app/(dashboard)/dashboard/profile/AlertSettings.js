@@ -5,6 +5,15 @@ import { Card, Input, Button, Toggle, Select } from "@/shared/components";
 import { ALERT_DEFAULTS } from "@/lib/alerts/config";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
+const alertTypes = [
+  ["quotaEnabled", "额度不足或用尽", "包含上游返回 402，DeepSeek 除外"],
+  ["balanceEnabled", "DeepSeek 余额不足", "包含余额达到阈值或上游返回 402"],
+  ["expiryEnabled", "账号或订阅到期", "到期前及到期后提醒"],
+  ["authEnabled", "账号凭证失效", "上游返回 401"],
+  ["networkEnabled", "上游网络连接失败", "返回 502 或 504"],
+  ["overloadEnabled", "账号繁忙或等待超时", "路由等待超时并返回 503"],
+];
+
 export default function AlertSettings() {
   const [config, setConfig] = useState({ ...ALERT_DEFAULTS });
   const [loading, setLoading] = useState(true);
@@ -47,7 +56,7 @@ export default function AlertSettings() {
   return <Card>
     <div className="flex items-center justify-between mb-4">
       <h2 className="text-lg font-semibold">企业微信告警</h2>
-      <Toggle checked={config.enabled} onChange={() => setConfig({ ...config, enabled: !config.enabled })} disabled={loading || busy} />
+      <Toggle checked={config.enabled} ariaLabel="企业微信告警总开关" onChange={enabled => setConfig(previous => ({ ...previous, enabled }))} disabled={loading || busy} />
     </div>
     <div className="space-y-4">
       <div className="relative">
@@ -68,12 +77,23 @@ export default function AlertSettings() {
           </button>
         </div>
       </div>
-      <Select label="Codex 额度告警口径" aria-label="Codex 额度告警口径" value={config.codexQuotaMode} disabled={loading || busy}
+      <div className="space-y-3">
+        <div>
+          <p className="text-sm font-medium">告警类型</p>
+          <p className="text-xs text-text-muted">只推送已开启的类型，修改后请保存。</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {alertTypes.map(([key, label, description]) => <Toggle key={key} size="sm" label={label} description={description}
+            checked={config[key]} disabled={loading || busy}
+            onChange={checked => setConfig(previous => ({ ...previous, [key]: checked }))} />)}
+        </div>
+      </div>
+      <Select label="Codex 额度告警口径" aria-label="Codex 额度告警口径" value={config.codexQuotaMode} disabled={loading || busy || !config.quotaEnabled}
         options={[{ value: "account", label: "单个账号额度" }, { value: "total", label: "共享额度汇总 + 专用账号独立告警" }]}
         onChange={event => setConfig({ ...config, codexQuotaMode: event.target.value })} />
       <div className="grid grid-cols-2 gap-3">
-        {[["quotaPercent", "额度剩余 ≤ (%)", 1, 99], ["balanceThreshold", "余额 ≤（账户币种）", 0, 10000], ["expiryDays", "到期前提醒（天）", 1, 90], ["cooldownMinutes", "重复告警间隔（分钟）", 1, 1440]].map(([key, label, min, max]) =>
-          <Input key={key} label={label} type="number" min={min} max={max} step={key === "balanceThreshold" ? "0.01" : "1"} value={config[key]} disabled={loading || busy}
+        {[["quotaPercent", "额度剩余 ≤ (%)", 1, 99, "quotaEnabled"], ["balanceThreshold", "余额 ≤（账户币种）", 0, 10000, "balanceEnabled"], ["expiryDays", "到期前提醒（天）", 1, 90, "expiryEnabled"], ["cooldownMinutes", "重复告警间隔（分钟）", 1, 1440]].map(([key, label, min, max, enabledKey]) =>
+          <Input key={key} label={label} type="number" min={min} max={max} step={key === "balanceThreshold" ? "0.01" : "1"} value={config[key]} disabled={loading || busy || (enabledKey && !config[enabledKey])}
             onChange={e => setConfig({ ...config, [key]: Number(e.target.value) })} />)}
       </div>
       <p className="text-xs text-text-muted">Codex 汇总模式每 5 分钟检查一次：共享账号按同套餐汇总，专用账号独立判断，不计入共享额度。5 小时与每周额度分别判断，两个周期同时触发时合并通知；共用周额度只提醒一次。数据不完整的周期等待下次检查，其他账号不受影响。其他提供商及单账号模式每 24 小时查询一次，额度按状态每天最多提醒一次，汇总模式按周期分别去重。余额阈值适用于 DeepSeek。</p>

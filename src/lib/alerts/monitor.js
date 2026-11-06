@@ -3,7 +3,7 @@ import { getProviderConnections, getProviderConnectionById } from "../db/repos/c
 import { getAdapter } from "../db/driver.js";
 import { getAccountExpiry } from "../accountExpiry.js";
 import { queueAlert } from "./wecom.js";
-import { ALERT_DEFAULTS, ALERT_DAILY_MS, ALERT_POLL_MS, ALERT_USAGE_TIMEOUT_MS } from "./config.js";
+import { ALERT_DEFAULTS, ALERT_DAILY_MS, ALERT_POLL_MS, ALERT_USAGE_TIMEOUT_MS, isAlertTypeEnabled } from "./config.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { buildCodexQuotaSummary } from "../local/codexQuotaSummary.js";
 import { notifyCodexQuotaSummary } from "./codexQuota.js";
@@ -29,7 +29,8 @@ export function getAccountAlerts(connection, usage, config, now = Date.now()) {
   const alerts = [];
   const account = `账号：${connection.name || connection.email || connection.id}\n提供商：${connection.provider}`;
   const low = [], empty = [];
-  const quotas = connection.provider === "codex" && config.codexQuotaMode === "total" ? {}
+  const quotaType = connection.provider === "deepseek" ? "balance" : "quota";
+  const quotas = !isAlertTypeEnabled(config, quotaType) || (connection.provider === "codex" && config.codexQuotaMode === "total") ? {}
     : connection.provider === "codebuddy-cn"
     ? codeBuddyAccountQuota(usage?.quotas || {}, config.quotaPercent, now) : usage?.quotas || {};
   for (const [name, quota] of Object.entries(quotas)) {
@@ -48,16 +49,18 @@ export function getAccountAlerts(connection, usage, config, now = Date.now()) {
     (percent <= 0 ? empty : low).push(text);
   }
   if (low.length || empty.length) alerts.push({
+    type: quotaType,
     key: `${connection.id}:quota-${empty.length ? "empty" : "low"}`,
     connectionId: connection.id,
     quotaProvider: connection.provider,
     cooldownMs: ALERT_DAILY_MS,
-    content: `9router 告警｜${empty.length ? "额度已用尽" : "额度即将用尽"}\n${account}\n${[...empty, ...low].join("\n")}`,
+    content: `9router 告警｜${quotaType === "balance" ? "余额不足" : empty.length ? "额度已用尽" : "额度即将用尽"}\n${account}\n${[...empty, ...low].join("\n")}`,
   });
-  const expiry = getAccountExpiry(connection);
+  const expiry = isAlertTypeEnabled(config, "expiry") && getAccountExpiry(connection);
   if (expiry && new Date(expiry.at).getTime() - now <= config.expiryDays * ALERT_DAILY_MS) {
     const expired = new Date(expiry.at).getTime() <= now;
     alerts.push({
+      type: "expiry",
       key: `${connection.id}:expiry-${expired ? "expired" : "soon"}`,
       cooldownMs: ALERT_DAILY_MS,
       content: `9router 告警｜${expiry.source === "subscription" && expired ? "订阅到期记录需核实" : expired ? "账号已到期" : "账号即将到期"}\n${account}\n到期：${dateText(expiry.at)}\n${expiry.source === "subscription" ? `来自订阅记录${expiry.checkedAt ? `，上次同步：${dateText(expiry.checkedAt)}` : ""}；如已续费，请刷新授权后核实。` : "来自手动设置的账号到期时间。"}`,
@@ -71,7 +74,7 @@ export async function notifyAccountUsage(connection, usage) {
   if (connection.isActive === false) return;
   const config = { ...ALERT_DEFAULTS, ...(await getSettings()).wecomAlerts };
   if (!config.enabled || !config.webhookUrl) return;
-  if (connection.provider === "codex" && config.codexQuotaMode === "total" && getExclusiveApiKeyIds(connection).length) {
+  if (isAlertTypeEnabled(config, "quota") && connection.provider === "codex" && config.codexQuotaMode === "total" && getExclusiveApiKeyIds(connection).length) {
     void notifyCodexQuotaSummary(buildCodexQuotaSummary([connection], new Map([[connection.id, usage]])), config)
       .catch(() => console.warn("[Alerts] Unable to queue dedicated quota alert"));
   }
@@ -101,10 +104,12 @@ export async function checkAccountAlerts() {
   try {
     const config = { ...ALERT_DEFAULTS, ...(await getSettings()).wecomAlerts };
     if (!config.enabled || !config.webhookUrl) return;
+    if (!["quota", "balance", "expiry"].some(type => isAlertTypeEnabled(config, type))) return;
     const { loadConnectionUsage, supportsConnectionUsage } = await import("../providerUsage.js");
     for (let connection of await getProviderConnections({ isActive: true })) {
       let usage;
-      if (!(connection.provider === "codex" && config.codexQuotaMode === "total") && supportsConnectionUsage(connection) && await claimDailyQuotaCheck(connection.id)) {
+      const usageType = connection.provider === "deepseek" ? "balance" : "quota";
+      if (isAlertTypeEnabled(config, usageType) && !(connection.provider === "codex" && config.codexQuotaMode === "total") && supportsConnectionUsage(connection) && await claimDailyQuotaCheck(connection.id)) {
         try {
           usage = await loadConnectionUsage(connection, { signal: AbortSignal.timeout(ALERT_USAGE_TIMEOUT_MS) });
           connection = await getProviderConnectionById(connection.id) || connection;
@@ -117,7 +122,7 @@ export async function checkAccountAlerts() {
         void queueAlert(alert).catch(() => console.warn("[Alerts] Unable to queue account alert"));
       }
     }
-    if (config.codexQuotaMode === "total") {
+    if (isAlertTypeEnabled(config, "quota") && config.codexQuotaMode === "total") {
       const { loadCodexQuotaSummary } = await import("../local/loadCodexQuotaSummary.js");
       await notifyCodexQuotaSummary(await loadCodexQuotaSummary(), config);
     }

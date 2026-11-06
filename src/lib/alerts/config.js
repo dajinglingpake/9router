@@ -1,6 +1,14 @@
+export const ALERT_TYPES = ["quota", "balance", "expiry", "auth", "network", "overload"];
+
 export const ALERT_DEFAULTS = {
   enabled: false,
   webhookUrl: "",
+  quotaEnabled: true,
+  balanceEnabled: true,
+  expiryEnabled: true,
+  authEnabled: true,
+  networkEnabled: true,
+  overloadEnabled: true,
   quotaPercent: 10,
   codexQuotaMode: "account",
   balanceThreshold: 1,
@@ -11,6 +19,10 @@ export const ALERT_POLL_MS = 5 * 60 * 1000;
 export const ALERT_SEND_TIMEOUT_MS = 8000;
 export const ALERT_USAGE_TIMEOUT_MS = 30000;
 export const ALERT_DAILY_MS = 24 * 60 * 60 * 1000;
+
+export function isAlertTypeEnabled(config, type) {
+  return ALERT_TYPES.includes(type) && config[`${type}Enabled`] !== false;
+}
 
 export function validateWebhook(value) {
   const url = new URL(value);
@@ -26,6 +38,12 @@ export function normalizeAlertConfig(input = {}, current = ALERT_DEFAULTS) {
   if (input.enabled !== undefined) {
     if (typeof input.enabled !== "boolean") throw new Error("告警开关无效");
     result.enabled = input.enabled;
+  }
+  for (const type of ALERT_TYPES) {
+    const key = `${type}Enabled`;
+    if (input[key] === undefined) continue;
+    if (typeof input[key] !== "boolean") throw new Error("告警类型开关无效");
+    result[key] = input[key];
   }
   if (input.webhookUrl?.trim()) result.webhookUrl = validateWebhook(input.webhookUrl.trim());
   if (input.codexQuotaMode !== undefined) {

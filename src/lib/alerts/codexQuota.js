@@ -1,6 +1,6 @@
 import { getSettings } from "../db/repos/settingsRepo.js";
 import { queueAlert } from "./wecom.js";
-import { ALERT_DEFAULTS, ALERT_DAILY_MS } from "./config.js";
+import { ALERT_DEFAULTS, ALERT_DAILY_MS, isAlertTypeEnabled } from "./config.js";
 import { getAdapter } from "../db/driver.js";
 
 const state = globalThis._codexTotalQuotaAlerts ||= { pending: Promise.resolve() };
@@ -20,6 +20,7 @@ function resetText(quota) {
 
 function combineAlerts(group, periods, config) {
   return {
+    type: "quota",
     groupKey: group.key,
     connectionId: group.connectionId,
     quotaProvider: "codex",
@@ -42,7 +43,7 @@ function combineAlerts(group, periods, config) {
 
 export function getCodexTotalQuotaAlerts(summary, config) {
   // Failed reads with unknown plans cannot be assigned to a comparable pool.
-  if (config.codexQuotaMode !== "total" || !summary.accountCount) return [];
+  if (!isAlertTypeEnabled(config, "quota") || config.codexQuotaMode !== "total" || !summary.accountCount) return [];
   const unknownSharedPlan = summary.groups.some(group => group.scope !== "dedicated" && group.plan === "unknown");
   return summary.groups.flatMap(group => {
     if (group.scope !== "dedicated" && unknownSharedPlan) return [];

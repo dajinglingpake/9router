@@ -22,10 +22,11 @@ import { loadCodexQuotaSummary } from "@/lib/local/loadCodexQuotaSummary.js";
 import { getCodexTotalQuotaAlerts, notifyCodexQuotaSummary } from "@/lib/alerts/codexQuota.js";
 import { getAccountAlerts, notifyAccountUsage, checkAccountAlerts } from "@/lib/alerts/monitor.js";
 import { notifyRequestError, queueAlert } from "@/lib/alerts/wecom.js";
-import { ALERT_DEFAULTS } from "@/lib/alerts/config.js";
+import { ALERT_DEFAULTS, ALERT_TYPES } from "@/lib/alerts/config.js";
 import { isCodexPoolQuotaLow } from "@/sse/local/quotaModelSwitch.js";
 
 const config = { ...ALERT_DEFAULTS, enabled: true, webhookUrl: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test", codexQuotaMode: "total" };
+const onlyType = type => ({ ...config, codexQuotaMode: "account", ...Object.fromEntries(ALERT_TYPES.map(item => [`${item}Enabled`, item === type])) });
 const account = (id, extra = {}) => ({ id, name: id, provider: "codex", authType: "oauth", isActive: true, ...extra });
 const shared = account("shared");
 const alice = account("alice-account", { exclusiveApiKeyIds: ["alice-key", "bob-key", "duplicate-key"] });
@@ -337,5 +338,102 @@ describe("isolated quota alerts", () => {
     expect(payloads()).toHaveLength(1);
     expect(payloads()[0].text.mentioned_list).toEqual(["Alice.User", "Bob.User"]);
     expect(payloads()[0].text.content).toContain("自动切换模型：gpt-6-luna");
+  });
+});
+
+describe("independent alert types", () => {
+  const deepseek = account("deepseek", { provider: "deepseek" });
+  const balance = { quotas: { balance: { total: 0.5 } } };
+
+  it("continues sending alerts for legacy settings without type switches", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: { enabled: true, webhookUrl: config.webhookUrl } });
+    await notifyRequestError({ connectionId: alice.id, source: "upstream", statusCode: 401, timestamp: new Date().toISOString() });
+    expect(payloads()).toHaveLength(1);
+    expect(payloads()[0].text.content).toContain("账号凭证失效");
+  });
+
+  it("separates account quota, balance and expiry alerts", () => {
+    const expiring = { ...shared, accountExpiresAt: new Date(Date.now() + 86400000).toISOString() };
+    expect(getAccountAlerts(expiring, usage(0), onlyType("quota")).map(alert => alert.type)).toEqual(["quota"]);
+    expect(getAccountAlerts(expiring, usage(0), onlyType("expiry")).map(alert => alert.type)).toEqual(["expiry"]);
+    expect(getAccountAlerts(expiring, usage(0), onlyType("network"))).toEqual([]);
+    expect(getAccountAlerts(deepseek, balance, onlyType("quota"))).toEqual([]);
+    expect(getAccountAlerts(deepseek, balance, onlyType("balance")).map(alert => alert.type)).toEqual(["balance"]);
+  });
+
+  it("applies the quota switch to aggregate and immediate dedicated Codex alerts", async () => {
+    const disabled = { ...onlyType("expiry"), codexQuotaMode: "total" };
+    mocks.settings.mockResolvedValue({ wecomAlerts: disabled });
+    const result = summary([[shared, usage(0)], [alice, usage(0)]]);
+    expect(getCodexTotalQuotaAlerts(result, disabled)).toEqual([]);
+    await notifyCodexQuotaSummary(result, disabled);
+    await notifyAccountUsage(alice, usage(0));
+    await flushAlerts();
+    expect(payloads()).toHaveLength(0);
+  });
+
+  it("only queries providers relevant to enabled alert types during scheduled checks", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: { ...onlyType("balance"), codexQuotaMode: "total" } });
+    mocks.connections.mockResolvedValue([shared, deepseek]);
+    mocks.connection.mockImplementation(async id => [shared, deepseek].find(item => item.id === id));
+    mocks.usage.mockResolvedValue(balance);
+    await checkAccountAlerts();
+    await flushAlerts();
+    expect(mocks.snapshot).not.toHaveBeenCalled();
+    expect(mocks.usage).toHaveBeenCalledTimes(1);
+    expect(mocks.usage.mock.calls[0][0].id).toBe(deepseek.id);
+    expect(payloads()).toHaveLength(1);
+    expect(payloads()[0].text.content).toContain("余额不足");
+  });
+
+  it.each([
+    ["quota", "额度不足"],
+    ["auth", "账号凭证失效"],
+    ["network", "上游网络连接失败"],
+    ["overload", "账号繁忙或等待超时"],
+  ])("sends only enabled %s request errors", async (type, label) => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: onlyType(type) });
+    const entry = { connectionId: alice.id, timestamp: new Date().toISOString() };
+    for (const error of [
+      { source: "upstream", statusCode: 401 },
+      { source: "upstream", statusCode: 402 },
+      { source: "upstream", statusCode: 502 },
+      { source: "upstream", statusCode: 504 },
+      { source: "router", statusCode: 503, timeoutRemainingMs: 0, retryCount: 1 },
+    ]) await notifyRequestError({ ...entry, ...error });
+    expect(payloads()).toHaveLength(1);
+    expect(payloads()[0].text.content).toContain(label);
+  });
+
+  it("treats DeepSeek 402 responses as balance alerts", async () => {
+    mocks.connection.mockResolvedValue(deepseek);
+    const entry = { connectionId: deepseek.id, source: "upstream", statusCode: 402, timestamp: new Date().toISOString() };
+    mocks.settings.mockResolvedValue({ wecomAlerts: onlyType("quota") });
+    await notifyRequestError(entry);
+    expect(payloads()).toHaveLength(0);
+    mocks.settings.mockResolvedValue({ wecomAlerts: onlyType("balance") });
+    await notifyRequestError(entry);
+    expect(payloads()).toHaveLength(1);
+    expect(payloads()[0].text.content).toContain("余额不足");
+  });
+
+  it("drops queued alerts if their type is disabled while waiting to send", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(new Date("2026-10-20T00:00:00Z"));
+    mocks.meta.set("wecomAlertStatus", JSON.stringify({ lastAttemptAt: Date.now() }));
+    mocks.settings.mockResolvedValue({ wecomAlerts: onlyType("network") });
+    const pending = queueAlert({ key: "queued-network", type: "network", content: "network" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(1);
+    mocks.settings.mockResolvedValue({ wecomAlerts: onlyType("quota") });
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(await pending).toBe(false);
+    expect(payloads()).toHaveLength(0);
+  });
+
+  it("allows an explicit test message even when all alerts are disabled", async () => {
+    mocks.settings.mockResolvedValue({ wecomAlerts: { ...onlyType("none"), enabled: false } });
+    expect(await queueAlert({ key: "test-types", test: true, content: "test" })).toBe(true);
+    expect(payloads()).toHaveLength(1);
   });
 });

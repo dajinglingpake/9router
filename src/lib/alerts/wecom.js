@@ -3,7 +3,7 @@ import { getSettings } from "../db/repos/settingsRepo.js";
 import { getAdapter } from "../db/driver.js";
 import { getProviderConnectionById } from "../db/repos/connectionsRepo.js";
 import { getConcurrencySnapshot } from "../../sse/services/concurrencyLimiter.js";
-import { ALERT_DEFAULTS, ALERT_SEND_TIMEOUT_MS, validateWebhook } from "./config.js";
+import { ALERT_DEFAULTS, ALERT_SEND_TIMEOUT_MS, isAlertTypeEnabled, validateWebhook } from "./config.js";
 import { getApiKeys } from "../db/repos/apiKeysRepo.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { getCodexRoutingPolicy } from "@/sse/local/routingPolicy.js";
@@ -37,13 +37,13 @@ export async function sendWecomMessage(webhookUrl, content, mentionedList = []) 
   if (result.errcode !== 0) throw new Error(`企业微信错误码 ${Number(result.errcode) || "未知"}`);
 }
 
-export function queueAlert({ key, content, connectionId, quotaProvider, cooldownMs, test = false }) {
+export function queueAlert({ key, type, content, connectionId, quotaProvider, cooldownMs, test = false }) {
   if (state.queued.has(key)) return Promise.resolve(false);
   state.queued.add(key);
   const task = state.pending.then(async () => {
-    const settings = await getSettings();
-    const config = { ...ALERT_DEFAULTS, ...settings.wecomAlerts };
-    if (!test && !config.enabled) return false;
+    let settings = await getSettings();
+    let config = { ...ALERT_DEFAULTS, ...settings.wecomAlerts };
+    if (!config.webhookUrl || (!test && (!config.enabled || !isAlertTypeEnabled(config, type)))) return false;
     const now = Date.now();
     const recordKey = `wecomAlert:${key}`;
     const previous = await readState(recordKey);
@@ -53,6 +53,9 @@ export function queueAlert({ key, content, connectionId, quotaProvider, cooldown
     const status = await getAlertStatus();
     const waitMs = Math.max(0, 4000 - (Date.now() - (status.lastAttemptAt || 0)));
     if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
+    settings = await getSettings();
+    config = { ...ALERT_DEFAULTS, ...settings.wecomAlerts };
+    if (!config.webhookUrl || (!test && (!config.enabled || !isAlertTypeEnabled(config, type)))) return false;
     const lastAttemptAt = Date.now();
     try {
       let mentionedList = [];
@@ -102,16 +105,18 @@ export async function notifyRequestError(entry) {
     && (entry.retryCount > 0 || /账号繁忙|等待重试已超过时限|排队等待超时/.test(entry.message || ""));
   const networkFailure = entry.source !== "client" && [502, 504].includes(statusCode);
   if (!overloadTimeout && !networkFailure && !(entry.source === "upstream" && [401, 402].includes(statusCode))) return;
-  const config = (await getSettings()).wecomAlerts;
-  if (!config?.enabled) return;
+  const config = { ...ALERT_DEFAULTS, ...(await getSettings()).wecomAlerts };
+  if (!config.enabled) return;
   const connection = await getProviderConnectionById(entry.connectionId);
   if (!connection || connection.isActive === false) return;
   const kind = networkFailure ? "network" : overloadTimeout ? "overload" : statusCode === 402 ? "quota" : "auth";
+  const type = kind === "quota" && connection.provider === "deepseek" ? "balance" : kind;
+  if (!isAlertTypeEnabled(config, type)) return;
   if (connection.provider === "codex" && kind === "quota" && config.codexQuotaMode === "total" && !getExclusiveApiKeyIds(connection).length) return;
   const label = {
     network: "上游网络连接失败",
     overload: "账号繁忙或等待超时",
-    quota: "额度不足",
+    quota: type === "balance" ? "余额不足" : "额度不足",
     auth: "账号凭证失效",
   }[kind];
   const metrics = await getRequestAlertMetrics();
@@ -123,6 +128,7 @@ export async function notifyRequestError(entry) {
   const proxy = entry.proxyConfigured === false ? "未配置"
     : entry.proxyConfigured === true ? "已配置" : "未知";
   return queueAlert({
+    type,
     key: `${connection.id}:${kind}`,
     ...(kind === "quota" ? { connectionId: connection.id, quotaProvider: connection.provider } : {}),
     content: [
