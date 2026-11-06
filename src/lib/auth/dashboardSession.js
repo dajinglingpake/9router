@@ -23,6 +23,28 @@ function loadJwtSecret() {
 
 const SECRET = new TextEncoder().encode(loadJwtSecret());
 
+// Separate signing key: a read-only account token must never authenticate as admin.
+const MY_ACCOUNT_SECRET = crypto.createHmac("sha256", SECRET).update("9router:my-account:v1").digest();
+
+export async function createMyAccountToken(apiKey) {
+  return new SignJWT({ keyDigest: crypto.createHash("sha256").update(apiKey.key).digest("hex") })
+    .setProtectedHeader({ alg: "HS256" })
+    .setAudience("my-account")
+    .setSubject(apiKey.id)
+    .setIssuedAt()
+    .setExpirationTime("30m")
+    .sign(MY_ACCOUNT_SECRET);
+}
+
+export async function verifyMyAccountToken(token) {
+  try {
+    const { payload } = await jwtVerify(token, MY_ACCOUNT_SECRET, { audience: "my-account", algorithms: ["HS256"] });
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 export function shouldUseSecureCookie(request) {
   const forceSecureCookie = process.env.AUTH_COOKIE_SECURE === "true";
   const forwardedProto = request?.headers?.get?.("x-forwarded-proto");

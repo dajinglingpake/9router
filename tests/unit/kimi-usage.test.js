@@ -173,7 +173,8 @@ describe("getUsageForProvider(kimi) auth selection", () => {
     }));
     const usage = await getUsageForProvider({ provider: "kimi", ...credentials });
     const rows = parseQuotaData("kimi", usage);
-    expect(rows.map(row => row.name)).toEqual(["5h", "Monthly (Total)", "Monthly (Code)"]);
+    expect(rows.map(row => row.name)).toEqual(["5h", "Monthly (Total)"]);
+    expect(usage.usageBreakdown.monthlyCodeUsedPercentage).toBeCloseTo(1.04, 5);
     expect(rows[0]).toMatchObject({
       used: expect.closeTo(1.66, 5), total: 100,
       remainingPercentage: expect.closeTo(98.34, 5), resetAt: "2026-11-05T12:37:30.000Z",
@@ -209,7 +210,8 @@ describe("getUsageForProvider(kimi) auth selection", () => {
     const usage = await getUsageForProvider({ provider: "kimi", accessToken: "tok" });
     expect(usage.quotas["5h"].remainingPercentage).toBe(80);
     expect(usage.quotas["Monthly (Total)"].remainingPercentage).toBe(100);
-    expect(usage.quotas["Monthly (Code)"].remainingPercentage).toBe(0);
+    expect(usage.quotas["Monthly (Code)"]).toBeUndefined();
+    expect(usage.usageBreakdown.monthlyCodeUsedPercentage).toBe(100);
   });
 
   it("does not invent a 5h quota when upstream only supplies monthly usage", async () => {

@@ -236,6 +236,8 @@ export async function proxy(request) {
 
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
+    // This exact endpoint authenticates its API key / read-only token in the handler.
+    if (pathname === "/api/my-account") return NextResponse.next();
     if (isPublicApi(pathname)) return NextResponse.next();
     if (await hasValidCliToken(request) || await isAuthenticated(request))
       return NextResponse.next();

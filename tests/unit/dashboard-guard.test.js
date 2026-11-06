@@ -54,6 +54,11 @@ function localRequest(pathname, headers = {}) {
 }
 
 describe("dashboard guard public LLM API access", () => {
+  it("delegates only the exact self-service endpoint to its own authentication", async () => {
+    expect(await proxy(request("/api/my-account"))).toBe(mocks.nextResponse);
+    expect((await proxy(request("/api/my-account/admin"))).status).toBe(401);
+    expect((await proxy(request("/api/providers/client"))).status).toBe(401);
+  });
   it("requires dashboard authentication for downloading account sessions", async () => {
     expect((await proxy(request("/api/providers/account/session-export"))).status).toBe(401);
     mocks.verifyDashboardAuthToken.mockResolvedValue(true);

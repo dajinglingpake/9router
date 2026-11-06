@@ -153,12 +153,18 @@ export async function getKimiUsage(
     }
 
     const quotas = {};
+    const usageBreakdown = {};
     // Current API reports precise used ratios for independent 5h and monthly
     // windows. Prefer these over the rounded, legacy limits representation.
     for (const [key, name] of Object.entries(KIMI_USAGE_CONFIG.quotaNames)) {
       const entry = data?.usages?.[key];
       const ratio = toFiniteNumber(entry?.used_ratio, NaN);
       if (!Number.isFinite(ratio) || ratio < 0) continue;
+      // Code is the coding share of monthly total consumption, not another pool.
+      if (key === "limit_month_code") {
+        usageBreakdown.monthlyCodeUsedPercentage = Math.min(1, ratio) * 100;
+        continue;
+      }
       quotas[name] = makeQuota({
         used: Math.min(1, ratio) * 100,
         total: 100,
@@ -213,7 +219,7 @@ export async function getKimiUsage(
     const planName = getKimiPlanName(membershipLevel) || "Kimi Coding";
 
     if (Object.keys(quotas).length > 0) {
-      return { plan: planName, quotas };
+      return { plan: planName, quotas, usageBreakdown };
     }
 
     return {
