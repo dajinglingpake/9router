@@ -9,6 +9,7 @@ import { loadConnectionUsage, supportsConnectionUsage } from "@/lib/providerUsag
 import { parseQuotaData, getRemainingPercentage } from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers.js";
 import { getModelInfo, getComboModels } from "@/sse/services/model.js";
+import { buildCodexQuotaSummary } from "@/lib/local/codexQuotaSummary.js";
 
 // Shared quotas are available for the desktop launcher's two account pools.
 const SHARED_PROVIDERS = new Set(["codex", "kimi"]);
@@ -76,7 +77,7 @@ function quotaSummary(provider, usage) {
   }));
 }
 
-async function accountSummary(connection, key, sharedIndex) {
+async function accountSummary(connection, key, sharedIndex, snapshots) {
   const shared = !getExclusiveApiKeyIds(connection).includes(key.id);
   const providerName = AI_PROVIDERS[connection.provider]?.name || connection.provider;
   const account = {
@@ -94,6 +95,7 @@ async function accountSummary(connection, key, sharedIndex) {
   }
   try {
     const usage = await loadConnectionUsage(connection, { signal: AbortSignal.timeout(20000) });
+    if (shared && connection.provider === "codex") snapshots.set(connection.id, usage);
     account.quotas = quotaSummary(connection.provider, usage);
     account.plan = typeof usage?.plan === "string" ? usage.plan : null;
     const codeUsed = usage?.usageBreakdown?.monthlyCodeUsedPercentage;
@@ -110,19 +112,31 @@ export async function loadMyAccount(key) {
   const connections = await getProviderConnections();
   const visible = visibleAccounts(connections, key, sharedProviders);
   const counts = {};
+  const snapshots = new Map();
   const accounts = await Promise.all(visible.map(c => {
     const index = counts[c.provider] = (counts[c.provider] || 0) + 1;
-    return accountSummary(c, key, index);
+    return accountSummary(c, key, index, snapshots);
   }));
   // Bindings can change while upstream quota calls are in flight.
   const current = visibleAccounts(await getProviderConnections(), key, sharedProviders);
   const currentIds = new Set(current.map(c => c.id));
   const filtered = accounts.filter(account => currentIds.has(account.id)
     && account.shared === !getExclusiveApiKeyIds(current.find(c => c.id === account.id)).includes(key.id));
+  // Aggregate only still-visible shared accounts, using the quota tracker's calculation.
+  const sharedCodexIds = new Set(filtered.filter(a => a.shared && a.provider === "codex").map(a => a.id));
+  const result = filtered.filter(a => !sharedCodexIds.has(a.id));
+  if (sharedCodexIds.size) {
+    const summary = buildCodexQuotaSummary(visible.filter(c => sharedCodexIds.has(c.id)), snapshots);
+    result.unshift({
+      id: "codex-shared", name: "Codex 共享总额度", provider: "codex", providerName: "Codex",
+      shared: true, active: true, quotas: [], codexSummary: summary,
+      message: summary.accountCount ? null : "该渠道暂不提供额度查询。",
+    });
+  }
   return {
     name: key.name,
     binding: filtered.some(a => !a.shared) ? "dedicated" : "shared",
-    accounts: filtered,
+    accounts: result,
     checkedAt: new Date().toISOString(),
   };
 }

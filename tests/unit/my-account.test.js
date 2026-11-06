@@ -34,7 +34,7 @@ beforeEach(() => {
   getProviderConnections.mockResolvedValue([
     { id: "account-a", provider: "codex", name: "我的账号", exclusiveApiKeyIds: ["key-a"], accessToken: "upstream-secret", email: "private@example.com" },
     { id: "account-b", provider: "kimi", name: "别人的账号", exclusiveApiKeyIds: ["key-b"] },
-    { id: "shared", provider: "codex", name: "共享池的账号" },
+    { id: "shared", provider: "codex", authType: "oauth", name: "共享池的账号" },
   ]);
   loadConnectionUsage.mockResolvedValue({
     plan: "Plus", accessToken: "not-for-client", raw: { secret: "not-for-client" },
@@ -106,10 +106,11 @@ describe("my account data isolation", () => {
     key.id = "unbound";
     const body = await (await GET(request(await viewToken()))).json();
     expect(body.binding).toBe("shared");
-    expect(body.accounts.map(a => a.id)).toEqual(["shared"]);
+    expect(body.accounts.map(a => a.id)).toEqual(["codex-shared"]);
     expect(body.accounts[0].shared).toBe(true);
-    expect(body.accounts[0].name).toContain("共享账号");
+    expect(body.accounts[0].name).toBe("Codex 共享总额度");
     expect(body.accounts[0].name).not.toBe("共享池的账号");
+    expect(body.accounts[0].codexSummary).toMatchObject({ accountCount: 1, sharedAccountCount: 1, dedicatedAccountCount: 0 });
     expect(loadConnectionUsage).toHaveBeenCalledTimes(1);
   });
 
@@ -165,5 +166,91 @@ describe("my account data isolation", () => {
     });
     const body = await (await GET(request(await viewToken()))).json();
     expect(body).toMatchObject({ binding: "shared", accounts: [] });
+  });
+});
+
+describe("my account shared Codex totals", () => {
+  const connection = (id, extra = {}) => ({ id, provider: "codex", authType: "oauth", name: `private-${id}`, ...extra });
+  const usage = (session, weekly, plan = "plus") => ({ plan, quotas: {
+    session: { used: 100 - session, total: 100, windowSeconds: 18000 },
+    weekly: { used: 100 - weekly, total: 100, windowSeconds: 604800 },
+  } });
+
+  it("returns one pool card with the tracker's per-plan totals, without individual accounts or credits", async () => {
+    key.id = "unbound";
+    getProviderConnections.mockResolvedValue([
+      connection("plus-one"), connection("plus-two"), connection("pro"),
+      connection("off", { isActive: false }), connection("dedicated", { exclusiveApiKeyIds: ["key-b"] }),
+      { id: "shared-kimi", provider: "kimi", authType: "oauth" },
+    ]);
+    loadConnectionUsage.mockImplementation(async c => ({
+      ...({ "plus-one": usage(80, 20), "plus-two": usage(40, 80), pro: usage(10, 50, "pro") }[c.id] || {}),
+      raw: { accessToken: "upstream-secret" },
+    }));
+    const body = await (await GET(request(await viewToken()))).json();
+    expect(body.accounts.map(a => a.id)).toEqual(["codex-shared", "shared-kimi"]);
+    const pool = body.accounts[0];
+    expect(pool.quotas).toEqual([]);
+    expect(pool.codexSummary).toMatchObject({ accountCount: 3, sharedAccountCount: 3, dedicatedAccountCount: 0, unknownAccounts: 0 });
+    expect(pool.codexSummary.groups).toHaveLength(2);
+    expect(pool.codexSummary.groups[0]).toMatchObject({
+      key: "shared:plus", accountCount: 2,
+      session: { remainingPercent: 60, equivalentAccounts: expect.closeTo(1.2), knownAccounts: 2 },
+      weekly: { remainingPercent: 50, equivalentAccounts: 1, knownAccounts: 2 },
+    });
+    expect(pool.codexSummary.groups[1]).toMatchObject({ key: "shared:pro", session: { remainingPercent: 10 } });
+    expect(loadConnectionUsage.mock.calls.map(([c]) => c.id)).toEqual(["plus-one", "plus-two", "pro", "shared-kimi"]);
+    for (const secret of ["private-", "plus-one", "plus-two", "upstream-secret", "exclusiveApiKey", "Credits"]) {
+      expect(JSON.stringify(body)).not.toContain(secret);
+    }
+  });
+
+  it("keeps failed and expired quota queries unknown instead of treating them as full or empty", async () => {
+    key.id = "unbound";
+    getProviderConnections.mockResolvedValue([connection("known"), connection("expired"), connection("failed")]);
+    loadConnectionUsage.mockImplementation(async c => {
+      if (c.id === "failed") throw new Error("upstream-secret");
+      const data = usage(80, 60);
+      if (c.id === "expired") data.quotas.session.resetAt = "2000-01-01T00:00:00Z";
+      return data;
+    });
+    const body = await (await GET(request(await viewToken()))).json();
+    const summary = body.accounts[0].codexSummary;
+    expect(summary).toMatchObject({ accountCount: 3, unknownAccounts: 2 });
+    expect(summary.groups.find(g => g.plan === "plus")).toMatchObject({
+      session: { accountCount: 2, knownAccounts: 1, remainingPercent: 80 },
+      weekly: { accountCount: 2, knownAccounts: 2, remainingPercent: 60 },
+    });
+    expect(summary.groups.find(g => g.plan === "unknown")).toMatchObject({
+      session: { knownAccounts: 0, remainingPercent: null }, weekly: { knownAccounts: 0, remainingPercent: null },
+    });
+    expect(JSON.stringify(body)).not.toContain("upstream-secret");
+  });
+
+  it("does not invent a five-hour quota for weekly-only accounts", async () => {
+    key.id = "unbound";
+    getProviderConnections.mockResolvedValue([connection("weekly-only")]);
+    loadConnectionUsage.mockResolvedValue({ plan: "free", quotas: { weekly: { used: 25, total: 100, windowSeconds: 604800 } } });
+    const body = await (await GET(request(await viewToken()))).json();
+    expect(body.accounts[0].codexSummary.groups[0]).toMatchObject({
+      session: { accountCount: 0, knownAccounts: 0, remainingPercent: null },
+      weekly: { accountCount: 1, knownAccounts: 1, remainingPercent: 75 },
+    });
+  });
+
+  it("excludes accounts made private while shared quota queries were running", async () => {
+    key.id = "unbound";
+    getProviderConnections.mockResolvedValue([connection("remains-shared"), connection("rebound")]);
+    loadConnectionUsage.mockImplementation(async c => {
+      getProviderConnections.mockResolvedValue([
+        connection("remains-shared"), connection("rebound", { exclusiveApiKeyIds: ["key-b"] }),
+      ]);
+      return usage(c.id === "rebound" ? 0 : 80, 50);
+    });
+    const body = await (await GET(request(await viewToken()))).json();
+    expect(body.accounts[0].codexSummary).toMatchObject({
+      accountCount: 1, groups: [{ session: { remainingPercent: 80 } }],
+    });
+    expect(JSON.stringify(body)).not.toContain("rebound");
   });
 });

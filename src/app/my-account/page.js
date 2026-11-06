@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import CodexSharedQuotaGroups from "@/shared/components/CodexSharedQuotaGroups";
 
 const names = { "5h": "5 小时额度", Weekly: "每周额度", "Monthly (Total)": "每月总额度", Ratelimit: "速率额度" };
 const button = "rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:opacity-50";
@@ -124,6 +125,9 @@ export default function MyAccountPage() {
               <span className={`rounded-full px-3 py-1 text-xs ${account.active ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200"}`}>{account.shared ? "共享 · 多人共用" : account.active ? "已绑定 · 已启用" : "已绑定 · 已停用"}</span>
             </div>
             {account.message && <p className="mt-5 text-sm text-amber-100">{account.message}</p>}
+            {account.codexSummary && <div className="dark">
+              <CodexSharedQuotaGroups summary={account.codexSummary} />
+            </div>}
             {account.quotas.map((quota, index) => <div key={`${quota.name}-${index}`} className="mt-6">
               <div className="flex items-center justify-between gap-4 text-sm">
                 <span className="text-slate-300">{names[quota.name] || quota.name}</span>
