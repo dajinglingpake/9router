@@ -6,6 +6,7 @@ vi.mock("@/lib/db/repos/apiKeysRepo.js", () => ({ getApiKeyById: vi.fn(), getApi
 vi.mock("@/lib/db/repos/connectionsRepo.js", () => ({ getProviderConnections: vi.fn() }));
 vi.mock("@/lib/providerUsage.js", () => ({ loadConnectionUsage: vi.fn(), supportsConnectionUsage: vi.fn(() => true) }));
 vi.mock("@/sse/utils/clientIp.js", () => ({ extractClientIp: vi.fn(() => "192.0.2.1") }));
+vi.mock("@/sse/services/model.js", () => ({ getModelInfo: vi.fn(), getComboModels: vi.fn() }));
 
 import { getApiKeyById, getApiKeyByValue } from "@/lib/db/repos/apiKeysRepo.js";
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
@@ -13,6 +14,7 @@ import { loadConnectionUsage, supportsConnectionUsage } from "@/lib/providerUsag
 import { extractClientIp } from "@/sse/utils/clientIp.js";
 import { createMyAccountToken, createDashboardAuthToken, verifyDashboardAuthToken } from "@/lib/auth/dashboardSession.js";
 import { GET, POST } from "@/app/api/my-account/route.js";
+import { getModelInfo, getComboModels } from "@/sse/services/model.js";
 
 let key;
 function request(token, method = "GET", query = "") {
@@ -26,6 +28,8 @@ beforeEach(() => {
   getApiKeyByValue.mockImplementation(async value => value === key.key ? key : null);
   getApiKeyById.mockImplementation(async id => id === key.id ? key : null);
   extractClientIp.mockReturnValue("192.0.2.1");
+  getComboModels.mockResolvedValue(null);
+  getModelInfo.mockImplementation(async model => ({ provider: model.split("/")[0] }));
   supportsConnectionUsage.mockReturnValue(true);
   getProviderConnections.mockResolvedValue([
     { id: "account-a", provider: "codex", name: "我的账号", exclusiveApiKeyIds: ["key-a"], accessToken: "upstream-secret", email: "private@example.com" },
@@ -98,11 +102,38 @@ describe("my account data isolation", () => {
     expect(loadConnectionUsage.mock.calls[0][0].id).toBe("account-a");
   });
 
-  it("hides the entire shared pool when there is no dedicated binding", async () => {
+  it("shows shared Codex quota anonymously when there is no dedicated binding", async () => {
     key.id = "unbound";
     const body = await (await GET(request(await viewToken()))).json();
-    expect(body).toMatchObject({ binding: "shared", accounts: [] });
-    expect(loadConnectionUsage).not.toHaveBeenCalled();
+    expect(body.binding).toBe("shared");
+    expect(body.accounts.map(a => a.id)).toEqual(["shared"]);
+    expect(body.accounts[0].shared).toBe(true);
+    expect(body.accounts[0].name).toContain("共享账号");
+    expect(body.accounts[0].name).not.toBe("共享池的账号");
+    expect(loadConnectionUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes shared Kimi beside dedicated Codex, hides other owners and disabled shared accounts", async () => {
+    const connections = await getProviderConnections();
+    getProviderConnections.mockResolvedValue([...connections,
+      { id: "shared-kimi", provider: "kimi", name: "secret shared login", exclusiveApiKeyIds: [] },
+      { id: "off", provider: "kimi", isActive: false },
+    ]);
+    const body = await (await GET(request(await viewToken()))).json();
+    expect(body.accounts.map(a => [a.id, a.shared])).toEqual([["account-a", false], ["shared-kimi", true]]);
+    expect(JSON.stringify(body)).not.toContain("secret shared login");
+  });
+
+  it("restricts shared quota visibility by allowed models and nested combos", async () => {
+    key.id = "unbound";
+    key.access = { restricted: true, allow: [] };
+    expect((await (await GET(request(await viewToken()))).json()).accounts).toEqual([]);
+    key.access.allow = ["KimiCombo"];
+    getComboModels.mockImplementation(async model => model === "KimiCombo" ? ["Nested"] : model === "Nested" ? ["kimi/k3.1-pro", "KimiCombo"] : null);
+    const connections = await getProviderConnections();
+    getProviderConnections.mockResolvedValue([...connections, { id: "shared-kimi", provider: "kimi" }]);
+    const body = await (await GET(request(await viewToken()))).json();
+    expect(body.accounts.map(a => a.id)).toEqual(["shared-kimi"]);
   });
 
   it("supports legacy binding, disabled accounts and partial quota failure without leaking errors", async () => {

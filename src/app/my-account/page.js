@@ -64,8 +64,6 @@ export default function MyAccountPage() {
       void refresh();
     };
     consumeFragment();
-    window.addEventListener("hashchange", consumeFragment);
-    return () => window.removeEventListener("hashchange", consumeFragment);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function login(event) {
@@ -87,7 +85,7 @@ export default function MyAccountPage() {
       <div className="mx-auto max-w-3xl">
         <p className="mb-3 text-sm font-medium tracking-wide text-cyan-300">9ROUTER · 个人用量</p>
         <h1 className="text-3xl font-semibold tracking-normal sm:text-4xl">我的账号与额度</h1>
-        <p className="mt-4 text-sm leading-6 text-slate-400">查看当前 API Key 绑定的账号、剩余额度和重置时间。</p>
+        <p className="mt-4 text-sm leading-6 text-slate-400">查看你的绑定账号与可用共享账号的额度、重置时间。</p>
 
         {!hasSession && (
           <form onSubmit={login} className="mt-8 space-y-4 rounded-2xl border border-slate-700 bg-slate-900 p-6">
@@ -114,15 +112,16 @@ export default function MyAccountPage() {
         )}
         {error && <p role="alert" className="mt-6 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">{error}</p>}
         {result?.binding === "shared" && <section className="mt-6 rounded-2xl border border-slate-700 bg-slate-900 p-6">
-          <h2 className="font-medium">当前没有专属绑定账号</h2>
-          <p className="mt-3 text-sm leading-6 text-slate-400">请求会按管理员设置从共享账号池分配；这里不展示共享池中的账号信息。需要固定账号时，请联系管理员绑定。</p>
+          <h2 className="font-medium">当前使用共享账号池</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-400">请求会按管理员设置分配共享账号，下面的额度由多人共同消耗，不是个人独享余额。需要固定 Codex 账号时，请联系管理员绑定。</p>
         </section>}
+        {result && result.accounts.length === 0 && <p className="mt-6 text-sm text-slate-400">当前没有可展示的账号额度，请联系管理员确认账号和模型权限。</p>}
         <div className="mt-6 space-y-5" aria-live="polite">
           {result?.accounts.map(account => <section key={account.id} className="rounded-2xl border border-slate-700 bg-slate-900 p-6 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div><p className="text-xs text-cyan-300">{account.providerName}{account.plan ? ` · ${account.plan}` : ""}</p>
                 <h2 className="mt-2 break-all text-xl font-semibold">{account.name}</h2></div>
-              <span className={`rounded-full px-3 py-1 text-xs ${account.active ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200"}`}>{account.active ? "已绑定 · 已启用" : "已绑定 · 已停用"}</span>
+              <span className={`rounded-full px-3 py-1 text-xs ${account.active ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-200"}`}>{account.shared ? "共享 · 多人共用" : account.active ? "已绑定 · 已启用" : "已绑定 · 已停用"}</span>
             </div>
             {account.message && <p className="mt-5 text-sm text-amber-100">{account.message}</p>}
             {account.quotas.map((quota, index) => <div key={`${quota.name}-${index}`} className="mt-6">

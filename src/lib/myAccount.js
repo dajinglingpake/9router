@@ -8,6 +8,37 @@ import { createMyAccountToken, verifyMyAccountToken } from "@/lib/auth/dashboard
 import { loadConnectionUsage, supportsConnectionUsage } from "@/lib/providerUsage.js";
 import { parseQuotaData, getRemainingPercentage } from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits/utils.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers.js";
+import { getModelInfo, getComboModels } from "@/sse/services/model.js";
+
+// Shared quotas are available for the desktop launcher's two account pools.
+const SHARED_PROVIDERS = new Set(["codex", "kimi"]);
+
+async function sharedProvidersForKey(key) {
+  if (!key.access?.restricted) return SHARED_PROVIDERS;
+  const providers = new Set();
+  const seen = new Set();
+  async function visit(model) {
+    if (typeof model !== "string" || seen.has(model)) return;
+    seen.add(model);
+    const members = await getComboModels(model, key.id);
+    if (members) {
+      for (const member of members) await visit(member);
+    } else {
+      const info = await getModelInfo(model, key.id);
+      if (!info?.disabled && SHARED_PROVIDERS.has(info?.provider)) providers.add(info.provider);
+    }
+  }
+  for (const model of key.access.allow || []) await visit(model);
+  return providers;
+}
+
+function visibleAccounts(connections, key, sharedProviders) {
+  const bound = connections.filter(c => getExclusiveApiKeyIds(c).includes(key.id));
+  const boundProviders = new Set(bound.map(c => c.provider));
+  const shared = connections.filter(c => sharedProviders.has(c.provider) && !boundProviders.has(c.provider)
+    && c.isActive !== false && getExclusiveApiKeyIds(c).length === 0);
+  return [...bound, ...shared];
+}
 
 function bearer(request) {
   return request.headers.get("authorization")?.match(/^Bearer ([^\s]+)$/i)?.[1] || "";
@@ -45,12 +76,15 @@ function quotaSummary(provider, usage) {
   }));
 }
 
-async function accountSummary(connection) {
+async function accountSummary(connection, key, sharedIndex) {
+  const shared = !getExclusiveApiKeyIds(connection).includes(key.id);
+  const providerName = AI_PROVIDERS[connection.provider]?.name || connection.provider;
   const account = {
     id: connection.id,
-    name: connection.name || connection.displayName || connection.email || "未命名账号",
+    name: shared ? `${providerName} 共享账号 ${sharedIndex}` : connection.name || connection.displayName || connection.email || "未命名账号",
     provider: connection.provider,
-    providerName: AI_PROVIDERS[connection.provider]?.name || connection.provider,
+    providerName,
+    shared,
     active: connection.isActive !== false,
     quotas: [],
     message: null,
@@ -72,16 +106,23 @@ async function accountSummary(connection) {
 }
 
 export async function loadMyAccount(key) {
+  const sharedProviders = await sharedProvidersForKey(key);
   const connections = await getProviderConnections();
-  const bound = connections.filter(c => getExclusiveApiKeyIds(c).includes(key.id));
-  const accounts = await Promise.all(bound.map(accountSummary));
+  const visible = visibleAccounts(connections, key, sharedProviders);
+  const counts = {};
+  const accounts = await Promise.all(visible.map(c => {
+    const index = counts[c.provider] = (counts[c.provider] || 0) + 1;
+    return accountSummary(c, key, index);
+  }));
   // Bindings can change while upstream quota calls are in flight.
-  const current = (await getProviderConnections()).filter(c => getExclusiveApiKeyIds(c).includes(key.id));
+  const current = visibleAccounts(await getProviderConnections(), key, sharedProviders);
   const currentIds = new Set(current.map(c => c.id));
+  const filtered = accounts.filter(account => currentIds.has(account.id)
+    && account.shared === !getExclusiveApiKeyIds(current.find(c => c.id === account.id)).includes(key.id));
   return {
     name: key.name,
-    binding: current.length ? "dedicated" : "shared",
-    accounts: accounts.filter(account => currentIds.has(account.id)),
+    binding: filtered.some(a => !a.shared) ? "dedicated" : "shared",
+    accounts: filtered,
     checkedAt: new Date().toISOString(),
   };
 }
