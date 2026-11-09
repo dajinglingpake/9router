@@ -29,13 +29,14 @@ async function loadExecutor(fetchMock, useProxy = true) {
     vi.stubEnv(key, "");
   }
   if (useProxy) vi.stubEnv("HTTPS_PROXY", "http://proxy.test:3128");
-  // Exercise the real proxyAwareFetch: it captures fetch when imported.
-  vi.stubGlobal("fetch", fetchMock);
+  // Exercise the real proxyAwareFetch with its undici transport mocked.
+  vi.doMock("undici", async () => ({ ...await vi.importActual("undici"), fetch: fetchMock }));
   const { QoderExecutor } = await import("../../open-sse/executors/qoder.js");
   return new QoderExecutor();
 }
 
 afterEach(() => {
+  vi.doUnmock("undici");
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -81,7 +82,18 @@ describe("Qoder signed inference transport", () => {
     expect(result.response.ok).toBe(true);
     await result.response.text();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(!!fetchMock.mock.calls[0][1].dispatcher).toBe(useProxy);
+    const { Agent, ProxyAgent } = await import("undici");
+    expect(fetchMock.mock.calls[0][1].dispatcher).toBeInstanceOf(useProxy ? ProxyAgent : Agent);
+  });
+
+  it.each([true, false])("does not replay signed requests after a stale-socket error with proxy=%s", async (useProxy) => {
+    const fetchMock = vi.fn().mockRejectedValue(Object.assign(new TypeError("response lost"), {
+      cause: { code: "ECONNRESET" },
+    }));
+    const executor = await loadExecutor(fetchMock, useProxy);
+
+    await expect(executor.execute(request)).rejects.toThrow("response lost");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("preserves caller cancellation without replaying the request", async () => {

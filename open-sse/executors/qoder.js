@@ -802,7 +802,7 @@ export class QoderExecutor extends BaseExecutor {
       try {
         response = await proxyAwareFetch(
           url,
-          { method: "POST", headers: attemptHeadersFull, body: attemptEncoded, signal: mergedSignal },
+          { method: "POST", headers: attemptHeadersFull, body: attemptEncoded, signal: mergedSignal, retryOnStaleSocket: false },
           // A failed proxy request may already have reached Qoder. Replaying
           // the same COSY signature directly reuses its requestId and returns
           // 403/code 103. Let the caller retry through execute() with fresh signing.

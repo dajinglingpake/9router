@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch: (url, options) => global.fetch(url, options),
+}));
+
 describe("xai/oauth service", () => {
   beforeEach(() => {
     vi.resetModules();
