@@ -9,7 +9,7 @@ import { clearSessionBinding, getSessionBinding, bindSession } from "../services
 import * as log from "../utils/logger.js";
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
 import { preferLeastLoadedAccounts, selectBalancedAccount } from "./accountBalancing.js";
-import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel } from "./quotaRouting.js";
+import { loadRoutingQuotas, getAccountQuotaState, resolveQuotaRoutingModel, formatCodexQuotaDetails } from "./quotaRouting.js";
 import { isCodexPoolQuotaLow } from "./quotaModelSwitch.js";
 import { getAccountOverloadWarnings } from "@/lib/db/repos/accountOverloadWarningsRepo.js";
 import { getApiKeyBinding, bindApiKey, getApiKeyBindingCounts } from "./apiKeyRouting.js";
@@ -72,7 +72,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const sessionBinding = await getSessionBinding(sessionKey, providerId);
     const apiKeyKey = codexPolicy?.apiKeyAffinity ? options.apiKeyRoutingKey : null;
     let binding = apiKeyKey ? await getApiKeyBinding(apiKeyKey) : sessionBinding;
-    const bindingSubject = apiKeyKey ? "当前 API Key" : "当前会话";
+    const bindingSubject = apiKeyKey ? "当前 API Key " : "当前会话";
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
@@ -139,7 +139,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // existing binding. Busy or cooling accounts keep their sessions.
     if (binding && (
       excludeSet.has(binding.connectionId)
-      || ((apiKeyKey || codexPolicy?.quotaFailover) && quotaStates.get(binding.connectionId)?.exhausted)
+      || (codexPolicy?.quotaFailover && quotaStates.get(binding.connectionId)?.exhausted)
     )) binding = null;
 
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
@@ -186,7 +186,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (binding && !availableConnections.some((item) => item.id === binding.connectionId)) {
       const bound = connections.find((item) => item.id === binding.connectionId);
       const quota = quotaStates.get(binding.connectionId);
-      if (quota?.exhausted) return { sessionUnavailable: true, lastErrorCode: 429, lastError: `${bindingSubject}绑定的账号额度已用尽。`, retryAfter: quota.retryAt };
+      if (quota?.exhausted) return {
+        sessionUnavailable: true, lastErrorCode: 429, lastError: `${bindingSubject}绑定的账号额度已用尽，已保留原账号。`,
+        quotaDetails: formatCodexQuotaDetails(modelFor(bound), routingQuotas.get(bound.id), quota.retryAt), retryAfter: quota.retryAt,
+      };
       return { sessionUnavailable: true, lastErrorCode: Number(bound?.errorCode) || 503, lastError: bound?.lastError || `${bindingSubject}绑定的账号暂不可用。`, retryAfter: coolingAccounts.get(binding.connectionId) || getModelLockUntil(bound, modelFor(bound)) };
     }
 
@@ -204,6 +207,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const exhausted = [...quotaStates.values()].filter(quota => quota?.exhausted);
       if (exhausted.length) return {
         allRateLimited: true, lastErrorCode: 429, lastError: "可用账号额度已用尽。",
+        ...(connections.length === 1 && { quotaDetails: formatCodexQuotaDetails(modelFor(connections[0]), routingQuotas.get(connections[0].id)) }),
         retryAfter: exhausted.map(quota => quota.retryAt).filter(Boolean).sort()[0] || null,
       };
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.

@@ -22,7 +22,7 @@ import {
 import * as log from "../utils/logger.js";
 import { getRequestId, rejectChatRequest, buildConcurrencyMetadata, getProviderCapacityState } from "./requestContext.js";
 import { getCodexRoutingPolicy } from "./routingPolicy.js";
-import { isCodexQuotaError, getAccountQuotaState } from "./quotaRouting.js";
+import { isCodexQuotaError, getAccountQuotaState, loadCodexQuotaSnapshot, formatCodexQuotaDetails } from "./quotaRouting.js";
 import { handleLocalCombo } from "./comboRouting.js";
 import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from "../services/keyAccess.js";
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
@@ -79,7 +79,9 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     ? getApiKeyRoutingKey(provider, clientRawRequest?.apiKeyRecordId, apiKey || extractClientApiKey(request))
     : null;
   const stickyBinding = !!(trial || apiKeyRoutingKey || sessionKey);
-  const quotaFailover = !!(apiKeyRoutingKey || codexPolicy?.quotaFailover);
+  const quotaFailover = codexPolicy?.quotaFailover;
+  const quotaMessage = stickyBinding ? `${apiKeyRoutingKey ? "当前 API Key " : "当前会话"}绑定的账号额度已用尽，已保留原账号。`
+    : "本次请求使用的账号额度已用尽，未切换账号。";
   // Automatic quota downgrades must respect the key's model allow list.
   const fallbackModels = codexPolicy?.quotaModelSwitch
     ? await filterAdapterModels(await getKeyAccessContext(request), [`${provider}/${codexPolicy.quotaFallbackModel}`], [])
@@ -93,7 +95,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
     if (!stickyBinding && excludedAccounts.size > 0) return errorResponse(status, appendChatErrorHint(status, credentials?.lastError || "暂无可用账号。", { source: "router" }), clientRawRequest?.upstreamErrorHeaders);
-    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, clientRawRequest, clientRawRequest?.upstreamErrorHeaders);
+    return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, clientRawRequest, clientRawRequest?.upstreamErrorHeaders, credentials?.quotaDetails);
   }
 
   model = credentials.routingModel || modelByConnection[credentials.connectionId] || model;
@@ -216,11 +218,13 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     }
     const liveQuota = codexPolicy && liveConnection ? getAccountQuotaState(liveConnection, model, null, codexPolicy) : null;
     if (liveQuota?.exhausted) {
-      if (!stickyBinding || quotaFailover) {
+      if (quotaFailover) {
         excludedAccounts.add(credentials.connectionId);
         return retry();
       }
-      return rejectAccountCooldown(429, "当前会话绑定的账号额度已用尽。", liveQuota.retryAt, clientRawRequest);
+      const usage = await loadCodexQuotaSnapshot(liveConnection);
+      const { retryAt } = getAccountQuotaState(liveConnection, model, usage, codexPolicy);
+      return rejectAccountCooldown(429, quotaMessage, retryAt, clientRawRequest, null, formatCodexQuotaDetails(model, usage, retryAt));
     }
     if (isModelLockActive(liveConnection, model)) {
       if (!stickyBinding && Number(liveConnection?.errorCode) !== HTTP_STATUS.SERVICE_UNAVAILABLE) {
@@ -343,22 +347,31 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     if (!(provider === "antigravity" && quotaResetMs)) {
       ({ shouldFallback, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs));
     }
-    if (stickyBinding && quotaFailover && isCodexQuotaError(provider, result.status, result.error)) {
-      excludedAccounts.add(credentials.connectionId);
-      return retry(result.response);
-    }
-    if (!stickyBinding && shouldFallback && result.status !== HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth") {
+    const quotaError = codexPolicy && isCodexQuotaError(provider, result.status, result.error);
+    const retryOtherAccount = quotaError ? quotaFailover
+      : !stickyBinding && shouldFallback && result.status !== HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth";
+    if (retryOtherAccount) {
       excludedAccounts.add(credentials.connectionId);
       return retry(result.response);
     }
     await result.response?.body?.cancel().catch(() => {});
+    let quotaDetails;
+    let retryMs = result.status === HTTP_STATUS.SERVICE_UNAVAILABLE ? cooldownMs : 0;
+    // A request can consume the last remaining quota after account selection.
+    // Read the same snapshot as the quota dashboard before reporting balances.
+    if (quotaError) {
+      const usage = await loadCodexQuotaSnapshot(liveConnection);
+      const snapshotRetry = getAccountQuotaState(liveConnection, model, usage, codexPolicy).retryAt;
+      const retryAt = Math.max(new Date(snapshotRetry).getTime() || 0, Number(resetsAtMs) || 0);
+      retryMs = retryAt - Date.now();
+      quotaDetails = `${quotaMessage}\n${formatCodexQuotaDetails(model, usage, retryAt)}`;
+    }
+    const seconds = Math.max(0, Math.ceil(retryMs / 1000));
     const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY,
       appendChatErrorHint(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "账号请求失败。", {
-        source: "upstream", retryAfterSeconds: result.status === HTTP_STATUS.SERVICE_UNAVAILABLE ? cooldownMs / 1000 : 0,
+        source: "upstream", retryAfterSeconds: seconds, quotaDetails,
       }), clientRawRequest.upstreamErrorHeaders);
-    if (result.status === HTTP_STATUS.SERVICE_UNAVAILABLE && cooldownMs > 0) {
-      response.headers.set("Retry-After", String(Math.ceil(cooldownMs / 1000)));
-    }
+    if (seconds) response.headers.set("Retry-After", String(seconds));
     return response;
   } catch (error) {
     if (stickyBinding && Date.now() >= deadline && !request?.signal?.aborted) {
@@ -385,9 +398,9 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   }
 }
 
-function rejectAccountCooldown(status, message, retryAfter, clientRawRequest, extraHeaders = null) {
+function rejectAccountCooldown(status, message, retryAfter, clientRawRequest, extraHeaders = null, quotaDetails = null) {
   const seconds = Math.max(0, Math.ceil((new Date(retryAfter).getTime() - Date.now()) / 1000)) || 0;
-  const response = rejectChatRequest(status, message, clientRawRequest, "router", extraHeaders, { retryAfterSeconds: seconds });
+  const response = rejectChatRequest(status, message, clientRawRequest, "router", extraHeaders, { retryAfterSeconds: seconds, quotaDetails });
   if (seconds) response.headers.set("Retry-After", String(seconds));
   return response;
 }

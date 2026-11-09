@@ -1,4 +1,5 @@
 import { loadConnectionUsage } from "@/lib/providerUsage.js";
+import { remainingFraction } from "@/lib/local/codexQuotaSummary.js";
 import { getProviderConnectionById, updateProviderConnection, getSettings } from "@/lib/localDb";
 import { getProviderModels } from "open-sse/config/providerModels.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -13,6 +14,26 @@ function quotaFamily(model) {
 
 function quotaLockKey(model) {
   return `modelLock_codex-quota-${quotaFamily(model)}`;
+}
+
+const beijingTime = date => date.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+
+export function formatCodexQuotaDetails(model, usage, retryAt = null, now = Date.now()) {
+  const family = quotaFamily(model);
+  const prefix = family === "normal" ? "" : `${family}_`;
+  const lines = [["session", "5 小时额度"], ["weekly", "每周额度"]].map(([period, label]) => {
+    const quota = usage?.quotas?.[prefix + period];
+    if (quota?.sharedWith === prefix + "weekly") return `${label}：与每周额度共用。`;
+    const remaining = remainingFraction(quota, now);
+    const balance = quota?.unlimited ? "不限量" : remaining === null ? "剩余未知" : `剩余 ${(remaining * 100).toFixed(1)}%`;
+    const reset = new Date(quota?.resetAt);
+    const time = reset.getTime() > now ? beijingTime(reset) : "未知";
+    return `${label}：${balance}；重置时间：${time}。`;
+  });
+  // Retry-After or a local cooldown does not identify either quota window's reset.
+  const retry = new Date(retryAt);
+  if (retry.getTime() > now) lines.push(`建议重试时间：${beijingTime(retry)}。`);
+  return lines.join("\n");
 }
 
 export async function loadCodexQuotaSnapshot(connection, { force = false } = {}) {
@@ -43,9 +64,9 @@ export function getAccountQuotaState(connection, model, usage, policy, now = Dat
   const windows = ["session", "weekly"].flatMap(name => {
     const quota = usage?.quotas?.[`${prefix}${name}`];
     if (!quota || quota.unlimited || !Number.isFinite(quota.used) || !Number.isFinite(quota.total) || quota.total <= 0) return [];
-    const resetMs = new Date(quota.resetAt).getTime();
+    const resetMs = quota.resetAt ? new Date(quota.resetAt).getTime() : NaN;
     if (Number.isFinite(resetMs) && resetMs <= now) return [];
-    return [{ name, used: Math.max(0, Math.min(100, quota.used / quota.total * 100)), resetAt: quota.resetAt }];
+    return [{ name, used: Math.max(0, Math.min(100, quota.used / quota.total * 100)), resetAt: Number.isFinite(resetMs) ? new Date(resetMs).toISOString() : null }];
   });
   const exhaustedWindows = windows.filter(window => window.used >= 100);
   const lockUntil = connection?.[quotaLockKey(model)];

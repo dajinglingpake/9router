@@ -61,8 +61,8 @@ export function appendChatErrorHint(status, message, options = {}) {
   const category = classifyError(Number(status), message || "", options);
   if (!message || !HINTS[category]) return message;
   const seconds = Number(options.retryAfterSeconds);
-  const wait = RETRYABLE.has(category) && Number.isFinite(seconds) && seconds > 0
+  const wait = !options.quotaDetails && RETRYABLE.has(category) && Number.isFinite(seconds) && seconds > 0
     ? ` 请在 ${Math.ceil(seconds)} 秒后重试。` : "";
   // Keep the original error verbatim; only append a separate explanation.
-  return `${message}\n提示：${HINTS[category]}${wait}`;
+  return `${message}\n提示：${options.quotaDetails || HINTS[category]}${wait}`;
 }

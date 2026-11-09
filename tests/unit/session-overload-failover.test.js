@@ -3,13 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { upstream, refresh } = vi.hoisted(() => ({ upstream: vi.fn(), refresh: vi.fn() }));
+const { upstream, refresh, usage } = vi.hoisted(() => ({ upstream: vi.fn(), refresh: vi.fn(), usage: vi.fn() }));
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: upstream }));
 vi.mock("@/sse/services/tokenRefresh.js", () => ({
   checkAndRefreshToken: refresh,
   updateProviderCredentials: vi.fn(),
 }));
-vi.mock("@/lib/providerUsage.js", () => ({ loadConnectionUsage: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/lib/providerUsage.js", () => ({ loadConnectionUsage: usage }));
 vi.mock("@/sse/utils/logger.js", () => ({
   debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), maskKey: () => "test-key",
 }));
@@ -27,6 +27,7 @@ beforeEach(async () => {
   delete global._dbAdapter;
   vi.resetModules();
   upstream.mockReset();
+  usage.mockReset().mockResolvedValue(null);
   refresh.mockReset().mockImplementation(async (_provider, credentials) => credentials);
   db = await import("@/lib/db/index.js");
   await db.initDb();
@@ -424,7 +425,6 @@ describe("stable account bindings during overload", () => {
   it.each([
     [400, '[400]: {"error":{"message":"Missing required parameter: \'input[37].status\'.","code":"missing_required_parameter"}}', "请求参数或协议格式错误。"],
     [429, "rate_limit_exceeded", "请求频率受限。"],
-    [429, "usage_limit_reached", "账号额度或余额不足。"],
   ])("appends only the matching hint to a bound session's %i error", async (status, message, hint) => {
     const a = await account("a");
     await sessions.bindSession(sessionKey(), "codex", a.id);
@@ -484,6 +484,89 @@ describe("stable account bindings during overload", () => {
     expect(await (await send()).json()).toEqual({ ok: true });
     expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual([a.id, b.id]);
     expect((await sessions.getSessionBinding(sessionKey(), "codex")).connectionId).toBe(b.id);
+  });
+
+  it.each(["selection", "queued", "upstream"])("keeps an API Key on its account and reports both windows on %s exhaustion", async stage => {
+    const a = await account("a");
+    await account("b");
+    await db.updateSettings({ localCodexRouting: { apiKeyAffinity: true, quotaFailover: false } });
+    const { bindApiKey, getApiKeyBinding, getApiKeyRoutingKey } = await import("@/sse/local/apiKeyRouting.js");
+    const key = getApiKeyRoutingKey("codex", "test-caller");
+    await bindApiKey(key, "codex", a.id);
+    const sessionReset = "2030-01-01T00:00:00Z", weeklyReset = "2030-01-04T05:30:00Z";
+    let depleted = stage === "selection";
+    usage.mockImplementation(async c => ({ quotas: {
+      session: { used: c.id === a.id && depleted ? 100 : 15, total: 100, resetAt: sessionReset },
+      weekly: { used: c.id === a.id ? 27 : 2, total: 100, resetAt: weeklyReset },
+    } }));
+    if (stage === "queued") {
+      const { markCodexQuotaUnavailable } = await import("@/sse/local/quotaRouting.js");
+      refresh.mockImplementationOnce(async (_, credentials) => {
+        depleted = true;
+        await markCodexQuotaUnavailable(a.id, 429, "usage_limit_reached", "codex", MODEL, Date.parse(sessionReset));
+        return credentials;
+      });
+    }
+    upstream.mockImplementation(async () => {
+      depleted = true;
+      return { success: false, status: 429, error: "usage_limit_reached", resetsAtMs: Date.parse(sessionReset), response: Response.json({}, { status: 429 }) };
+    });
+    for (const id of [null, "another-chat"]) {
+      const response = await send(id);
+      expect(response.status).toBe(429);
+      const message = (await response.json()).error.message;
+      expect(message).toContain("当前 API Key 绑定的账号额度已用尽，已保留原账号。");
+      expect(message).toContain("5 小时额度：剩余 0.0%；重置时间：2030/1/1 08:00:00。");
+      expect(message).toContain("每周额度：剩余 73.0%；重置时间：2030/1/4 13:30:00。");
+      expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+      expect((await getApiKeyBinding(key)).connectionId).toBe(a.id);
+    }
+    expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual(stage === "upstream" ? [a.id] : []);
+  });
+
+  it.each(["selection", "upstream"])("rebinds an API Key on %s exhaustion when failover is enabled", async stage => {
+    const a = await account("a"), b = await account("b");
+    await db.updateSettings({ localCodexRouting: { apiKeyAffinity: true, quotaFailover: true } });
+    const { bindApiKey, getApiKeyBinding, getApiKeyRoutingKey } = await import("@/sse/local/apiKeyRouting.js");
+    const key = getApiKeyRoutingKey("codex", "test-caller");
+    await bindApiKey(key, "codex", a.id);
+    if (stage === "selection") usage.mockImplementation(async c => ({ quotas: {
+      weekly: { used: c.id === a.id ? 100 : 20, total: 100, resetAt: "2030-01-04T05:30:00Z" },
+    } }));
+    else upstream.mockResolvedValueOnce({ success: false, status: 429, error: "usage_limit_reached", response: Response.json({}, { status: 429 }) });
+    upstream.mockImplementation(() => success());
+    expect(await (await send(null)).json()).toEqual({ ok: true });
+    expect(upstream.mock.calls.map(([args]) => args.connectionId)).toEqual(stage === "upstream" ? [a.id, b.id] : [b.id]);
+    expect((await getApiKeyBinding(key)).connectionId).toBe(b.id);
+  });
+
+  it("does not present a local retry cooldown as either quota window's reset time", async () => {
+    const a = await account("a");
+    await sessions.bindSession(sessionKey(), "codex", a.id);
+    upstream.mockResolvedValue({ success: false, status: 429, error: "usage_limit_reached", response: Response.json({}, { status: 429 }) });
+    for (let i = 0; i < 2; i++) {
+      const response = await send();
+      const message = (await response.json()).error.message;
+      expect(message).toContain("5 小时额度：剩余未知；重置时间：未知");
+      expect(message).toContain("每周额度：剩余未知；重置时间：未知");
+      if (i === 1) expect(message).toContain("建议重试时间：");
+    }
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
+  it("reports a shared weekly limit without silently retrying a stateless request on another account", async () => {
+    await account("a"); await account("b");
+    const weekly = { used: 100, total: 100, resetAt: null };
+    upstream.mockImplementationOnce(async () => {
+      usage.mockResolvedValue({ quotas: { session: { ...weekly, sharedWith: "weekly" }, weekly } });
+      return { success: false, status: 429, error: "usage_limit_reached", response: Response.json({}, { status: 429 }) };
+    });
+    const response = await send(null);
+    expect(response.status).toBe(429);
+    const message = (await response.json()).error.message;
+    expect(message).toContain("5 小时额度：与每周额度共用。");
+    expect(message).toContain("每周额度：剩余 0.0%；重置时间：未知。");
+    expect(upstream).toHaveBeenCalledOnce();
   });
 
   it("only migrates to accounts that have the requested model enabled", async () => {

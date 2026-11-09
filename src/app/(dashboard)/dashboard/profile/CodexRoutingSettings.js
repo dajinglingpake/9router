@@ -112,10 +112,8 @@ export default function CodexRoutingSettings() {
             onChange={allowCredits => setConfig({ ...config, allowCredits })} />
         </label>
         <label className="flex items-center justify-between gap-4 min-h-11">
-          <div className="space-y-1"><p className="text-sm font-medium">额度用完后，自动换账号继续会话</p><p className="text-sm text-text-muted leading-relaxed">{config.apiKeyAffinity
-            ? "按 API Key 固定账号时始终自动换号，无需单独开启。"
-            : "开启：有其他可用账号时，自动换号继续。关闭：保留原账号，提示额度已用尽。"}</p></div>
-          <Toggle disabled={busy || config.apiKeyAffinity} checked={config.apiKeyAffinity || config.quotaFailover} ariaLabel="额度用完后，自动换账号继续会话"
+          <div className="space-y-1"><p className="text-sm font-medium">额度用完后，自动换账号继续会话</p><p className="text-sm text-text-muted leading-relaxed">关闭：保留原账号，在会话中提示 5 小时和每周额度各剩多少、何时重置。开启：有其他可用账号时自动换号继续。两种绑定方式都遵守此设置。</p></div>
+          <Toggle disabled={busy} checked={config.quotaFailover} ariaLabel="额度用完后，自动换账号继续会话"
             onChange={quotaFailover => setConfig({ ...config, quotaFailover })} />
         </label>
         <label className="flex items-center justify-between gap-4 min-h-11">

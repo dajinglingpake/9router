@@ -1,7 +1,7 @@
 import { CODEX_QUOTA_WINDOW_SECONDS } from "open-sse/config/local/codexQuotaWindows.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
-function remainingFraction(quota, now) {
+export function remainingFraction(quota, now) {
   if (!quota || quota.unlimited || !Number.isFinite(quota.used) || quota.used < 0 || !Number.isFinite(quota.total) || quota.total <= 0) return null;
   if (quota.resetAt && new Date(quota.resetAt).getTime() <= now) return null;
   return Math.max(0, Math.min(1, (quota.total - quota.used) / quota.total));
