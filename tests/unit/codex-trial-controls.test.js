@@ -52,13 +52,35 @@ function panel(status = "success") {
     : node?.props ? typeof node.type === "function" ? walk(node.type(node.props)) : [node, ...walk(node.props.children)] : [];
   const nodes = () => { cursor = 0; return walk(mod.exports.default()); };
   return {
-    result, data,
+    result, data, nodes,
     button: label => nodes().find(node => node.type === "button" && node.props.children === label),
     selectModels: models => nodes().find(node => node.type === "trial-models").props.onChange(models),
   };
 }
 
 describe("account trial controls", () => {
+  it.each(["single", "filtered"])("removes the last result card after %s deletion and can test that account again", async mode => {
+    const ui = panel();
+    const account = ui.data.accounts[0];
+    ui.selectModels([{ provider: account.provider, model: ui.result.model, effort: "max" }]);
+    expect(ui.nodes().filter(node => node.type === "article")).toHaveLength(1);
+    const empty = { ...ui.data, accounts: [{ ...account, results: [], result: null }] };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ deleted: [ui.result.id] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => empty });
+    if (mode === "single") await ui.button("删除结果").props.onClick();
+    else {
+      ui.nodes().find(node => node.type === "button" && String(node.props.children).includes("删除筛选结果")).props.onClick();
+      await ui.nodes().find(node => node.type === "confirm-dialog" && node.props.isOpen).props.onConfirm();
+    }
+    expect(ui.nodes().filter(node => node.type === "article")).toHaveLength(0);
+    const picker = ui.nodes().find(node => node.type === "select" && node.props["aria-label"] === "测试账号");
+    picker.props.onChange({ target: { value: account.id } });
+    const start = ui.button("测试此账号");
+    expect(start.props.disabled).toBeFalsy();
+    await start.props.onClick();
+    expect(JSON.parse(fetch.mock.calls.find(([, options]) => options?.method === "POST")[1].body)).toMatchObject({ ids: [account.id] });
+  });
+
   it("retests a historical model while the top form selects another provider", async () => {
     const ui = panel();
     expect(ui.button("重测此模型").props.disabled).toBe(false);

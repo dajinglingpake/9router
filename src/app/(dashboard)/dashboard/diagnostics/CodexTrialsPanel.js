@@ -39,7 +39,7 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onStop, onDe
   const selectedActive = account.results?.some(result => active(result) && selectedModels.some(item => item.model === result.model));
   const cooling = result?.status === "running" && result.cooldownUntil > now;
   const [status, color] = cooling ? ["冷却中", "text-amber-700 bg-amber-500/10 dark:text-amber-300"]
-    : states[result?.status] || ["未测试", "text-text-muted bg-surface-2"];
+    : states[result.status] || ["状态未知", "text-text-muted bg-surface-2"];
   const duration = result?.status === "running" && result.startedAt ? Math.max(0, now - new Date(result.startedAt).getTime()) : result?.elapsedMs;
   return <article className={`${panel} min-w-0 overflow-hidden`}>
     <div className="flex items-start justify-between gap-3 p-4">
@@ -86,18 +86,15 @@ function AccountCard({ account, busy, deleting, models, now, onRun, onStop, onDe
         <Metric label="HTML 行数" danger={lowMetrics.includes("htmlLines")}>{result?.hasHtml ? number(result.htmlLines) : "—"}</Metric>
       </dl>
       <div className="mt-4 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted">
-        {!result && <span>使用上方所选模型</span>}
-        {result && <>
           <button type="button" className={`min-h-9 cursor-pointer underline decoration-dotted underline-offset-4 hover:text-primary ${result.cliErrors ? "text-red-600 dark:text-red-400" : ""}`}
             title="查看 Codex 执行时的报错与重试提示" onClick={() => onInspect(account, "cli-errors")}>CLI 报错 {result.cliErrors || 0} 次 ↗</button>
           <button type="button" className="min-h-9 cursor-pointer text-primary underline decoration-dotted underline-offset-4"
             title="查看本轮测试的成功、失败及重试请求" onClick={() => onInspect(account, "requests")}>本轮请求 {result.requests || 0} 次 ↗</button>
-        </>}
       </div>
       {result?.finishedAt && <p className="mt-1 text-[11px] text-text-muted">{new Date(result.finishedAt).toLocaleString("zh-CN")}</p>}
       {result && result.routerStatsVersion !== 3 && <p className="mt-1 text-[11px] text-text-muted">旧记录的中转错误计数需重新测试后更新。</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" disabled={busy || active(result) || !canRetest || (!result && !selectedModels.length)} title={!canRetest ? "此账号当前未开放该模型" : undefined} icon="play_arrow" onClick={() => onRun(account, result)}>{result ? "重测此模型" : "测试此账号"}</Button>
+        <Button size="sm" variant="secondary" disabled={busy || active(result) || !canRetest} title={!canRetest ? "此账号当前未开放该模型" : undefined} icon="play_arrow" onClick={() => onRun(account, result)}>重测此模型</Button>
         {active(result) && <Button size="sm" variant="danger" icon="stop" disabled={deleting || result.stopping}
           onClick={() => onStop(result)}>{result.stopping ? "正在停止…" : result.status === "queued" ? "取消排队" : "停止此测试"}</Button>}
         {result && account.firstResult && selectedModels.length > 0 && <Button size="sm" variant="ghost" disabled={busy || selectedActive} onClick={() => onRun(account)}>测试所选模型</Button>}
@@ -121,6 +118,7 @@ export default function CodexTrialsPanel() {
   const [modelsLoading, setModelsLoading] = useState(true);
   const [prompt, setPrompt] = useState(CODEX_TRIAL_PROMPT);
   const [modelSelections, setModels] = useState(null);
+  const [targetId, setTargetId] = useState("");
   const [parallel, setParallel] = useState(CODEX_TRIAL_PARALLEL);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
@@ -245,9 +243,10 @@ export default function CodexTrialsPanel() {
   const accounts = data?.accounts || [];
   const supportsModel = (account, item) => item.provider === account.provider && (item.provider !== "codex"
     || providers.find(provider => provider.id === "codex")?.models.find(model => model.id === item.model)?.connectionIds?.includes(account.id));
-  const selectedAccounts = accounts.filter(account => models.some(item => supportsModel(account, item)));
-  const jobCount = models.reduce((count, item) => count + accounts.filter(account => supportsModel(account, item)).length, 0);
-  const cards = accounts.filter(account => selectedAccounts.includes(account) || account.results?.length).flatMap(account => (account.results?.length ? account.results : [account.result || null])
+  const eligibleAccounts = accounts.filter(account => models.some(item => supportsModel(account, item)));
+  const selectedAccounts = targetId ? eligibleAccounts.filter(account => account.id === targetId) : eligibleAccounts;
+  const jobCount = models.reduce((count, item) => count + selectedAccounts.filter(account => supportsModel(account, item)).length, 0);
+  const cards = accounts.flatMap(account => account.results
     .map((result, index) => ({ ...account, result, firstResult: index === 0 })));
   const success = cards.filter(account => account.result?.status === "success").length;
   const failures = cards.filter(account => ["error", "interrupted"].includes(account.result?.status)).length;
@@ -278,24 +277,31 @@ export default function CodexTrialsPanel() {
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-text-muted">{selectedAccounts.length} 个账号 · {models.length} 组供应商 / 模型 · 共 {jobCount} 项测试</p>
         <div className="flex flex-wrap items-end gap-3">
+          <label className="flex min-w-0 max-w-full flex-col gap-1 text-sm">测试账号
+            <select aria-label="测试账号" className={`${control} sm:max-w-60`} value={targetId} disabled={submitting} onChange={event => setTargetId(event.target.value)}>
+              <option value="">全部匹配账号</option>
+              {targetId && !selectedAccounts.length && <option value={targetId} disabled>所选账号不适用于当前模型</option>}
+              {eligibleAccounts.map(account => <option key={account.id} value={account.id}>{account.providerName} · {account.name}</option>)}
+            </select>
+          </label>
           <label className="flex items-center gap-2 text-sm" htmlFor="codex-trial-parallel">并发数
             <input id="codex-trial-parallel" type="number" min={1} max={CODEX_TRIAL_MAX_PARALLEL} step={1}
               value={data?.running ? data.parallel ?? parallel : parallel} onChange={event => setParallel(event.target.value === "" ? "" : Number(event.target.value))}
               disabled={data?.running || submitting} aria-invalid={!validParallel} aria-describedby="codex-trial-parallel-help" className={`${control} !w-20`} />
           </label>
           {data?.running && <Button variant="danger" size="lg" disabled={submitting} icon="stop" onClick={() => submit({ action: "stop" })}>停止全部测试</Button>}
-          <Button size="lg" icon="play_arrow" loading={submitting} disabled={busy || !selectedAccounts.length || !prompt.trim() || !models.length || models.some(item => !item.model.trim())} onClick={() => run()}>一键测试所选模型</Button>
+          <Button size="lg" icon="play_arrow" loading={submitting} disabled={busy || !selectedAccounts.length || !models.length || models.some(item => !item.model.trim())} onClick={() => selectedAccounts.length && run(targetId ? selectedAccounts[0] : undefined)}>{targetId ? "测试此账号" : "一键测试所选模型"}</Button>
         </div>
       </div>
       <p id="codex-trial-parallel-help" className={`mt-3 text-xs ${validParallel ? "text-text-muted" : "text-red-600 dark:text-red-400"}`}>
         {validParallel ? `最多同时执行 ${data?.running ? data.parallel ?? parallel : parallel} 项，完成一项后自动补下一项。其他测试可随时加入，满额时排队；同一账号仍遵守已有的并发限制。` : `请输入 1–${CODEX_TRIAL_MAX_PARALLEL} 之间的整数。`}
       </p>
-      <p className="mt-4 text-xs leading-5 text-text-muted">每行可选择不同供应商，同时测试各自的全部账号（含禁用账号）。测试不设固定总时限，可随时手动停止；停止或报错时，已写出的作品仍可预览和下载，并标记为未完成。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
+      <p className="mt-4 text-xs leading-5 text-text-muted">可测试全部匹配账号（含禁用账号），也可只选一个账号。测试不设固定总时限，可随时手动停止；停止或报错时，已写出的作品仍可预览和下载，并标记为未完成。测试使用账号额度，模型需支持工具调用以生成文件；CLI 仅在测试期间运行。</p>
     </section>
     {(error || readError || data?.cli?.error) && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">{error || readError || data.cli.error}</p>}
     {skippedNotice && <p role="alert" className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-300">{skippedNotice}</p>}
     <div className="flex flex-wrap items-center justify-between gap-4">
-      <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite"><span className="text-text-muted">全部 <b className="text-text-main">{accounts.length}</b></span><span className="text-emerald-700 dark:text-emerald-400">已生成 {success}</span><span className="text-red-600 dark:text-red-400">降智表现 {degraded}</span><span className="text-red-600 dark:text-red-400">失败 {failures}</span>{running > 0 && <span className="text-blue-600 dark:text-blue-400">执行中 {running}</span>}{queued > 0 && <span className="text-text-muted">排队中 {queued}</span>}</p>
+      <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-live="polite"><span className="text-text-muted">全部结果 <b className="text-text-main">{cards.length}</b></span><span className="text-emerald-700 dark:text-emerald-400">已生成 {success}</span><span className="text-red-600 dark:text-red-400">降智表现 {degraded}</span><span className="text-red-600 dark:text-red-400">失败 {failures}</span>{running > 0 && <span className="text-blue-600 dark:text-blue-400">执行中 {running}</span>}{queued > 0 && <span className="text-text-muted">排队中 {queued}</span>}</p>
       <div className="flex w-full flex-wrap items-end gap-3">
         <label className="flex w-full min-w-0 flex-col text-xs text-text-muted sm:w-auto">搜索账号、供应商或模型<input className={`${control} mt-1 sm:!w-52`} placeholder="搜索账号、供应商或模型…" value={search} onChange={event => setSearch(event.target.value)} /></label>
         <label className="flex w-full min-w-0 flex-col text-xs text-text-muted sm:w-auto">筛选供应商<select aria-label="筛选供应商" className={`${control} mt-1 sm:!w-48`} value={providerFilter} onChange={event => { setProviderFilter(event.target.value); setModelFilter(""); }}><option value="">全部供应商</option>{resultProviders.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
@@ -310,8 +316,8 @@ export default function CodexTrialsPanel() {
       <p>自定标记规则：已生成样本满足任一条件即标记为“降智表现”：HTML 少于 {CODEX_TRIAL_DEGRADATION_LIMITS.htmlLines} 行、速率低于 {CODEX_TRIAL_DEGRADATION_LIMITS.tokensPerSecond} tok/s，或输出少于 {number(CODEX_TRIAL_DEGRADATION_LIMITS.outputTokens)} tokens。每个账号、模型分别判断，已有结果自动适用。</p>
       <p>速率 = CLI 输出 tokens ÷ 总耗时，包含思考、等待和文件生成。中转错误按失败请求计数，重试另计；可结合“请求明细”查看原因。</p>
     </div>
-    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result?.id || account.id} account={account} busy={busy} deleting={submitting} models={models.filter(item => supportsModel(account, item) && item.model.trim())} canRetest={!account.result || supportsModel(account, { provider: account.provider, model: account.result.model })} now={now} onRun={run} onStop={stopResult} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
-    {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{accounts.length ? "没有符合筛选条件的账号。" : "尚未添加可测试的供应商账号。"}</div>}
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">{visible.map(account => <AccountCard key={account.result.id} account={account} busy={busy} deleting={submitting} models={models.filter(item => supportsModel(account, item) && item.model.trim())} canRetest={supportsModel(account, { provider: account.provider, model: account.result.model })} now={now} onRun={run} onStop={stopResult} onDelete={removeResult} onInspect={inspect} onUpdated={() => load()} />)}</div>
+    {data && !visible.length && <div className={`${panel} p-12 text-center text-sm text-text-muted`}>{!accounts.length ? "尚未添加可测试的供应商账号。" : cards.length ? "没有符合筛选条件的测试结果。" : "暂无测试结果。可在上方选择账号和模型开始测试。"}</div>}
     <ConfirmModal isOpen={!!deleteSelection} onClose={() => { if (!submitting) setDeleteSelection(null); }} onConfirm={removeSelectedResults}
       title="删除筛选结果" confirmText={`删除 ${deleteSelection?.length || 0} 条结果`} cancelText="取消" loading={submitting}
       message={`将永久删除所选的 ${deleteSelection?.length || 0} 条测试结果，涉及模型：${[...new Set((deleteSelection || []).map(result => result.model))].join("、")}。作品、执行输出和测试指标将一并删除，账号配置不受影响。此操作不可撤销。`} />
