@@ -31,6 +31,31 @@ beforeEach(() => {
 });
 
 describe("Codex Session TXT download", () => {
+  it("prefers the recorded real session verbatim without refreshing OAuth credentials", async () => {
+    const raw = JSON.stringify({ user: { email: connection.email, mfa: true }, account: { id: "workspace-1", residencyRegion: "us" },
+      accessToken: "recorded-web-token", sessionToken: "recorded-session-token", authProvider: "openai", expires: "2030-01-01T00:00:00Z",
+      statsigContext: { deviceId: "recorded-device" }, marketingEligibility: { future: [true, { nested: "keep" }] },
+    }, null, 4);
+    connection.chatgptSession = { raw, capturedAt: "2026-11-10T00:00:00Z" };
+    connection.providerSpecificData.chatgptAccountId = "workspace-1";
+    connection.accessToken = null;
+    const response = await invoke();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(raw);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(refreshAndUpdateCredentials).not.toHaveBeenCalled();
+  });
+
+  it.each(["email", "workspace"])("keeps the legacy export when a saved session has a mismatched %s", async field => {
+    connection.providerSpecificData.chatgptAccountId = "workspace-1";
+    connection.chatgptSession = { raw: JSON.stringify({ user: { email: field === "email" ? "other@example.com" : connection.email },
+      account: { id: field === "workspace" ? "other-workspace" : "workspace-1" }, accessToken: "other-secret",
+      expires: "2030-01-01T00:00:00Z" }) };
+    const response = await invoke();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accessToken: connection.accessToken });
+  });
+
   it("downloads account fields and token expiry from existing credentials without a browser login", async () => {
     const response = await invoke();
     expect(response.status).toBe(200);

@@ -6,7 +6,7 @@ import { assertExclusiveApiKeyBindings } from "@/lib/accountApiKeyBindings.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
-  "accessToken", "refreshToken", "expiresAt", "tokenType",
+  "accessToken", "refreshToken", "expiresAt", "tokenType", "chatgptSession",
   "scope", "projectId", "apiKey", "openaiAdminKey", "testStatus",
   "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn", "errorCode",
   "consecutiveUseCount", "idToken", "lastRefreshAt", "minRequestIntervalMs", "maxRequestIntervalMs",

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { getProviderIconSrc, markProviderIconMissing } from "@/shared/utils/providerIcon";
+import CodexBrowserLoginModal from "@/shared/components/CodexBrowserLoginModal";
 import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, ZedAuthModal, XiaomiMimoAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
@@ -1670,7 +1671,7 @@ export default function ProviderDetailPage() {
                     )}
                     {providerId === "codex" && (
                       <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportCodex(true)}>
-                        {translate("Bulk Add")}
+                        导入 Session / 账号
                       </Button>
                     )}
                     {providerId === "grok-cli" && (
@@ -1747,10 +1748,10 @@ export default function ProviderDetailPage() {
                       icon="playlist_add"
                       variant="secondary"
                       onClick={() => setShowBulkImportCodex(true)}
-                      title={translate("Bulk import codex accounts from JSON")}
+                      title="导入 Session、账号 JSON 或 Access Token"
                       className="w-full sm:w-auto"
                     >
-                      {translate("Bulk Add")}
+                      导入 Session / 账号
                     </Button>
                   )}
                   {providerId === "grok-cli" && (
@@ -1894,7 +1895,9 @@ export default function ProviderDetailPage() {
       )}
 
       {/* Modals */}
-      {providerId === "kiro" ? (
+      {providerId === "codex" ? (
+        showOAuthModal && <CodexBrowserLoginModal onSuccess={handleOAuthSuccess} onClose={() => setShowOAuthModal(false)} />
+      ) : providerId === "kiro" ? (
         <KiroOAuthWrapper
           isOpen={showOAuthModal}
           providerInfo={providerInfo}

@@ -48,7 +48,7 @@ export async function applyHelpIdentity(user) {
   return { ready: false };
 }
 
-export async function launchAppealBrowser({ proxyUrl, onExit = () => {}, onMessage = () => {}, onCaptureError = () => {} } = {}) {
+export async function launchAppealBrowser({ proxyUrl, onExit = () => {}, onMessage = () => {}, onCaptureError = () => {}, captureHelp = true, followPopups = false, allowLocalCallbacks = false } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "9router-appeal-"));
   const binary = process.env.ACCOUNT_APPEAL_CHROMIUM || "/usr/bin/chromium";
   const displayRunner = process.env.ACCOUNT_APPEAL_XVFB;
@@ -58,7 +58,8 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {}, onMessa
     proxy = new URL(proxyUrl);
     if (!["http:", "https:", "socks5:"].includes(proxy.protocol)) { await fs.rm(directory, { recursive: true, force: true }); throw new Error("申诉浏览器暂不支持此代理类型。"); }
     if (proxy.protocol === "socks5:" && (proxy.username || proxy.password)) { await fs.rm(directory, { recursive: true, force: true }); throw new Error("申诉浏览器暂不支持带密码的 SOCKS 代理，请使用 HTTP 代理。"); }
-    args.push(`--proxy-server=${proxy.protocol}//${proxy.host}`, "--proxy-bypass-list=<-loopback>");
+    args.push(`--proxy-server=${proxy.protocol}//${proxy.host}`);
+    if (!allowLocalCallbacks) args.push("--proxy-bypass-list=<-loopback>");
   }
   let child, stopped = false, nextId = 0, sessionId, pending = Buffer.alloc(0);
   const requests = new Map();
@@ -126,26 +127,54 @@ export async function launchAppealBrowser({ proxyUrl, onExit = () => {}, onMessa
     sessionId = (await send("Target.attachToTarget", { targetId, flatten: true }, null)).sessionId;
     await send("Page.enable");
     await send("Runtime.enable");
-    await send("Runtime.addBinding", { name: "__nineRouterAppealCapture" });
-    await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installAppealCapture.toString()})()` });
+    if (captureHelp) {
+      await send("Runtime.addBinding", { name: "__nineRouterAppealCapture" });
+      await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installAppealCapture.toString()})()` });
+    }
     await send("Emulation.setDeviceMetricsOverride", { ...VIEWPORT, deviceScaleFactor: 1, mobile: false });
     if (proxy?.username || proxy?.password) await send("Fetch.enable", { handleAuthRequests: true });
-    const evaluate = async expression => {
-      const response = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+    const mainSessionId = sessionId;
+    const pages = new Map([[targetId, sessionId]]);
+    const selectPage = async () => {
+      if (!followPopups) return;
+      const { targetInfos } = await send("Target.getTargets", {}, null);
+      const live = new Set(targetInfos.filter(target => target.type === "page").map(target => target.targetId));
+      for (const id of pages.keys()) if (!live.has(id)) pages.delete(id);
+      for (const id of live) if (!pages.has(id)) {
+        const attached = (await send("Target.attachToTarget", { targetId: id, flatten: true }, null)).sessionId;
+        await send("Page.enable", {}, attached);
+        await send("Runtime.enable", {}, attached);
+        await send("Emulation.setDeviceMetricsOverride", { ...VIEWPORT, deviceScaleFactor: 1, mobile: false }, attached);
+        if (proxy?.username || proxy?.password) await send("Fetch.enable", { handleAuthRequests: true }, attached);
+        pages.set(id, attached);
+      }
+      sessionId = [...pages.values()].at(-1) || mainSessionId;
+    };
+    const evaluate = async (expression, target = sessionId) => {
+      const response = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, target);
       if (response.exceptionDetails) throw new Error("帮助中心页面尚未就绪，请稍后重试。");
       return response.result.value;
     };
     return {
       pid: child.pid, close, send, evaluate,
-      navigate: async () => {
-        const result = await send("Page.navigate", { url: HELP_URL });
+      evaluateMain: expression => evaluate(expression, mainSessionId),
+      navigate: async (url = HELP_URL) => {
+        if (followPopups) {
+          await selectPage();
+          for (const id of pages.keys()) if (id !== targetId) {
+            await send("Target.closeTarget", { targetId: id }, null);
+            pages.delete(id);
+          }
+          sessionId = mainSessionId;
+        }
+        const result = await send("Page.navigate", { url }, mainSessionId);
         if (result.errorText) {
           const code = result.errorText.match(/ERR_[A-Z0-9_]+/)?.[0];
           throw new Error(`帮助中心连接失败${code ? `（${code}）` : ""}，请检查账号代理后重试。`);
         }
         return result;
       },
-      screenshot: async () => (await send("Page.captureScreenshot", { format: "jpeg", quality: 65, captureBeyondViewport: false })).data,
+      screenshot: async () => { await selectPage(); return (await send("Page.captureScreenshot", { format: "jpeg", quality: 65, captureBeyondViewport: false })).data; },
       authenticate: user => evaluate(`(${applyHelpIdentity.toString()})(${JSON.stringify(user)})`),
     };
   } catch (error) {

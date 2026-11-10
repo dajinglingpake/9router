@@ -56,7 +56,8 @@ export async function POST(request) {
   for (let i = 0; i < accounts.length; i++) {
     const raw = accounts[i];
     try {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      const normalized = normalizeCodexSession(raw);
+      if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
         throw new Error("Item is not an object");
       }
 
@@ -68,7 +69,7 @@ export async function POST(request) {
         createdAt: _createdAt,
         updatedAt: _updatedAt,
         ...item
-      } = normalizeCodexSession(raw);
+      } = normalized;
 
       if (!item.accessToken || typeof item.accessToken !== "string") {
         throw new Error("Missing accessToken");

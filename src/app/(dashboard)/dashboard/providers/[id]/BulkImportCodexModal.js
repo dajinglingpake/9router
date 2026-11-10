@@ -4,36 +4,57 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Modal } from "@/shared/components";
 import { translate } from "@/i18n/runtime";
+import { parseCodexImportText } from "@/shared/utils/codexImport";
 
-const PLACEHOLDER = `[
-  {
-    "accessToken": "eyJhbGc...",
-    "refreshToken": "rt_...",
-    "idToken": "eyJhbGc...",
-    "email": "user@example.com"
-  }
-]`;
-
-function normalizeToArray(parsed) {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed && typeof parsed === "object") {
-    if (Array.isArray(parsed.accounts)) return parsed.accounts;
-    return [parsed];
-  }
-  return null;
+const PLACEHOLDER = `{
+  "accessToken": "第一个账号的 Token",
+  "email": "first@example.com"
 }
+
+{
+  "accessToken": "第二个账号的 Token",
+  "email": "second@example.com"
+}`;
 
 export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
   const [jsonText, setJsonText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [parseError, setParseError] = useState("");
   const [result, setResult] = useState(null);
+  const [reading, setReading] = useState(false);
+  const [fileNotice, setFileNotice] = useState("");
+
+  const readFiles = async (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    setParseError(""); setResult(null); setFileNotice(""); setReading(true);
+    try {
+      if (new Blob([jsonText]).size + files.reduce((total, file) => total + file.size, 0) > 10 * 1024 * 1024) {
+        throw new Error("导入内容总大小不能超过 10 MB。");
+      }
+      const existing = parseCodexImportText(jsonText);
+      const contents = await Promise.all(files.map(async file => {
+        try {
+          const accounts = parseCodexImportText(await file.text());
+          if (!accounts.length) throw new Error("文件中没有账号内容。");
+          return accounts;
+        } catch (error) { throw new Error(`${file.name}：${error.message || "文件读取失败。"}`); }
+      }));
+      setJsonText([...existing, ...contents.flat()].map(item =>
+        JSON.stringify(typeof item === "string" ? { accessToken: item } : item, null, 2)
+      ).join("\n\n"));
+      setFileNotice(`已添加 ${files.length} 个文件的内容，可继续选择文件追加。`);
+    } catch (error) { setParseError(error.message || "文件读取失败。"); }
+    finally { setReading(false); }
+  };
 
   const handleClose = () => {
-    if (submitting) return;
+    if (submitting || reading) return;
     setJsonText("");
     setParseError("");
     setResult(null);
+    setFileNotice("");
     onClose();
   };
 
@@ -44,15 +65,11 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
     const trimmed = jsonText.trim();
     if (!trimmed) return;
 
-    let parsed;
+    let accounts;
     try {
-      parsed = JSON.parse(trimmed);
-    } catch (err) {
-      setParseError(`${translate("Invalid JSON")}: ${err.message}`);
-      return;
-    }
+      accounts = parseCodexImportText(trimmed);
+    } catch (error) { setParseError(error.message); return; }
 
-    const accounts = normalizeToArray(parsed);
     if (!accounts || accounts.length === 0) {
       setParseError(translate("No accounts found in input"));
       return;
@@ -84,12 +101,10 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
   const failedItems = result?.results?.filter((r) => !r.ok) || [];
 
   return (
-    <Modal isOpen={isOpen} title={translate("Bulk Add Codex Accounts")} onClose={handleClose}>
+    <Modal isOpen={isOpen} title="导入 Codex Session / 账号" onClose={handleClose}>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-text-muted">
-          {translate(
-            "Paste an array of codex account JSON objects. Each must include accessToken (and ideally refreshToken, idToken)."
-          )}
+          直接粘贴一个或多个账号 JSON，每段可换行分隔，无需手动组成数组。也可以一次选择多个 JSON / TXT 文件。
         </p>
 
         <p className="text-xs text-text-muted">
@@ -97,16 +112,25 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
           <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener noreferrer" className="text-primary underline">
             /api/auth/session
           </a>
-          ，复制完整 JSON 并粘贴到下方即可导入，也支持多个 session 组成的数组。
+          ，复制完整 JSON 并粘贴到下方即可导入。原有账号 JSON、JSON 数组和 Access Token 仍可导入。
+          完整网页 Session 会一并保存，之后可通过「下载 Session」导出。
           网页 session 不含 refresh token，令牌过期后需要重新复制导入。
         </p>
+
+        <label className="flex flex-col gap-2 text-xs text-text-muted">
+          选择 JSON / TXT 文件（支持多选，内容会追加到下方）
+          <input type="file" multiple accept=".json,.txt,application/json,text/plain" onChange={readFiles} disabled={submitting || reading}
+            className="block w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-sidebar file:px-3 file:py-2 file:text-text-main" />
+          {reading && <span role="status">正在读取文件…</span>}
+          {fileNotice && <span role="status">{fileNotice}</span>}
+        </label>
 
         <textarea
           className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[240px] focus:outline-none focus:ring-1 focus:ring-primary"
           placeholder={PLACEHOLDER}
           value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
-          disabled={submitting}
+          onChange={(e) => { setJsonText(e.target.value); setFileNotice(""); }}
+          disabled={submitting || reading}
         />
 
         {parseError && (
@@ -139,11 +163,11 @@ export default function BulkImportCodexModal({ isOpen, onClose, onSuccess }) {
           <Button
             onClick={handleSubmit}
             fullWidth
-            disabled={submitting || !jsonText.trim()}
+            disabled={submitting || reading || !jsonText.trim()}
           >
             {submitting ? translate("Importing...") : translate("Import All")}
           </Button>
-          <Button onClick={handleClose} variant="ghost" fullWidth disabled={submitting}>
+          <Button onClick={handleClose} variant="ghost" fullWidth disabled={submitting || reading}>
             {translate("Close")}
           </Button>
         </div>

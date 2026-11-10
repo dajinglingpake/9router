@@ -15,7 +15,7 @@ beforeEach(() => {
 });
 
 describe("ChatGPT session import", () => {
-  it("imports a session without persisting unrelated session data", async () => {
+  it("records all original website session fields separately from router credentials", async () => {
     const accessToken = jwt({ exp: 2000000000 });
     const result = await post({ user: { id: "user-1", email: "user@example.com", image: "photo" },
       account: { id: "account-1", planType: "plus" }, accessToken,
@@ -27,8 +27,18 @@ describe("ChatGPT session import", () => {
       providerSpecificData: { chatgptAccountId: "account-1", chatgptPlanType: "plus" } });
     expect(saved).not.toHaveProperty("user");
     expect(saved).not.toHaveProperty("sessionToken");
-    expect(saved).not.toHaveProperty("chatgptSession");
+    expect(JSON.parse(saved.chatgptSession.raw)).toMatchObject({
+      user: { id: "user-1", email: "user@example.com", image: "photo" }, sessionToken: "private-session", authProvider: "openai",
+    });
     expect(JSON.stringify(result)).not.toContain(accessToken);
+  });
+
+  it("imports arrays of token strings and backfills profile email", async () => {
+    const accessToken = jwt({ "https://api.openai.com/profile": { email: "profile@example.com" } });
+    const result = await post({ accounts: [accessToken] });
+    expect(result.success).toBe(1);
+    expect(createProviderConnection.mock.calls[0][0]).toMatchObject({ accessToken, email: "profile@example.com" });
+    expect(createProviderConnection.mock.calls[0][0]).not.toHaveProperty("chatgptSession");
   });
 
   it("backfills JWT account information and supports mixed imports", async () => {

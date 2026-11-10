@@ -2,12 +2,19 @@ import { getProviderConnectionById } from "@/models";
 import { decodeJwtPayload } from "@/lib/oauth/providerHelpers";
 import { refreshAndUpdateCredentials } from "@/lib/providerUsage";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { getRecordedChatgptSession } from "@/lib/oauth/chatgptSession";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 const failure = (error, status) => Response.json({ error }, { status, headers });
 const text = value => typeof value === "string" ? value.trim() : "";
+const download = (raw, label) => new Response(raw, {
+  headers: {
+    ...headers, "Content-Type": "text/plain; charset=utf-8",
+    "Content-Disposition": `attachment; filename="session-${label.replace(/[^a-zA-Z0-9@._-]/g, "_").slice(0, 100)}.txt"`,
+  },
+});
 
 export async function GET(_request, { params }) {
   try {
@@ -17,6 +24,8 @@ export async function GET(_request, { params }) {
     if (connection.provider !== "codex" || !["oauth", "access_token"].includes(connection.authType)) {
       return failure("仅支持导出 Codex 账号的 Session。", 400);
     }
+    const recorded = getRecordedChatgptSession(connection);
+    if (recorded) return download(recorded.raw, recorded.session.user.email || connection.id);
     if (!text(connection.accessToken)) return failure("账号没有登录凭证，请重新授权后下载。", 400);
     if (connection.refreshToken) {
       try {
@@ -59,14 +68,7 @@ export async function GET(_request, { params }) {
     if (planType) account.planType = planType;
     const session = { user, account, accessToken };
     if (Number.isFinite(expires) && expires <= 8640000000000000) session.expires = new Date(expires).toISOString();
-    const label = (user.email || connection.id).replace(/[^a-zA-Z0-9@._-]/g, "_").slice(0, 100);
-    return new Response(`${JSON.stringify(session, null, 2)}\n`, {
-      headers: {
-        ...headers,
-        "Content-Type": "text/plain; charset=utf-8",
-        "Content-Disposition": `attachment; filename="session-${label}.txt"`,
-      },
-    });
+    return download(`${JSON.stringify(session, null, 2)}\n`, user.email || connection.id);
   } catch {
     return failure("Session 下载失败，请稍后重试。", 500);
   }

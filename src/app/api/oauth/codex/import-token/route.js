@@ -1,19 +1,28 @@
 import { NextResponse } from "next/server";
 import { createProviderConnection } from "@/models";
 import { extractCodexAccountInfo } from "@/lib/oauth/providers";
+import { normalizeCodexSession } from "@/lib/oauth/codexSessionImport";
+import { getCodexReloginTarget, reloginCodexConnection } from "@/lib/oauth/reloginCodex";
 
 /**
  * POST /api/oauth/codex/import-token
  * Import a ChatGPT access token (created from chatgpt.com settings)
  * as a provider connection, bypassing OAuth refresh flow.
  *
- * Body: { accessToken: string, name?: string }
+ * Body: { accessToken: string, name?: string }, a Session object, or { session, name?, connectionId? }.
  */
 export async function POST(request) {
   try {
-    const { accessToken, name } = await request.json();
+    let body;
+    try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+    if (body?.connectionId !== undefined) await getCodexReloginTarget(body.connectionId);
+    let input = body?.session ?? body;
+    if (typeof input?.accessToken === "string" && input.accessToken.trim().startsWith("{")) input = input.accessToken;
+    const normalized = normalizeCodexSession(input);
+    const accessToken = normalized?.accessToken;
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
 
-    if (!accessToken || typeof accessToken !== "string") {
+    if (typeof accessToken !== "string" || !accessToken.trim()) {
       return NextResponse.json(
         { error: "Access token is required" },
         { status: 400 }
@@ -65,18 +74,27 @@ export async function POST(request) {
       if (info.chatgptPlanType) providerSpecificData.chatgptPlanType = info.chatgptPlanType;
     }
 
+    email = normalized.email || email;
+    for (const key of ["chatgptAccountId", "chatgptPlanType"]) {
+      if (typeof normalized.providerSpecificData?.[key] === "string") providerSpecificData[key] = normalized.providerSpecificData[key];
+    }
     const connectionName = name || email || "ChatGPT Access Token";
 
     // Save to database as access_token authType (no refresh token)
-    const connection = await createProviderConnection({
+    const connectionData = {
       provider: "codex",
       authType: "access_token",
       accessToken: token,
       name: connectionName,
       email: email,
       providerSpecificData,
+      ...(normalized.chatgptSession ? { chatgptSession: normalized.chatgptSession } : {}),
+      ...(normalized.expiresAt ? { expiresAt: normalized.expiresAt } : {}),
       testStatus: "active",
-    });
+    };
+    const connection = body?.connectionId !== undefined
+      ? await reloginCodexConnection(body.connectionId, connectionData)
+      : await createProviderConnection(connectionData);
 
     return NextResponse.json({
       success: true,
@@ -90,7 +108,6 @@ export async function POST(request) {
       },
     });
   } catch (error) {
-    console.log("Codex access token import error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.status ? error.message : "Codex 导入失败，请检查输入后重试。" }, { status: error.status || 500 });
   }
 }

@@ -91,6 +91,40 @@ function expectPreserved(connection) {
 }
 
 describe("Codex account relogin", () => {
+  it("creates a new OAuth account only when it matches the browser login identity", async () => {
+    tokens.email = "new@example.com";
+    tokens.providerSpecificData.chatgptAccountId = "new-workspace";
+    proxy.registerCodexSession({ state: "proxy-state", codeVerifier: "verifier", redirectUri: "http://localhost:1455/auth/callback",
+      expectedIdentity: { email: tokens.email, accountId: "new-workspace" },
+    });
+    await proxy.startCodexProxy(20128);
+    const result = await finishProxy();
+    expect(result.status).toBe("done");
+    expect(result.connectionId).not.toBe(account.id);
+    expect(await db.getProviderConnections({ provider: "codex" })).toHaveLength(2);
+    expect(await db.getProviderConnectionById(result.connectionId)).toMatchObject({ email: tokens.email, accessToken: tokens.accessToken });
+  });
+
+  it.each(["email", "workspace"])("rejects a mismatched %s before creating an account for browser login", async field => {
+    proxy.registerCodexSession({ state: "proxy-state", codeVerifier: "verifier", redirectUri: "http://localhost:1455/auth/callback",
+      expectedIdentity: { email: field === "email" ? "other@example.com" : tokens.email, accountId: field === "workspace" ? "other-workspace" : "workspace-1" },
+    });
+    await proxy.startCodexProxy(20128);
+    const result = await finishProxy();
+    expect(result.status).toBe("error");
+    expect(await db.getProviderConnections({ provider: "codex" })).toHaveLength(1);
+    expect((await db.getProviderConnectionById(account.id)).accessToken).toBe("old-access");
+  });
+
+  it("preserves a recorded web session when using the existing OAuth login path", async () => {
+    const recorded = { raw: '{"private":"recorded-web-session"}', capturedAt: "2026-11-10T00:00:00Z" };
+    await db.updateProviderConnection(account.id, { chatgptSession: recorded });
+    expect((await exchangeCode()).status).toBe(200);
+    const saved = await db.getProviderConnectionById(account.id);
+    expect(saved.chatgptSession).toEqual(recorded);
+    expect(saved.accessToken).toBe(tokens.accessToken);
+  });
+
   it.each([true, false])("restores the pre-logout enabled state (%s) only after a verified relogin", async isActive => {
     await db.updateProviderConnection(account.id, { isActive: false, providerSpecificData: {
       ...account.providerSpecificData, logoutResumeActive: isActive, loggedOutAt: "2026-10-22T00:00:00.000Z",

@@ -1,4 +1,5 @@
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/repos/connectionsRepo.js";
+import { parseChatgptSession } from "./chatgptSession.js";
 
 function loginError(message, status) {
   return Object.assign(new Error(message), { status });
@@ -29,6 +30,7 @@ export async function reloginCodexConnection(connectionId, data) {
   if (previousAccountId && previousAccountId !== data.providerSpecificData?.chatgptAccountId) {
     throw loginError("登录账号或工作空间与原账号不一致，请使用原账号重新登录。", 409);
   }
+  if (data.chatgptSession) parseChatgptSession(data.chatgptSession.raw, existing);
 
   // Preserve configuration; undo the temporary pause after a confirmed logout.
   const { logoutResumeActive, ...providerSpecificData } = existing.providerSpecificData || {};
@@ -39,7 +41,7 @@ export async function reloginCodexConnection(connectionId, data) {
   Object.assign(patch, {
     refreshToken: data.refreshToken ?? null,
     idToken: data.idToken ?? null,
-    chatgptSession: null,
+    chatgptSession: data.chatgptSession ?? existing.chatgptSession ?? null,
     expiresAt: data.expiresAt ?? null,
     lastRefreshAt: data.lastRefreshAt || new Date().toISOString(),
     providerSpecificData: { ...providerSpecificData, ...data.providerSpecificData,

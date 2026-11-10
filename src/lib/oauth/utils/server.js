@@ -139,12 +139,13 @@ const pendingExchanges = new Map();
  * Register a pending exchange session for server-side mode.
  * Modal client calls this before opening popup.
  */
-export function registerCodexSession({ state, codeVerifier, redirectUri, reloginConnectionId = null }) {
+export function registerCodexSession({ state, codeVerifier, redirectUri, reloginConnectionId = null, expectedIdentity = null }) {
   if (!state || !codeVerifier || !redirectUri) return false;
   pendingExchanges.set(state, {
     codeVerifier,
     redirectUri,
     reloginConnectionId,
+    expectedIdentity,
     status: "pending",
     createdAt: Date.now(),
   });
@@ -233,6 +234,10 @@ export function startCodexProxy(appPort) {
             session.codeVerifier,
             state
           );
+          if (session.expectedIdentity && (
+            tokenData.email?.trim().toLowerCase() !== session.expectedIdentity.email.trim().toLowerCase()
+            || tokenData.providerSpecificData?.chatgptAccountId !== session.expectedIdentity.accountId
+          )) throw new Error("授权账号与网页登录账号不一致，未添加账号。");
           const connectionData = {
             provider: "codex",
             authType: "oauth",
