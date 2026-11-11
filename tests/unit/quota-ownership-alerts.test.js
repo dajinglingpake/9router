@@ -135,6 +135,23 @@ describe("isolated quota alerts", () => {
     expect(alerts[0].periods.map(item => item.period)).toEqual(["weekly"]);
   });
 
+  it.each([
+    [4, 73, "5 小时额度即将用尽：剩余 4.0%", "每周额度：剩余 73.0%"],
+    [68, 4, "5 小时额度：剩余 68.0%", "每周额度即将用尽：剩余 4.0%"],
+  ])("includes both balances and resets for session %i and weekly %i remaining", async (session, weekly, sessionLine, weeklyLine) => {
+    const data = usage(session, weekly);
+    data.quotas.session.resetAt = "2030-01-01T18:30:00Z";
+    data.quotas.weekly.resetAt = "2030-01-07T20:45:00Z";
+    await notifyCodexQuotaSummary(summary([[alice, data]]), { ...config, quotaPercent: 5 });
+    expect(payloads()).toHaveLength(1);
+    const { content } = payloads()[0].text;
+    expect(content).toContain(sessionLine);
+    expect(content).toContain(weeklyLine);
+    expect(content).toContain("5 小时额度重置时间：2030/1/2 02:30:00");
+    expect(content).toContain("每周额度重置时间：2030/1/8 04:45:00");
+    expect(content).not.toContain("（北京时间）");
+  });
+
   it("only alerts weekly once when the session quota shares the weekly window", () => {
     const data = usage(0, 0);
     data.quotas.session.sharedWith = "weekly";
@@ -143,7 +160,7 @@ describe("isolated quota alerts", () => {
     expect(alerts[0].periods.map(item => item.period)).toEqual(["weekly"]);
     expect(alerts[0].content).not.toContain("5 小时额度");
     expect(alerts[0].content.match(/重置时间/g)).toHaveLength(1);
-    expect(alerts[0].content).toContain("每周额度重置时间：2030/1/8 04:45:00（北京时间）");
+    expect(alerts[0].content).toContain("每周额度重置时间：2030/1/8 04:45:00");
   });
 
   it("mentions every bound UserID once, including disabled keys, without sharing recipients", async () => {
@@ -180,8 +197,8 @@ describe("isolated quota alerts", () => {
     expect(payload.mentioned_list).toEqual(["陶俊帆"]);
     expect(payload.content).toContain("额度归属：专用（@陶俊帆）");
     expect(payload.content).toContain("自动切换模型：gpt-6-luna");
-    expect(payload.content).toContain("5 小时额度重置时间：2030/1/2 02:30:00（北京时间）");
-    expect(payload.content).toContain("每周额度重置时间：2030/1/8 04:45:00（北京时间）");
+    expect(payload.content).toContain("5 小时额度重置时间：2030/1/2 02:30:00");
+    expect(payload.content).toContain("每周额度重置时间：2030/1/8 04:45:00");
     expect(payload.content).toContain("提醒阈值");
     expect(Buffer.byteLength(payload.content, "utf8")).toBeLessThanOrEqual(2048);
   });
@@ -198,17 +215,18 @@ describe("isolated quota alerts", () => {
       earliestResetAt: "2030-01-02T00:00:00.000Z", latestResetAt: "2030-01-02T03:00:00.000Z",
     });
     const alert = getCodexTotalQuotaAlerts(result, config).find(item => !item.connectionId);
-    expect(alert.content).toContain("5 小时额度重置时间：最早 2030/1/2 08:00:00，最晚 2030/1/2 11:00:00（北京时间）");
+    expect(alert.content).toContain("5 小时额度重置时间：最早 2030/1/2 08:00:00，最晚 2030/1/2 11:00:00");
     expect(alert.content).not.toContain("2030/1/1");
   });
 
   it("shows one reset time when every shared account resets together", () => {
     const data = usage(10);
     data.quotas.session.resetAt = "2030-01-02T00:00:00Z";
+    data.quotas.weekly.resetAt = "2030-01-07T20:45:00Z";
     const result = summary([[shared, data], [account("shared-2"), data]]);
     expect(result.groups[0].session.knownResetAccounts).toBe(2);
     const [alert] = getCodexTotalQuotaAlerts(result, config);
-    expect(alert.content).toContain("重置时间：2030/1/2 08:00:00（北京时间）");
+    expect(alert.content).toContain("5 小时额度重置时间：2030/1/2 08:00:00");
     expect(alert.content).not.toMatch(/最早|最晚|未知/);
   });
 
@@ -226,18 +244,27 @@ describe("isolated quota alerts", () => {
     const data = usage(5);
     data.quotas.session.resetAt = "2030-01-02T00:00:00Z";
     const [alert] = getCodexTotalQuotaAlerts(summary([[shared, data], [account("shared-2"), usage(5)]]), config);
-    expect(alert.content).toContain("5 小时额度已知重置时间：2030/1/2 08:00:00（北京时间）；另 1 个账号重置时间未知");
+    expect(alert.content).toContain("5 小时额度已知重置时间：2030/1/2 08:00:00；另 1 个账号重置时间未知");
   });
 
-  it("drops expired reset times and sends only the remaining applicable weekly reset", () => {
+  it("shows the other balance as unknown when its snapshot has expired", () => {
     const data = usage(0, 0);
     data.quotas.session.resetAt = new Date(Date.now() - 1000).toISOString();
     data.quotas.weekly.resetAt = "2030-01-07T20:45:00Z";
     const result = summary([[alice, data]]);
     expect(result.groups[0].session.knownResetAccounts).toBe(0);
     const [alert] = getCodexTotalQuotaAlerts(result, config);
-    expect(alert.content).not.toContain("5 小时额度");
-    expect(alert.content).toContain("每周额度重置时间：2030/1/8 04:45:00（北京时间）");
+    expect(alert.content).toContain("5 小时额度：剩余未知");
+    expect(alert.content).toContain("5 小时额度重置时间：未知");
+    expect(alert.content).toContain("每周额度重置时间：2030/1/8 04:45:00");
+  });
+
+  it("does not report a partially known weekly balance as the shared pool total", () => {
+    const missing = usage(4);
+    missing.quotas.weekly.used = null;
+    const [alert] = getCodexTotalQuotaAlerts(summary([[shared, usage(4, 70)], [account("shared-2"), missing]]), config);
+    expect(alert.periods.map(item => item.period)).toEqual(["session"]);
+    expect(alert.content).toContain("每周额度：剩余未知（已获取 1 / 2 个账号的额度）");
   });
 
   it("includes the saved model and routing threshold for both shared and dedicated quota alerts", async () => {
@@ -277,10 +304,12 @@ describe("isolated quota alerts", () => {
     await notifyCodexQuotaSummary(summary([[alice, usage(5, 80)]]), config);
     await notifyCodexQuotaSummary(summary([[alice, usage(5, 5)]]), config);
     await notifyCodexQuotaSummary(summary([[alice, usage(0, 5)]]), config);
+    await notifyCodexQuotaSummary(summary([[alice, usage(0, 5)]]), config);
     expect(payloads()).toHaveLength(3);
-    expect(payloads()[1].text.content).not.toContain("5 小时额度");
-    expect(payloads()[1].text.content).toContain("每周额度");
-    expect(payloads()[2].text.content).toContain("已用尽");
+    expect(payloads()[1].text.content).toContain("5 小时额度：剩余 5.0%");
+    expect(payloads()[1].text.content).toContain("每周额度即将用尽：剩余 5.0%");
+    expect(payloads()[2].text.content).toContain("5 小时额度已用尽：剩余 0.0%");
+    expect(payloads()[2].text.content).toContain("每周额度：剩余 5.0%");
   });
 
   it("does not claim successful delivery when WeCom fails", async () => {
