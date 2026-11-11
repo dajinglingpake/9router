@@ -1,3 +1,9 @@
+export const KILO_MODELS_CONFIG = {
+  url: "https://ai-gateway.kilo.ai/api/v1/models",
+  timeoutMs: 10000,
+  cacheTtlMs: 10 * 60 * 1000,
+};
+
 export default {
   id: "kilocode",
   priority: 70,
@@ -26,6 +32,7 @@ export default {
       ],
     },
   },
+  // Legacy seeds for callers that only consume the static registry.
   models: [
     { id: "anthropic/claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
     { id: "anthropic/claude-opus-4-20250514", name: "Claude Opus 4" },
@@ -36,12 +43,6 @@ export default {
     { id: "deepseek/deepseek-chat", name: "DeepSeek Chat" },
     { id: "deepseek/deepseek-reasoner", name: "DeepSeek Reasoner" },
   ],
-  // Kilo Code proxies the OpenRouter catalog (334 models at time of writing),
-  // so the hardcoded list above is only a fallback. Surfacing the full catalog
-  // requires a fetcher + passthroughModels, matching how openrouter.js is set up.
-  // Without these, only the 8 hardcoded models appear in the combo model picker,
-  // hiding dynamic models like cohere/north-mini-code:free and poolside/laguna-m.1:free.
-  modelsFetcher: { url: "https://api.kilo.ai/api/gateway/models", type: "openrouter-free" },
   passthroughModels: true,
   oauth: {
     apiBaseUrl: "https://api.kilo.ai",

@@ -26,6 +26,7 @@ import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
+import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
@@ -523,8 +524,10 @@ export async function buildModelsList(kindFilter, options = {}) {
           )
         : providerModels.map((model) => model.id);
 
-      if (providerId === "codex") {
-        const catalog = codexCatalog;
+      if (providerId === "codex" || providerId === "kilocode") {
+        const catalog = providerId === "codex" ? codexCatalog : await resolveKiloCatalog(
+          connections.filter(connection => connection.provider === providerId), { respectEnabledModels: true }
+        );
         rawModelIds = catalog.models.map(model => model.id);
         liveModelKindById = new Map(catalog.models.map(model => [model.id, modelKind(model)]));
         liveCapabilitiesById = new Map(catalog.models.map(model => [model.id, model.capabilities]));

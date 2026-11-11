@@ -11,6 +11,7 @@ import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS,
 import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
 import { getDeactivatedProviderIds } from "@/shared/utils/connectionStatus";
 import { useCodexModels } from "@/shared/hooks/useCodexModels";
+import { getPassthroughChatModels } from "@/shared/utils/selectableModels";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -58,7 +59,7 @@ function getCircularComboNames(combos, comboContext) {
 // Static registry stays as fallback when live fetch fails or is empty.
 // zed added in #4244: its backend customResolver already returns live models
 // but the frontend omitted it, hiding Zed entirely from the Combo picker.
-const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "openai", "kimi"];
+const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "openai", "kimi", "kilocode"];
 
 // Fetch a provider's account-scoped catalog for every active connection and merge
 // the results. Entries collapse by model id on purpose: two connections of the
@@ -197,6 +198,7 @@ export default function ModelSelectModal({
   const openaiModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.openai, "OpenAI");
   const kimiModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.kimi, "Kimi");
   const codexCatalog = useCodexModels(filteredActiveProviders, { enabled: isOpen, respectEnabledModels: true });
+  const kiloModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.kilocode, "Kilo Code");
 
   const fetchCombos = async () => {
     try {
@@ -376,14 +378,7 @@ export default function ModelSelectModal({
             if (supports) combined = [{ id: providerId, name: providerInfo.name, value: alias }];
           }
         } else {
-          // LLM/null kind: merge hardcoded models (e.g. mimo-free → mimo-auto) with user-added models
-          const registeredLlms = customRegisteredModels.filter((m) => !getModelKind(m) || getModelKind(m) === "llm");
-          const seen = new Set([...aliasModels, ...registeredLlms].map((m) => m.value));
-          const hardcoded = getModelsByProviderId(providerId)
-            .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
-            .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
-            .filter((m) => !seen.has(m.value));
-          combined = [...registeredLlms, ...aliasModels.filter((m) => !registeredLlms.some((registered) => registered.value === m.value)), ...hardcoded];
+          combined = getPassthroughChatModels(providerId, customRegisteredModels, aliasModels, providerId === "kilocode" ? kiloModels : undefined);
         }
 
         if (combined.length > 0) {
@@ -523,6 +518,7 @@ export default function ModelSelectModal({
     Object.entries(groups).forEach(([providerId, group]) => {
       if (providerId === "codex") return;
       const providerConns = filteredActiveProviders.filter((p) => p.provider === providerId);
+      if (providerId === "kilocode" && providerConns.some(conn => !conn.providerSpecificData?.enabledModels?.length)) return;
       const explicitEnabled = [];
       for (const conn of providerConns) {
         if (Array.isArray(conn.providerSpecificData?.enabledModels) && conn.providerSpecificData.enabledModels.length > 0) {
@@ -543,7 +539,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, openaiModels, kimiModels, codexCatalog.models, providerFilter]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, openaiModels, kimiModels, kiloModels, codexCatalog.models, providerFilter]);
 
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);

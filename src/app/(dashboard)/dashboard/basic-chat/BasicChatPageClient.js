@@ -135,7 +135,8 @@ function normalizeLiveModel(model, connection) {
 
   let requestModel = rawId;
   const isCompatible = isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider);
-  if ((isCompatible || connection.provider === "codex") && !rawId.includes("/")) {
+  // Kilo IDs already contain an upstream vendor (e.g. openai/gpt-4.1).
+  if (connection.provider === "kilocode" || ((isCompatible || connection.provider === "codex") && !rawId.includes("/"))) {
     requestModel = `${connection.provider}/${rawId}`;
   }
 
@@ -258,7 +259,7 @@ export default function BasicChatPageClient() {
           group.providerType = group.providerType || providerType;
           group.connections.push(connection);
 
-          const staticModels = (providerId === "codex" ? [] : getModelsByProviderId(providerId))
+          const staticModels = (["codex", "kilocode"].includes(providerId) ? [] : getModelsByProviderId(providerId))
             .map((model) => normalizeStaticModel(model, connection))
             .filter(Boolean);
           group.models.push(...staticModels);
@@ -303,7 +304,7 @@ export default function BasicChatPageClient() {
           if (normalized.length === 0) {
             setLoadError("Providers connected but no models available.");
           } else {
-            setLoadError(liveResults.filter(result => result.connection.provider === "codex" && result.warning)
+            setLoadError(liveResults.filter(result => ["codex", "kilocode"].includes(result.connection.provider) && result.warning)
               .map(result => `${getProviderLabel(result.connection)}：${result.warning}`).join("；"));
           }
         }

@@ -15,6 +15,7 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { useCodexModels } from "@/shared/hooks/useCodexModels";
+import { useKiloModels } from "@/shared/hooks/useKiloModels";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
@@ -35,6 +36,7 @@ import { getScheduleSlotLabels } from "@/shared/services/quotaPingSchedule";
 const ONE_BY_ONE_DELAY_MS = 1000;
 
 const MCODE_LEASE_PROVIDERS = new Set(["minimax-code", "minimax-code-global"]);
+const ACCOUNT_CATALOG_PROVIDERS = new Set(["cursor", "zed", "codebuddy-cn", "kimi", "openai"]);
 
 const AUTO_PING_SETTINGS_KEYS = {
   claude: "claudeAutoPing",
@@ -85,7 +87,6 @@ export default function ProviderDetailPage() {
   const [liveModels, setLiveModels] = useState([]);
   // Live-catalog fetch warning/error; Cursor behavior stays unchanged.
   const [liveModelsError, setLiveModelsError] = useState(null);
-  const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
   const [showAgRiskModal, setShowAgRiskModal] = useState(false);
@@ -168,9 +169,11 @@ export default function ProviderDetailPage() {
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
   const staticModels = getModelsByProviderId(providerId);
   const codexCatalog = useCodexModels(connections, { enabled: providerId === "codex" });
-  const models = providerId === "codex" ? codexCatalog.models : (providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai") && liveModels.length > 0
-    ? liveModels
-    : staticModels;
+  const kiloCatalog = useKiloModels(connections, providerId === "kilocode" && !loading);
+  const models = providerId === "codex" ? codexCatalog.models
+    : providerId === "kilocode" ? kiloCatalog.models
+    : ACCOUNT_CATALOG_PROVIDERS.has(providerId) && liveModels.length ? liveModels : staticModels;
+  const chatModels = models.filter(model => getModelKind(model, "llm") === "llm");
   const providerAlias = getProviderAlias(providerId);
   
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
@@ -208,7 +211,6 @@ export default function ProviderDetailPage() {
       if (lv) lv.forEach((l) => { if (l !== "none") set.add(l); });
     };
     for (const m of models) addLevels(m.id);
-    for (const m of kiloFreeModels) addLevels(m.id);
     for (const entry of customModels) {
       if (entry.providerAlias !== providerStorageAlias) continue;
       if ((entry.kind || entry.type || "llm") !== "llm") continue;
@@ -306,15 +308,6 @@ export default function ProviderDetailPage() {
       console.log("Error fetching custom models:", error);
     }
   }, []);
-
-  // Fetch free models from Kilo API for kilocode provider
-  useEffect(() => {
-    if (providerId !== "kilocode") return;
-    fetch("/api/providers/kilo/free-models")
-      .then((res) => res.json())
-      .then((data) => { if (data.models?.length) setKiloFreeModels(data.models); })
-      .catch(() => {});
-  }, [providerId]);
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -491,7 +484,7 @@ export default function ProviderDetailPage() {
   // Resolve the active account's catalog on entry or connection changes.
   // Providers keep their built-in lists as a fallback when discovery fails.
   useEffect(() => {
-    const isLiveCatalog = providerId === "cursor" || providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai";
+    const isLiveCatalog = ACCOUNT_CATALOG_PROVIDERS.has(providerId);
     const showWarning = providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai";
     const catalogName = providerInfo?.name || providerId;
     setLiveModels([]);
@@ -533,8 +526,11 @@ export default function ProviderDetailPage() {
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
     const fetcher = (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId])?.modelsFetcher;
+    setSuggestedModels([]);
     if (!fetcher) return;
-    fetchSuggestedModels(fetcher).then(setSuggestedModels);
+    let cancelled = false;
+    fetchSuggestedModels(fetcher).then(result => { if (!cancelled) setSuggestedModels(result); });
+    return () => { cancelled = true; };
   }, [providerId]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
@@ -1204,15 +1200,9 @@ export default function ProviderDetailPage() {
         />
       );
     }
-    // Combine hardcoded models with Kilo free models (deduplicated)
-    // Exclude non-llm models (embedding, tts, etc.) — they have dedicated pages under media-providers
-    const allModels = [
-      ...models,
-      ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-    ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; });
     const disabledSet = new Set(disabledModelIds);
-    const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
-    const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
+    const displayModels = chatModels.filter((m) => !disabledSet.has(m.id));
+    const disabledDisplayModels = chatModels.filter((m) => disabledSet.has(m.id));
     const customModelRows = providerId === "codex" ? [] : getProviderCustomModelRows({
       customModels,
       modelAliases,
@@ -1827,13 +1817,14 @@ export default function ProviderDetailPage() {
             )}
           </div>
           {!isCompatible && (() => {
-            const allIds = [
-              ...models,
-              ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-            ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
-            const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
+            const activeIds = chatModels.map(model => model.id).filter(id => !disabledModelIds.includes(id));
             return (
               <div className="flex gap-2">
+                {providerId === "kilocode" && (
+                  <Button size="sm" variant="secondary" icon="refresh" disabled={kiloCatalog.loading} onClick={kiloCatalog.refresh}>
+                    {translate(kiloCatalog.loading ? "Fetching..." : "Refresh")}
+                  </Button>
+                )}
                 {disabledModelIds.length > 0 && (
                   <Button size="sm" variant="secondary" icon="restart_alt" onClick={handleEnableAll}>
                     Active All
@@ -1879,6 +1870,7 @@ export default function ProviderDetailPage() {
         )}
         {providerId === "codex" && <p className="text-xs text-text-muted mb-3">{codexCatalog.loading ? "正在按账号获取可用模型…" : "以下为启用账号实际可用模型的并集。"}</p>}
         {providerId === "codex" && codexCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{codexCatalog.warning}</p>}
+        {providerId === "kilocode" && kiloCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{kiloCatalog.warning}</p>}
         {(providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai") && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}

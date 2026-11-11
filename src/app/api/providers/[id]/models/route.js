@@ -18,6 +18,7 @@ import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js"
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
+import { resolveKiloCatalog } from "@/lib/kiloModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -160,6 +161,9 @@ function buildQoderModelsResolver(providerId) {
 
 // Provider models endpoints configuration
 const PROVIDER_MODELS_CONFIG = {
+  kilocode: {
+    customResolver: (connection) => resolveKiloCatalog([connection], { respectEnabledModels: true }),
+  },
   kimi: {
     customResolver: async (connection) => {
       const result = await resolveKimiModels(connection, { forceRefresh: true });

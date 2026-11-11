@@ -35,11 +35,29 @@ export const NO_AUTH_PROVIDER_IDS = Object.keys(FREE_PROVIDERS).filter((id) => F
 // Static registry stays as fallback when live fetch fails or is empty.
 // zed added in #4244: its backend customResolver already returns live models
 // but the frontend omitted it, hiding Zed entirely from the Combo picker.
-export const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed"];
+export const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "kilocode"];
 
 export const ALL_PROVIDERS = { ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...APIKEY_PROVIDERS };
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
+
+export function getPassthroughChatModels(providerId, customModels, aliasModels, liveModels) {
+  const alias = getProviderAlias(providerId);
+  const catalog = liveModels ?? getModelsByProviderId(providerId);
+  const candidates = [
+    ...customModels.filter(model => getModelKind(model, "llm") === "llm"),
+    ...aliasModels,
+    ...catalog.filter(model => getModelKind(model, "llm") === "llm").map(model => ({
+      id: model.id, name: model.name, value: `${alias}/${model.id}`, kind: getModelKind(model),
+    })),
+  ];
+  const seen = new Set();
+  return candidates.filter(model => {
+    if (seen.has(model.value)) return false;
+    seen.add(model.value);
+    return true;
+  });
+}
 
 /**
  * Build the grouped, ordered, filtered model list shown by the pickers.
@@ -52,7 +70,7 @@ const asArray = (value) => (Array.isArray(value) ? value : []);
  * @param {Array}  [input.providerNodes]  Compatible-provider nodes
  * @param {Array}  [input.customModels]   Rows from /api/models/custom
  * @param {object} [input.disabledModels] alias -> [modelId]
- * @param {object} [input.liveModels]     { codex: [], cursor: [], cline: [], clinepass: [], zed: [] }
+ * @param {object} [input.liveModels]     Provider ID -> discovered model list
  * @returns {Object<string, {name: string, alias: string, color: string, models: Array}>}
  */
 export function buildModelGroups({
@@ -192,14 +210,7 @@ export function buildModelGroups({
           if (supports) combined = [{ id: providerId, name: providerInfo.name, value: alias }];
         }
       } else {
-        // LLM/null kind: merge hardcoded models (e.g. mimo-free → mimo-auto) with user-added models
-        const registeredLlms = customRegisteredModels.filter((m) => !getModelKind(m) || getModelKind(m) === "llm");
-        const seen = new Set([...aliasModels, ...registeredLlms].map((m) => m.value));
-        const hardcoded = getModelsByProviderId(providerId)
-          .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
-          .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
-          .filter((m) => !seen.has(m.value));
-        combined = [...registeredLlms, ...aliasModels.filter((m) => !registeredLlms.some((registered) => registered.value === m.value)), ...hardcoded];
+        combined = getPassthroughChatModels(providerId, customRegisteredModels, aliasModels, providerId === "kilocode" ? asArray(live.kilocode) : undefined);
       }
 
       if (combined.length > 0) {
@@ -340,6 +351,7 @@ export function buildModelGroups({
   // Filter by enabledModels if explicitly configured on any active connection for this provider
   Object.entries(groups).forEach(([providerId, group]) => {
     const providerConns = filteredActiveProviders.filter((p) => p.provider === providerId);
+    if (providerId === "kilocode" && providerConns.some(conn => !conn.providerSpecificData?.enabledModels?.length)) return;
     const explicitEnabled = [];
     for (const conn of providerConns) {
       if (Array.isArray(conn.providerSpecificData?.enabledModels) && conn.providerSpecificData.enabledModels.length > 0) {

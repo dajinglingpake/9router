@@ -6,6 +6,7 @@ import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
+import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 
@@ -23,12 +24,17 @@ export async function GET() {
       ...AI_MODELS.filter(model => !["codex", codexAlias].includes(model.provider)),
       ...codex.models.map(model => ({ provider: codexAlias, model: model.id, name: model.name, capabilities: model.capabilities })),
     ];
-    for (const [providerId, resolveModels] of Object.entries({ "codebuddy-cn": resolveCodebuddyModels, kimi: resolveKimiModels, openai: resolveOpenAIModels })) {
+    for (const [providerId, resolveModels] of Object.entries({
+      "codebuddy-cn": ([connection]) => resolveCodebuddyModels(connection),
+      kimi: ([connection]) => resolveKimiModels(connection),
+      openai: ([connection]) => resolveOpenAIModels(connection),
+      kilocode: connections => resolveKiloCatalog(connections, { respectEnabledModels: true }),
+    })) {
       const connections = (await getProviderConnections({ provider: providerId, isActive: true }))
         .filter(connection => connection.provider === providerId && connection.isActive !== false);
       if (!connections.length) continue;
-      const live = await resolveModels(connections[0]);
-      if (live.models.length) {
+      const live = await resolveModels(connections);
+      if (live.models.length || providerId === "kilocode") {
         const providerAlias = getProviderAlias(providerId);
         catalog = [
           ...catalog.filter((model) => model.provider !== providerId && model.provider !== providerAlias),
