@@ -22,6 +22,14 @@ beforeEach(() => {
 const read = async query => (await GET(new Request(`http://localhost/api/providers/client?${query}`))).json();
 
 describe("quota ownership filtering", () => {
+  it("lists signed-in Kilo Code accounts in the tracker and its provider filter", async () => {
+    mocks.connections.mockResolvedValue([connection("kilo", { provider: "kilocode", accessToken: "private-token" })]);
+    const result = await read("provider=kilocode");
+    expect(result.providerOptions).toEqual(["kilocode"]);
+    expect(result.connections.map(item => item.id)).toEqual(["kilo"]);
+    expect(JSON.stringify(result)).not.toContain("private-token");
+  });
+
   it("shows OpenAI API-key accounts even when remote quota lookup is unavailable", async () => {
     mocks.connections.mockResolvedValue([
       connection("openai", { provider: "openai", authType: "apikey", apiKey: "private-key" }),

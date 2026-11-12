@@ -15,6 +15,7 @@ import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 import QuotaTable from "./QuotaTable";
 import OpenAIUsageSummary from "./OpenAIUsageSummary";
+import KiloUsageDetails from "./KiloUsageDetails";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
 import {
@@ -1422,6 +1423,7 @@ export default function ProviderLimits() {
                     onHideQuota={(quotaRow) => handleHideQuota(conn.provider, quotaRow)}
                   />
                 )}
+                {!isLoading && !error && quota?.raw?.kiloUsage && <KiloUsageDetails usage={quota.raw.kiloUsage} />}
                 {conn.provider === "kimi" && Number.isFinite(quota?.raw?.usageBreakdown?.monthlyCodeUsedPercentage) && (
                   <p className="mt-2 text-xs text-text-muted">
                     Monthly Code: {Number(quota.raw.usageBreakdown.monthlyCodeUsedPercentage.toFixed(2))}% used · included in Monthly Total

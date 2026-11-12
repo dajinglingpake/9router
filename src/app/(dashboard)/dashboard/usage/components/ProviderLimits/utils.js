@@ -2,6 +2,9 @@ import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 export const QUOTA_CACHE_KEY = "quotaCacheData";
+export const formatUsd = new Intl.NumberFormat("en-US", {
+  style: "currency", currency: "USD", maximumFractionDigits: 6,
+}).format;
 export const REFRESH_INTERVAL_MS = 60000;
 // Claude usage/quota endpoint rate-limits; poll it less often than other providers
 export const CLAUDE_REFRESH_INTERVAL_MS = 600000;
@@ -752,6 +755,12 @@ export function parseQuotaData(provider, data) {
               remainingPercentage: quota.remainingPercentage,
             });
           });
+        }
+        break;
+
+      case "kilocode":
+        for (const [name, quota] of Object.entries(data.quotas || {})) {
+          normalizedQuotas.push({ ...quota, name, balanceLabel: formatUsd(quota.total) });
         }
         break;
 
