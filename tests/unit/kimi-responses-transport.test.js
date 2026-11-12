@@ -180,6 +180,37 @@ describe("kimi /responses transport routing (via real handleChatCore)", () => {
     ]);
   });
 
+  it.each([false, true])("preserves k3.1-pro view_image results (Chat fallback=%s)", async fallback => {
+    const ids = ["view_image:27", "view_image:28", "view_image:29"];
+    const image = "data:image/png;base64,iVBORw0KGgo=";
+    const output = call_id => ({ type: "function_call_output", call_id, output: [{ type: "input_image", image_url: image }] });
+    const input = [
+      ...ids.map(call_id => ({ type: "function_call", name: "view_image", call_id, arguments: "{}" })),
+      output(ids[0]),
+      { type: "reasoning", summary: [{ text: "Inspect all screenshots." }] },
+      ...ids.slice(1).map(output),
+    ];
+    const original = structuredClone(input);
+    const { result, runtimeTransport, translatedBody } = await route("k3.1-pro", "openai-responses", {
+      tools: fallback ? [{ type: "custom", name: "exec" }] : [{ type: "function", name: "view_image", parameters: { type: "object" } }],
+      input,
+    });
+
+    expect(result.success).toBe(true);
+    expect(input).toEqual(original);
+    if (!fallback) {
+      expect(runtimeTransport?.format).toBe("openai-responses");
+      expect(translatedBody.input).toEqual(original);
+      expect(translatedBody.messages).toBeUndefined();
+      return;
+    }
+    expect(runtimeTransport?.format).toBe("openai");
+    expect(translatedBody.messages.map(message => message.role)).toEqual(["assistant", "tool", "tool", "tool", "user"]);
+    expect(translatedBody.messages[0].tool_calls.map(call => call.id)).toEqual(ids);
+    expect(translatedBody.messages.slice(1, 4).map(message => message.tool_call_id)).toEqual(ids);
+    expect(translatedBody.messages[4].content.filter(part => part.type === "image_url")).toHaveLength(3);
+  });
+
   it.each([false, true])("returns exec in Responses custom-tool format (stream=%s)", async (stream) => {
     const toolCall = { id: "call_exec", type: "function", function: { name: "exec", arguments: '{"input":"return 1;"}' } };
     const chatResponse = stream

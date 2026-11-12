@@ -73,7 +73,8 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
 
     // Chat tool messages are text-only. Keep screenshots after all parallel
     // tool results so images neither become base64 text nor interrupt the calls.
-    if (pendingToolImages.length && ![RESPONSES_ITEM.FUNCTION_CALL_OUTPUT, RESPONSES_ITEM.CUSTOM_TOOL_CALL_OUTPUT].includes(itemType)) {
+    // Reasoning and tool declarations do not start a new conversation turn.
+    if (pendingToolImages.length && [RESPONSES_ITEM.MESSAGE, RESPONSES_ITEM.FUNCTION_CALL, RESPONSES_ITEM.CUSTOM_TOOL_CALL].includes(itemType)) {
       result.messages.push({ role: ROLE.USER, content: pendingToolImages });
       pendingToolImages = [];
     }
