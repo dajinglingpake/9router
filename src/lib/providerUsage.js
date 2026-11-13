@@ -9,6 +9,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
 import { getOpenAIUsage } from "@/lib/openaiUsage.js";
+import { isLeaseConnection } from "open-sse/services/minimaxCodeLease.js";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -126,7 +127,7 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
 
 export function supportsConnectionUsage(connection) {
   if (connection.provider === "openai" && !connection.openaiAdminKey) return false;
-  return USAGE_SUPPORTED_PROVIDERS.includes(connection.provider) && (connection.authType === "oauth" ||
+  return USAGE_SUPPORTED_PROVIDERS.includes(connection.provider) && (connection.authType === "oauth" || isLeaseConnection(connection) ||
     (["apikey", "api_key"].includes(connection.authType) && USAGE_APIKEY_PROVIDERS.includes(connection.provider)));
 }
 

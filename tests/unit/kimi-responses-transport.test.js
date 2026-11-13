@@ -186,6 +186,7 @@ describe("kimi /responses transport routing (via real handleChatCore)", () => {
     const output = call_id => ({ type: "function_call_output", call_id, output: [{ type: "input_image", image_url: image }] });
     const input = [
       ...ids.map(call_id => ({ type: "function_call", name: "view_image", call_id, arguments: "{}" })),
+      ...(fallback ? [{ role: "assistant", phase: "commentary", content: "Inspecting all three screenshots." }] : []),
       output(ids[0]),
       { type: "reasoning", summary: [{ text: "Inspect all screenshots." }] },
       ...ids.slice(1).map(output),
@@ -206,6 +207,7 @@ describe("kimi /responses transport routing (via real handleChatCore)", () => {
     }
     expect(runtimeTransport?.format).toBe("openai");
     expect(translatedBody.messages.map(message => message.role)).toEqual(["assistant", "tool", "tool", "tool", "user"]);
+    expect(translatedBody.messages[0].content).toBe("Inspecting all three screenshots.");
     expect(translatedBody.messages[0].tool_calls.map(call => call.id)).toEqual(ids);
     expect(translatedBody.messages.slice(1, 4).map(message => message.tool_call_id)).toEqual(ids);
     expect(translatedBody.messages[4].content.filter(part => part.type === "image_url")).toHaveLength(3);

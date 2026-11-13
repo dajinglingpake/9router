@@ -8,6 +8,7 @@ import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from 
 import { getExclusiveApiKeyNames } from "@/lib/accountApiKeyBindings.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 import { getRecentAccountApiKeyUsers } from "@/lib/recentAccountApiKeyUsers.js";
+import { isLeaseConnection } from "open-sse/services/minimaxCodeLease.js";
 
 const SAFE_FIELDS = [
   "id", "provider", "authType", "name", "email", "displayName",
@@ -58,7 +59,7 @@ function sanitize(c) {
 function isUsageEligible(connection) {
   if (AI_PROVIDERS[connection.provider]?.quotaNotice) return true;
   return USAGE_SUPPORTED_PROVIDERS.includes(connection.provider) && (
-    connection.authType === "oauth" || USAGE_APIKEY_PROVIDERS.includes(connection.provider)
+    connection.authType === "oauth" || isLeaseConnection(connection) || USAGE_APIKEY_PROVIDERS.includes(connection.provider)
   );
 }
 

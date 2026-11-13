@@ -138,6 +138,34 @@ describe("openai ↔ responses multi-turn reasoning", () => {
 });
 
 describe("responses → openai assistant turn boundaries", () => {
+  it.each([
+    { preamble: null, postamble: "Inspecting screenshots.", expected: "Inspecting screenshots." },
+    { preamble: "Before.", postamble: "After.", expected: "Before.\nAfter." },
+    { preamble: [{ type: "output_text", text: "Before." }], postamble: "After.", expected: [{ type: "text", text: "Before." }, { type: "text", text: "After." }] },
+    { preamble: "Before.", postamble: [{ type: "output_text", text: "After." }], expected: [{ type: "text", text: "Before." }, { type: "text", text: "After." }] },
+    { preamble: "Before.", postamble: null, expected: "Before." },
+  ])("keeps assistant text after calls in the same tool turn: $preamble / $postamble", ({ preamble, postamble, expected }) => {
+    const input = [
+      { role: "user", content: "Inspect the screenshots." },
+      ...(preamble ? [{ role: "assistant", content: preamble }] : []),
+      { type: "function_call", name: "view_image", call_id: "view_image:27", arguments: "{}" },
+      { type: "reasoning", summary: [{ text: "Inspect all images." }], encrypted_content: "enc_after_call" },
+      { role: "assistant", phase: "commentary", content: postamble },
+      { type: "custom_tool_call", name: "exec", call_id: "exec:28", input: "inspect" },
+      { type: "function_call_output", call_id: "view_image:27", output: "image inspected" },
+      { type: "custom_tool_call_output", call_id: "exec:28", output: "done" },
+      { role: "assistant", content: "Finished." },
+    ];
+    const original = structuredClone(input);
+    const out = openaiResponsesToOpenAIRequest("m", { input }, true, null);
+
+    expect(out.messages.map(message => message.role)).toEqual(["user", "assistant", "tool", "tool", "assistant"]);
+    expect(out.messages[1]).toMatchObject({ content: expected, reasoning_content: "Inspect all images.", encrypted_content: "enc_after_call" });
+    expect(out.messages[1].tool_calls.map(call => call.id)).toEqual(["view_image:27", "exec:28"]);
+    expect(out.messages[4].content).toBe("Finished.");
+    expect(input).toEqual(original);
+  });
+
   it.each([undefined, "commentary"])("keeps a preamble and parallel tools in one turn (phase=%s)", (phase) => {
     const out = openaiResponsesToOpenAIRequest("m", { input: [
       { role: "user", content: "Run the checks." },

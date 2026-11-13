@@ -19,6 +19,7 @@ import { resolveCodebuddyModels } from "@/lib/codebuddyModels";
 import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveKiloCatalog } from "@/lib/kiloModels";
+import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -187,15 +188,19 @@ const PROVIDER_MODELS_CONFIG = {
     authPrefix: "Bearer ",
     parseResponse: (data) => data.data || [],
   },
+  // OAuth (sk-ant-oat) token: Bearer + oauth beta header. Live list lets new
+  // Claude models show up without waiting for a 9router release.
   claude: {
-    url: "https://api.anthropic.com/v1/models",
+    url: "https://api.anthropic.com/v1/models?limit=1000",
     method: "GET",
     headers: {
       "Anthropic-Version": "2023-06-01",
+      "Anthropic-Beta": "oauth-2025-04-20",
       "Content-Type": "application/json"
     },
-    authHeader: "x-api-key",
-    parseResponse: (data) => data.data || []
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: (data) => (data.data || []).map((m) => ({ id: m.id, name: m.display_name || m.id }))
   },
   gemini: {
     url: "https://generativelanguage.googleapis.com/v1beta/models",
@@ -254,6 +259,18 @@ const PROVIDER_MODELS_CONFIG = {
     ...createOpenAIModelsConfig(NOUS_MODELS_URL),
     parseResponse: normalizeRoutedNousModels,
   },
+  // CommandCode's catalog URL needs no auth, but the route's token guard above
+  // still requires a configured connection, so an empty key cannot enumerate it.
+  commandcode: {
+    customResolver: async () => {
+      const result = await resolveCommandCodeModels();
+      if (result?.models?.length) return { models: result.models };
+      return {
+        models: getStaticProviderModels("commandcode"),
+        warning: "CommandCode returned no live models; falling back to static catalog.",
+      };
+    },
+  },
   anthropic: {
     url: "https://api.anthropic.com/v1/models",
     method: "GET",
@@ -311,6 +328,7 @@ const PROVIDER_MODELS_CONFIG = {
   nanobanana: createOpenAIModelsConfig("https://api.nanobananaapi.ai/v1/models"),
   chutes: createOpenAIModelsConfig("https://llm.chutes.ai/v1/models"),
   nvidia: createOpenAIModelsConfig("https://integrate.api.nvidia.com/v1/models"),
+  synthetic: createOpenAIModelsConfig("https://api.synthetic.new/openai/v1/models"),
   assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
   "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),
   // OpenAI-compatible aggregators.

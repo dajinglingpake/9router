@@ -80,19 +80,6 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
     }
 
     if (itemType === RESPONSES_ITEM.MESSAGE) {
-      // Flush the previous assistant message before starting another message.
-      if (currentAssistantMsg) {
-        result.messages.push(currentAssistantMsg);
-        currentAssistantMsg = null;
-      }
-      // Flush pending tool results
-      if (pendingToolResults.length > 0) {
-        for (const tr of pendingToolResults) {
-          result.messages.push(tr);
-        }
-        pendingToolResults = [];
-      }
-
       // Convert content: input_text → text, output_text → text, input_image → image_url
       const content = Array.isArray(item.content)
         ? item.content.map(c => {
@@ -106,8 +93,36 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         })
         : item.content;
       const msg = { role: item.role, content };
-      // Responses emits a tool preamble and its calls as separate items.
-      // Preserve them as one Chat assistant turn when the calls arrive.
+      // Responses can emit assistant text after calls, before their results.
+      // Keep it in the pending tool turn so it cannot interrupt Chat tool results.
+      if (item.role === ROLE.ASSISTANT && currentAssistantMsg?.tool_calls?.length) {
+        if (content != null && content !== "") {
+          const previous = currentAssistantMsg.content;
+          if (previous == null || previous === "") {
+            currentAssistantMsg.content = content;
+          } else if (typeof previous === "string" && typeof content === "string") {
+            currentAssistantMsg.content = `${previous}\n${content}`;
+          } else {
+            const toParts = value => Array.isArray(value) ? value : [{ type: OPENAI_BLOCK.TEXT, text: value }];
+            currentAssistantMsg.content = [...toParts(previous), ...toParts(content)];
+          }
+        }
+        attachPendingReasoning(currentAssistantMsg);
+        continue;
+      }
+      // Flush the previous assistant message before starting another turn.
+      if (currentAssistantMsg) {
+        result.messages.push(currentAssistantMsg);
+        currentAssistantMsg = null;
+      }
+      if (pendingToolResults.length > 0) {
+        for (const tr of pendingToolResults) {
+          result.messages.push(tr);
+        }
+        pendingToolResults = [];
+      }
+
+      // Preserve a preamble and subsequent calls as one Chat assistant turn.
       if (item.role === ROLE.ASSISTANT) {
         attachPendingReasoning(msg);
         currentAssistantMsg = msg;
