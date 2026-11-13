@@ -256,6 +256,7 @@ export const PROVIDER_CAPABILITIES = {
     "meta/llama-3.3-70b-instruct": { tools: true, contextWindow: 128000, maxOutput: 4096 },
     "minimaxai/minimax-m2.7": { tools: false, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 200000, maxOutput: 131072 },
     "minimaxai/minimax-m3": { tools: false, vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 512000, maxOutput: 131072 },
+    "minimaxai/minimax-m3.1-flash": { tools: true, vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },
     "z-ai/glm-5.2": { tools: false, reasoning: true, thinkingFormat: "openai", contextWindow: 200000, maxOutput: 128000 },
     "deepseek-ai/deepseek-v4-pro": { tools: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },
     "deepseek-ai/deepseek-v4-flash": { tools: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1000000, maxOutput: 65536 },

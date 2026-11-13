@@ -103,6 +103,7 @@ const PATTERN_THINKING = [
   { provider: "minimax-code", pattern: "MiniMax-M3", levels: ["none", "high"] },
   { provider: "minimax-code-global", pattern: "MiniMax-M3.1*", levels: ["low", "medium", "high", "xhigh", "max"] },
   { provider: "minimax-code-global", pattern: "MiniMax-M3", levels: ["none", "high"] },
+  { provider: "nvidia", pattern: "minimaxai/minimax-m3.1-flash", levels: ["low", "medium", "high", "xhigh", "max"] },
 ];
 
 // OpenAI documents reasoning.effort "max" for GPT-5.6 and GPT-6 (#5186). The codex rows

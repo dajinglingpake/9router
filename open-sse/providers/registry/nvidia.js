@@ -36,6 +36,7 @@ export default {
     { id: "meta/llama-3.3-70b-instruct", name: "Llama 3.3 70B Instruct" },
     { id: "minimaxai/minimax-m2.7", name: "MiniMax M2.7" },
     { id: "minimaxai/minimax-m3", name: "MiniMax M3" },
+    { id: "minimaxai/minimax-m3.1-flash", name: "MiniMax M3.1 Flash" },
     { id: "z-ai/glm-5.2", name: "GLM 5.2" },
     { id: "deepseek-ai/deepseek-v4-pro", name: "DeepSeek V4 Pro" },
     { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash" },

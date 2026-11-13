@@ -5,6 +5,8 @@ import nvidiaConfig from "../../open-sse/providers/registry/nvidia.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
 import { checkFallbackError } from "../../open-sse/services/accountFallback.js";
 import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
+import { getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
+import { applyThinking } from "../../open-sse/translator/concerns/thinkingUnified.js";
 
 test("NVIDIA transport quirks declare dropClientMetadata and timeoutMs", () => {
   assert.equal(nvidiaConfig.transport.quirks?.dropClientMetadata, true);
@@ -93,4 +95,24 @@ test("NVIDIA model capabilities distinguish tools support", () => {
 
   assert.equal(llamaCaps.tools, true);
   assert.equal(minimaxCaps.tools, false);
+});
+
+test("NVIDIA MiniMax M3.1 Flash preserves all five efforts in the OpenAI wire format", () => {
+  const model = "minimaxai/minimax-m3.1-flash";
+  const levels = ["low", "medium", "high", "xhigh", "max"];
+  assert.ok(nvidiaConfig.models.some((entry) => entry.id === model));
+  assert.equal(getCapabilitiesForModel("nvidia", model).tools, true);
+  assert.deepEqual(getThinkingLevels("nvidia", model), levels);
+
+  for (const effort of levels) {
+    const body = { reasoning: { effort } };
+    applyThinking("openai", model, body, "nvidia");
+    assert.equal(body.reasoning_effort, effort);
+    assert.equal(body.thinking, undefined);
+    assert.equal(body.reasoning, undefined);
+  }
+
+  const body = { reasoning_effort: "none" };
+  applyThinking("openai", model, body, "nvidia");
+  assert.equal(body.reasoning_effort, "low");
 });
