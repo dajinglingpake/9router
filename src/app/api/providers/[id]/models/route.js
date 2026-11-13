@@ -20,6 +20,7 @@ import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
+import { parseNvidiaModels } from "@/shared/utils/nvidiaModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -327,7 +328,10 @@ const PROVIDER_MODELS_CONFIG = {
   // ollama-local: url resolved dynamically below via providerSpecificData.baseUrl
   nanobanana: createOpenAIModelsConfig("https://api.nanobananaapi.ai/v1/models"),
   chutes: createOpenAIModelsConfig("https://llm.chutes.ai/v1/models"),
-  nvidia: createOpenAIModelsConfig("https://integrate.api.nvidia.com/v1/models"),
+  nvidia: {
+    ...createOpenAIModelsConfig("https://integrate.api.nvidia.com/v1/models"),
+    parseResponse: parseNvidiaModels,
+  },
   synthetic: createOpenAIModelsConfig("https://api.synthetic.new/openai/v1/models"),
   assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
   "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),

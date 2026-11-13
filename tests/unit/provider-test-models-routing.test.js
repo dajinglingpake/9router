@@ -9,7 +9,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/localDb", () => ({
   getProviderConnectionById: mocks.getProviderConnectionById,
   getApiKeys: mocks.getApiKeys,
+  getSettings: async () => ({}),
 }));
+
+// Provider catalog imports must not replace the mocked internal HTTP transport.
+vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: vi.fn() }));
 
 vi.mock("@/shared/utils/machineId", () => ({
   getConsistentMachineId: mocks.getConsistentMachineId,

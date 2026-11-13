@@ -240,13 +240,16 @@ function shouldBypassByNoProxy(targetUrl, noProxyValue) {
  * Get proxy URL from environment
  */
 function getEnvProxyUrl(targetUrl) {
+  // Internal dashboard probes must reach this process, even when an outbound
+  // proxy runs on another machine and NO_PROXY has not been configured.
+  let parsed;
+  try { parsed = new URL(targetUrl); } catch { return null; }
+  if (parsed.hostname === "localhost" || parsed.hostname === "[::1]" || /^127\./.test(parsed.hostname)) return null;
+
   const noProxy = process.env.NO_PROXY || process.env.no_proxy;
   if (shouldBypassByNoProxy(targetUrl, noProxy)) return null;
 
-  let protocol;
-  try { protocol = new URL(targetUrl).protocol; } catch { return null; }
-
-  if (protocol === "https:") {
+  if (parsed.protocol === "https:") {
     return process.env.HTTPS_PROXY || process.env.https_proxy ||
       process.env.ALL_PROXY || process.env.all_proxy;
   }

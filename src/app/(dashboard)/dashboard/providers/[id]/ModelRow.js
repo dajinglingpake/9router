@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { CapacityBadges } from "@/shared/components";
 import { translate } from "@/i18n/runtime";
 
-export default function ModelRow({ model, fullModel, alias, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting, onDisable, caps, thinkingSuffix }) {
+export default function ModelRow({ model, fullModel, alias, copied, onCopy, testStatus, availability, isCustom, isFree, onDeleteAlias, onTest, isTesting, testDisabled, onDisable, caps, thinkingSuffix }) {
   const displayModel = thinkingSuffix ? `${fullModel}(${thinkingSuffix})` : fullModel;
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
@@ -28,6 +28,12 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <code className="w-fit max-w-full break-all rounded bg-sidebar px-1.5 py-0.5 font-mono text-xs text-text-muted sm:max-w-[360px] sm:truncate">{displayModel}</code>
           <span className="flex min-w-0 items-center text-[9px] gap-1 pl-1">
+            {availability && <span
+              className={`shrink-0 ${testStatus === "ok" ? "text-green-600 dark:text-green-400" : testStatus === "error" ? "text-red-500" : "text-text-muted"}`}
+              title={availability.error || (availability.testedAt ? `检测时间：${new Date(availability.testedAt).toLocaleString()}` : undefined)}
+            >
+              {isTesting ? "检测中" : testStatus === "ok" ? "可用" : testStatus === "error" ? "检测失败" : "未检测"}
+            </span>}
             {model.name && <span className="break-all sm:truncate text-[9px] italic text-text-muted/70">{model.name}</span>}
             {isFree && <span className="text-green-600 dark:text-green-400">{translate("Free")}</span>}
             <CapacityBadges caps={caps} colorOverride="text-text-muted/70" size={12} />
@@ -38,7 +44,8 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
             <div className="relative shrink-0 group/btn">
               <button
                 onClick={onTest}
-                disabled={isTesting}
+                disabled={isTesting || testDisabled}
+                aria-label={`Test ${model.id}`}
                 className={`rounded p-0.5 text-text-muted transition-opacity hover:bg-sidebar hover:text-primary ${isTesting ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
               >
                 <span className="material-symbols-outlined text-sm" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
@@ -95,11 +102,13 @@ ModelRow.propTypes = {
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
   testStatus: PropTypes.oneOf(["ok", "error"]),
+  availability: PropTypes.object,
   isCustom: PropTypes.bool,
   isFree: PropTypes.bool,
   onDeleteAlias: PropTypes.func,
   onTest: PropTypes.func,
   isTesting: PropTypes.bool,
+  testDisabled: PropTypes.bool,
   onDisable: PropTypes.func,
   caps: PropTypes.object,
   thinkingSuffix: PropTypes.string,
