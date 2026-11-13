@@ -44,6 +44,38 @@ describe("model test route kind routing", () => {
     global.fetch = originalFetch;
   });
 
+  it("uses a loopback-allowed key without reusing disabled or IP-restricted keys", async () => {
+    mocks.getApiKeys.mockResolvedValue([
+      { key: "sk-disabled", isActive: false },
+      { key: "sk-other-ip", isActive: true, allowedIps: ["192.0.2.10"] },
+      { key: "sk-model-restricted", isActive: true, allowedIps: ["127.0.0.1"], access: { restricted: true } },
+      { key: "sk-loopback", isActive: true, allowedIps: ["127.0.0.1"] },
+    ]);
+    const { POST } = await import("../../src/app/api/models/test/route.js");
+    await POST(new Request("http://localhost/api/models/test", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "hf/black-forest-labs/FLUX.1-schnell", kind: "image" }),
+    }));
+    expect(global.fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer sk-loopback" }),
+    }));
+  });
+
+  it("keeps an IP-unrestricted key eligible for internal model tests", async () => {
+    mocks.getApiKeys.mockResolvedValue([
+      { key: "sk-other-ip", isActive: true, allowedIps: "192.0.2.10,192.0.2.11" },
+      { key: "sk-no-ip-restriction", isActive: true, allowedIps: [] },
+    ]);
+    const { POST } = await import("../../src/app/api/models/test/route.js");
+    await POST(new Request("http://localhost/api/models/test", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "hf/black-forest-labs/FLUX.1-schnell", kind: "image" }),
+    }));
+    expect(global.fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer sk-no-ip-restriction" }),
+    }));
+  });
+
   it("routes image model tests to /api/v1/images/generations", async () => {
     const { POST } = await import("../../src/app/api/models/test/route.js");
 

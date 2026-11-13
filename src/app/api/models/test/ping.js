@@ -3,6 +3,7 @@ import { resolveProviderId } from "@/shared/constants/providers.js";
 import { unwrapClineEnvelope } from "open-sse/shared/clineEnvelope.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
+import { isIpAllowed } from "@/lib/apiKeys/accessPolicy";
 
 const CLI_TOKEN_SALT = "9r-cli-auth";
 
@@ -43,9 +44,9 @@ async function getInternalHeaders() {
   let apiKey = null;
   try {
     const keys = await getApiKeys();
-    // Prefer an unrestricted key so a dashboard model test is not refused just
-    // because the first key happens to be restricted.
-    const activeKeys = keys.filter((k) => k.isActive !== false);
+    // Internal probes originate from loopback. Respect each key's IP whitelist
+    // before preferring an unrestricted key for the requested model.
+    const activeKeys = keys.filter((k) => k.isActive !== false && isIpAllowed(k.allowedIps, "127.0.0.1"));
     apiKey = (activeKeys.find((k) => !k.access?.restricted) || activeKeys[0])?.key || null;
   } catch {}
 
