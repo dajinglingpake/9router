@@ -58,6 +58,8 @@ export default {
     { format: "openai-responses", baseUrl: "https://api.openai.com/v1/responses", thinkingFormat: "openai-responses" },
   ],
   models: [
+    { id: "gpt-6.2-astra", name: "GPT-6.2 Astra" },
+    { id: "gpt-6.2-sol", name: "GPT-6.2 Sol" },
     { id: "gpt-5.5", name: "GPT-5.5" },
     { id: "gpt-5.4", name: "GPT-5.4" },
     { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },

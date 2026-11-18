@@ -314,6 +314,8 @@ export const PROVIDER_CAPABILITIES = {
   },
   "codex": {
     ...LOCAL_CODEX_CAPABILITIES,
+    "gpt-6.2-sol":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 500000, maxOutput: 128000 },
+    "gpt-6.2-astra":             { vision: true, reasoning: true, search: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 272000, maxOutput: 128000 },
     "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
     "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
     // Without its own entry gpt-6.1-sol fell through to *gpt-6* (1.05M), overstating
@@ -546,6 +548,7 @@ export const PATTERN_CAPABILITIES = [
   // OAuth at 272k/372k (see CODEX_GPT_56_* above). This entry used to carry
   // Kiro's 272k, so every other provider's gpt-6 models inherited one gateway's
   // limit and were published at 3.9x under their real window.
+  { pattern: "*gpt-6.2-*",      caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1050000, maxOutput: 128000 } },
   { pattern: "*gpt-6*",         caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1050000, maxOutput: 128000 } },
 
   // ── OpenAI GPT-5.x (vision + thinking + web search) ──────────────

@@ -78,7 +78,7 @@ describe("official OpenAI native Responses routing", () => {
 });
 
 describe("official GPT-6 reasoning levels", () => {
-  it.each(["gpt-6.1-sol", "gpt-6-astra"])("%s excludes unsupported none/minimal and allows max", model => {
+  it.each(["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-sol", "gpt-6-astra"])("%s excludes unsupported none/minimal and allows max", model => {
     expect(getThinkingLevels("openai", model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
     for (const format of ["openai", "openai-responses"]) {
       for (const effort of ["none", "minimal", "low", "max"]) {

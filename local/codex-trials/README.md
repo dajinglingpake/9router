@@ -37,17 +37,17 @@
 
 ## 运行时升级与部署
 
-账号测试使用 `codex-cli 0.166.0`，构建时校验版本。将 CLI 安装到独立目录，不依赖宿主全局 Codex 的升级状态：
+账号测试使用 `codex-cli 0.169.1`，构建时校验版本。将 CLI 安装到独立目录，不依赖宿主全局 Codex 的升级状态：
 
 ```sh
-npm install --prefix "$HOME/.local/share/9router-codex/0.166.0" \
-  --save-exact --ignore-scripts --no-audit --no-fund "@openai/codex@0.166.0"
+npm install --prefix "$HOME/.local/share/9router-codex/0.169.1" \
+  --save-exact --ignore-scripts --no-audit --no-fund "@openai/codex@0.169.1"
 ```
 
 在现有 `scripts/upgrade-remote-9router.local.env` 中设置 Linux x64 运行时路径：
 
 ```sh
-CODEX_RUNTIME_DIR="$HOME/.local/share/9router-codex/0.166.0/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl"
+CODEX_RUNTIME_DIR="$HOME/.local/share/9router-codex/0.169.1/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl"
 ```
 
 只使用现有升级脚本完成构建、配置同步和容器更新；它会同时包含 Codex CLI 与账号申诉浏览器运行时。升级 CLI 时同步修改本目录 Dockerfile 的版本校验和上述运行时路径。

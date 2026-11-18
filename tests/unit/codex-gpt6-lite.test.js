@@ -6,12 +6,27 @@ import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.j
 import { getPricingForModel } from "../../open-sse/providers/pricing.js";
 import { getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
 import { CODEX_CLI_VERSION } from "../../open-sse/providers/registry/codex.js";
+import { getModelInfoCore } from "../../open-sse/services/model.js";
 import * as proxyFetchModule from "../../open-sse/utils/proxyFetch.js";
 
 const credentials = { connectionId: "fixture", accessToken: "fixture-token" };
 afterEach(() => vi.restoreAllMocks());
 
 describe("Codex GPT-6 Sol/Luna transport", () => {
+  it.each([["gpt-6.2-sol", 500000], ["gpt-6.2-astra", 272000]])("routes %s through Responses Lite", async (model, contextWindow) => {
+    const fetchMock = vi.spyOn(proxyFetchModule, "proxyAwareFetch").mockResolvedValue({ ok: true, status: 200, headers: new Map() });
+    await new CodexExecutor().execute({
+      model, body: { model, input: "hello", reasoning: { effort: "none" } }, stream: true, credentials,
+    });
+    const [, options] = fetchMock.mock.calls[0];
+    expect(await getModelInfoCore(model, {})).toEqual({ provider: "codex", model });
+    expect(options.headers["x-openai-internal-codex-responses-lite"]).toBe("true");
+    expect(options.headers.version).toBe(CODEX_CLI_VERSION);
+    expect(JSON.parse(options.body)).toMatchObject({ model, reasoning: { effort: "low", context: "all_turns" } });
+    expect(getThinkingLevels("codex", model)).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
+    expect(getCapabilitiesForModel("codex", model)).toMatchObject({ contextWindow, maxOutput: 128000 });
+  });
+
   it.each(["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"])("lists %s with Codex capabilities", (model) => {
     const entry = getModelsByProviderId("codex").find((item) => item.id === model);
     expect(entry?.responsesLite).toBe(true);

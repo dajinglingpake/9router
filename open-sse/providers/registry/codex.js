@@ -2,7 +2,7 @@ import { withCodexReviewModels } from "../models/helpers.js";
 
 // Codex CLI version seen by OpenAI's backend — single source for the Version /
 // User-Agent identity headers. Bump when the installed codex CLI is upgraded.
-export const CODEX_CLI_VERSION = "0.167.1";
+export const CODEX_CLI_VERSION = "0.169.1";
 export const CODEX_MODELS_CONFIG = {
   url: `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`,
   timeoutMs: 10000,
@@ -15,6 +15,7 @@ export const CODEX_SESSIONS_CONFIG = {
   timeoutMs: 15000,
 };
 const GPT_6_LITE_THINKING_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+const GPT_6_2_THINKING_LEVELS = [...GPT_6_LITE_THINKING_LEVELS, "ultra"];
 
 export default {
   id: "codex",
@@ -64,6 +65,8 @@ export default {
     },
   },
   models: [
+    { id: "gpt-6.2-sol", name: "GPT-6.2 Sol", responsesLite: true, thinkingLevels: GPT_6_2_THINKING_LEVELS },
+    { id: "gpt-6.2-astra", name: "GPT-6.2 Astra", responsesLite: true, thinkingLevels: GPT_6_2_THINKING_LEVELS },
     { id: "gpt-6.1-sol", name: "GPT 6.1 Sol", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS },
     { id: "gpt-6.1-terra", name: "GPT 6.1 Terra", responsesLite: true, thinkingLevels: GPT_6_LITE_THINKING_LEVELS },
     { id: "gpt-6-astra", name: "GPT 6.0 Astra" },
