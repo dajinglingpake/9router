@@ -1,7 +1,9 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { getProviderConnections } from "@/lib/localDb";
 import { resolveCodexCatalog } from "@/lib/codexModels";
-import { orderModelsByTestResult } from "@/lib/modelTests";
+import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { resolveKiloCatalog } from "@/lib/kiloModels";
+import { getProviderModelPreferences, orderModelsByTestResult } from "@/lib/modelTests";
 import { MODEL_TEST_PROVIDERS } from "@/shared/utils/modelTests";
 import { filterAccountPoolForRequest } from "@/sse/services/accountApiKeyAccess.js";
 
@@ -49,6 +51,16 @@ export async function GET(request) {
     const codex = await resolveCodexCatalog(available.filter(connection => connection.provider === "codex"), { respectEnabledModels: true });
     const catalog = { ...PROVIDER_MODELS, cx: codex.models };
     delete catalog.codex;
+    const preferences = await getProviderModelPreferences().catch(() => new Map());
+    if (preferences.get("kilocode")?.freeOnly) {
+      const [kilo, disabled] = await Promise.all([
+        resolveKiloCatalog(available.filter(connection => connection.provider === "kilocode"), { respectEnabledModels: true }),
+        getDisabledModels(),
+      ]);
+      const disabledIds = new Set([...(disabled.kc || []), ...(disabled.kilocode || [])]);
+      catalog.kc = kilo.models.filter(model => model.isFree === true && !disabledIds.has(model.id));
+      delete catalog.kilocode;
+    }
     for (const [provider, providerModels] of Object.entries(catalog)) {
       for (const model of providerModels) {
         addModel({
@@ -68,7 +80,7 @@ export async function GET(request) {
       }
     }
 
-    const ordered = await orderModelsByTestResult(models, available, model => model.name.slice("models/".length)).catch(() => models);
+    const ordered = await orderModelsByTestResult(models, available, preferences, model => model.name.slice("models/".length)).catch(() => models);
     return Response.json({ models: ordered });
   } catch (error) {
     console.log("Error fetching models:", error);

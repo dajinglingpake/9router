@@ -1,5 +1,5 @@
 import { getApiKeys, getProviderConnections, getSettings } from "@/lib/localDb";
-import { getModelTests } from "@/lib/db/repos/modelTestsRepo.js";
+import { getModelTests, getModelTestPreferences } from "@/lib/db/repos/modelTestsRepo.js";
 import { isIpAllowed } from "@/lib/apiKeys/accessPolicy";
 import { FREE_PROVIDERS, resolveProviderId } from "@/shared/constants/providers";
 import { MODEL_TEST_PROVIDERS, modelTestRank } from "@/shared/utils/modelTests";
@@ -34,17 +34,29 @@ export async function getModelTestContext(provider) {
     || candidates[0] || null;
 }
 
-export async function orderModelsByTestResult(models, connections, getId = model => model.id) {
+export async function getProviderModelPreferences() {
+  const [overrides, settings] = await Promise.all([getModelTestPreferences(), getSettings()]);
+  // Preserve the previous release's choice until an individual switch is saved.
+  return new Map(MODEL_TEST_PROVIDERS.map(provider => {
+    const saved = overrides.get(provider);
+    return [provider, {
+      hideFailedModels: saved?.hideFailedModels ?? (settings.hideFailedModels === true),
+      ...(provider === "kilocode" ? { freeOnly: saved?.freeOnly === true } : {}),
+    }];
+  }));
+}
+
+export async function orderModelsByTestResult(models, connections, preferences, getId = model => model.id) {
   const scopes = new Map(MODEL_TEST_PROVIDERS.map(provider => [provider, testScope(provider, connections)]));
   const results = await getModelTests([...scopes.values()].filter(Boolean));
   if (!results.size) return models;
 
-  const { hideFailedModels } = await getSettings();
   return models.map(item => {
     const target = getTestedModelTarget(getId(item));
     const result = target && results.get(scopes.get(target.provider))?.get(target.model);
-    return { item, rank: modelTestRank(result?.status) };
-  }).filter(({ rank }) => hideFailedModels !== true || rank < 2)
+    const hidden = result?.status === "error" && preferences.get(target.provider)?.hideFailedModels;
+    return { item, rank: modelTestRank(result?.status), hidden };
+  }).filter(entry => !entry.hidden)
     .sort((a, b) => a.rank - b.rank)
     .map(({ item }) => item);
 }

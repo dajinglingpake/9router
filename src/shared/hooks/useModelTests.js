@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const empty = { results: {}, testing: new Set(), batch: null, canTest: false, warning: null };
+const empty = { results: {}, testing: new Set(), batch: null, canTest: false, warning: null, preferences: null };
 
 // Stop scheduling new probes on cancellation; let in-flight probes finish so
 // their results remain usable. Two workers avoid flooding the provider.
@@ -35,7 +35,7 @@ export function useModelTests(provider, scope) {
         if (!response.ok) throw new Error(data.error || "无法读取模型测试记录。");
         if (contextRef.current !== context) return;
         context.canTest = data.canTest === true;
-        setState({ ...empty, scope, results: data.results || {}, canTest: context.canTest, warning: data.warning || null });
+        setState({ ...empty, scope, results: data.results || {}, canTest: context.canTest, warning: data.warning || null, preferences: data.preferences });
       } catch (error) {
         if (contextRef.current === context) setState({ ...empty, scope, warning: error.message });
       }
@@ -47,6 +47,28 @@ export function useModelTests(provider, scope) {
       contextRef.current = null;
     };
   }, [provider, scope]);
+
+  async function savePreferences(changes) {
+    const context = contextRef.current;
+    if (!context || context.scope !== scope || context.savingPreferences) return;
+    context.savingPreferences = true;
+    setState(previous => ({ ...previous, savingPreferences: true, preferenceError: null }));
+    try {
+      const response = await fetch("/api/models/test", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, ...changes }),
+        signal: AbortSignal.any([context.controller.signal, AbortSignal.timeout(10000)]),
+      });
+      if (!response.ok) throw new Error("Failed to save model preferences");
+      const { preferences } = await response.json();
+      if (contextRef.current === context) setState(previous => ({ ...previous, preferences }));
+    } catch {
+      if (contextRef.current === context) setState(previous => ({ ...previous, preferenceError: "保存失败，请重试。" }));
+    } finally {
+      context.savingPreferences = false;
+      if (contextRef.current === context) setState(previous => ({ ...previous, savingPreferences: false }));
+    }
+  }
 
   async function testModel(modelId) {
     const context = contextRef.current;
@@ -92,5 +114,5 @@ export function useModelTests(provider, scope) {
   }
 
   const current = state.scope === scope ? state : empty;
-  return { ...current, testModel, testAll, stop };
+  return { ...current, savePreferences, testModel, testAll, stop };
 }

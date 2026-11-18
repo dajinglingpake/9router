@@ -7,8 +7,8 @@ vi.mock("@/lib/localDb", () => ({
   getApiKeys: async () => fixture.keys,
   getSettings: async () => fixture.settings,
   getCombos: async () => [],
-  getCustomModels: async () => [],
-  getModelAliases: async () => ({}),
+  getCustomModels: async () => [{ providerAlias: "kc", id: "openai/custom-model" }],
+  getModelAliases: async () => ({ kiloManual: "kc/openai/alias-model" }),
 }));
 vi.mock("@/lib/db/driver.js", () => ({ getAdapter: async () => fixture.adapter }));
 vi.mock("@/app/api/models/test/ping", () => ({ pingModelByKind: fixture.ping }));
@@ -17,10 +17,15 @@ vi.mock("@/lib/nvidiaModels", () => ({
   resolveNvidiaModels: async () => ({ models: [{ id: "nvidia/catalog-model" }, { id: "deepseek-ai/catalog-model" }] }),
 }));
 vi.mock("@/lib/kiloModels", () => ({
-  resolveKiloCatalog: async () => ({ models: [{ id: "openai/catalog-model" }, { id: "anthropic/catalog-model" }] }),
+  resolveKiloCatalog: async connections => ({
+    models: connections.length ? [
+      { id: "openai/catalog-model", isFree: true },
+      { id: "anthropic/catalog-model", isFree: false },
+    ] : [],
+  }),
 }));
 
-import { GET as testResults, POST as runTest } from "@/app/api/models/test/route.js";
+import { GET as testResults, PATCH as updatePreferences, POST as runTest } from "@/app/api/models/test/route.js";
 import { GET as listModels } from "@/app/api/v1/models/route.js";
 import { GET as geminiModels } from "@/app/api/v1beta/models/route.js";
 import { getModelTestContext } from "@/lib/modelTests";
@@ -37,6 +42,17 @@ beforeEach(() => {
     CREATE TABLE apiKeys(id TEXT, key TEXT, isActive INTEGER, accessRestricted INTEGER, allowedIps TEXT)`);
   fixture.adapter = Object.fromEntries(["get", "all", "run"].map(method =>
     [method, (sql, args = []) => db.prepare(sql)[method](...args)]));
+  fixture.adapter.transaction = callback => {
+    db.exec("BEGIN");
+    try {
+      const result = callback();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  };
   fixture.connections = [
     { id: "nvidia-shared", provider: "nvidia", isActive: true },
     { id: "kilo-shared", provider: "kilocode", isActive: true },
@@ -50,7 +66,11 @@ afterEach(() => db.close());
 
 const request = (path, apiKey) => new Request(local + path, apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : undefined);
 const test = model => runTest(new Request(local + "/api/models/test", { method: "POST", body: JSON.stringify({ model }) }));
+const update = (provider, changes) => updatePreferences(new Request(local + "/api/models/test", {
+  method: "PATCH", body: JSON.stringify({ provider, ...changes }),
+}));
 const externalIds = async apiKey => (await (await listModels(request("/v1/models", apiKey))).json()).data.map(entry => entry.id);
+const geminiIds = async () => (await (await geminiModels(request("/v1beta/models"))).json()).models.map(model => model.name);
 
 describe("model tests and public catalog visibility", () => {
   it("persists real probe outcomes and sorts or hides models from all three providers", async () => {
@@ -67,12 +87,37 @@ describe("model tests and public catalog visibility", () => {
     for (const model of passed) expect(ids.indexOf(model)).toBeLessThan(ids.indexOf(untested));
     for (const model of failed) expect(ids.indexOf(model)).toBeGreaterThan(ids.indexOf(untested));
 
-    fixture.settings.hideFailedModels = true;
+    expect((await update("nvidia", { hideFailedModels: true })).status).toBe(200);
+    expect(await externalIds()).toEqual(expect.arrayContaining([failed[0], failed[2]]));
+    expect(await externalIds()).not.toContain(failed[1]);
+    expect((await update("opencode", { hideFailedModels: true })).status).toBe(200);
+    expect((await update("kilocode", { hideFailedModels: true })).status).toBe(200);
     const filtered = await externalIds();
     expect(filtered).toEqual(expect.arrayContaining([...passed, untested]));
     for (const model of failed) expect(filtered).not.toContain(model);
-    const gemini = await (await geminiModels(request("/v1beta/models"))).json();
-    expect(gemini.models.map(model => model.name)).not.toContain("models/oc/union-alpha");
+    expect(await geminiIds()).not.toContain("models/oc/union-alpha");
+    expect((await update("nvidia", { hideFailedModels: false })).status).toBe(200);
+    expect(await externalIds()).toContain(failed[1]);
+    expect(await externalIds()).not.toContain(failed[0]);
+  });
+
+  it("shows only verified free Kilo models without probes and keeps the two switches independent", async () => {
+    const before = await externalIds();
+    expect(before).toEqual(expect.arrayContaining([passed[2], failed[2], "kc/openai/custom-model", "kc/openai/alias-model"]));
+    expect((await update("nvidia", { freeOnly: true })).status).toBe(400);
+    expect((await update("kilocode", { freeOnly: true })).status).toBe(200);
+    expect((await update("kilocode", { hideFailedModels: true })).status).toBe(200);
+    const { preferences } = await (await testResults(request("/api/models/test?provider=kilocode"))).json();
+    expect(preferences).toEqual({ freeOnly: true, hideFailedModels: true });
+    expect(fixture.ping).not.toHaveBeenCalled();
+    const freeOnly = await externalIds();
+    expect(freeOnly.filter(id => id.startsWith("kc/"))).toEqual([passed[2]]);
+    expect(freeOnly.filter(id => !id.startsWith("kc/"))).toEqual(before.filter(id => !id.startsWith("kc/")));
+    expect((await geminiIds()).filter(id => /^models\/(kc|kilocode)\//.test(id))).toEqual([`models/${passed[2]}`]);
+
+    const response = await update("kilocode", { freeOnly: false });
+    expect((await response.json()).preferences).toEqual({ freeOnly: false, hideFailedModels: true });
+    expect(await externalIds()).toEqual(before);
   });
 
   it("ignores expired failures and keeps one customer's results out of other account pools", async () => {
@@ -89,6 +134,10 @@ describe("model tests and public catalog visibility", () => {
     expect(await externalIds()).toContain(failed[1]);
     const reloaded = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
     expect(reloaded.results).toEqual({});
+    expect(reloaded.preferences.hideFailedModels).toBe(true);
+    expect((await update("nvidia", { hideFailedModels: false })).status).toBe(200);
+    const overridden = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
+    expect(overridden.preferences.hideFailedModels).toBe(false);
   });
 
   it("does not pollute the catalog when a provider has no testable connection", async () => {

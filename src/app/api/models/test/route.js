@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { pingModelByKind } from "./ping";
-import { getModelTestContext, getTestedModelTarget } from "@/lib/modelTests";
-import { getModelTests, saveModelTest } from "@/lib/db/repos/modelTestsRepo.js";
+import { getModelTestContext, getProviderModelPreferences, getTestedModelTarget } from "@/lib/modelTests";
+import { getModelTests, saveModelTest, saveModelTestPreferences } from "@/lib/db/repos/modelTestsRepo.js";
 import { MODEL_TEST_PROVIDERS } from "@/shared/utils/modelTests";
 import { safeDiagnosticMessage } from "open-sse/utils/upstreamDiagnostics.js";
 
@@ -12,12 +12,30 @@ export async function GET(request) {
   const provider = new URL(request.url).searchParams.get("provider");
   if (!MODEL_TEST_PROVIDERS.includes(provider)) return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
   try {
-    const context = await getModelTestContext(provider);
-    if (!context) return NextResponse.json({ results: {}, canTest: false, warning: NO_TEST_CONTEXT }, { headers });
+    const [context, byProvider] = await Promise.all([getModelTestContext(provider), getProviderModelPreferences()]);
+    const preferences = byProvider.get(provider);
+    if (!context) return NextResponse.json({ results: {}, canTest: false, warning: NO_TEST_CONTEXT, preferences }, { headers });
     const results = (await getModelTests([context.scope])).get(context.scope);
-    return NextResponse.json({ results: Object.fromEntries(results || []), canTest: true }, { headers });
+    return NextResponse.json({ results: Object.fromEntries(results || []), canTest: true, preferences }, { headers });
   } catch {
     return NextResponse.json({ error: "无法读取模型测试记录。" }, { status: 500, headers });
+  }
+}
+
+export async function PATCH(request) {
+  const body = await request.json().catch(() => null);
+  const { provider, ...changes } = body || {};
+  const entries = Object.entries(changes);
+  if (!MODEL_TEST_PROVIDERS.includes(provider) || !entries.length || entries.some(([key, value]) =>
+    typeof value !== "boolean" || (key !== "hideFailedModels" && !(provider === "kilocode" && key === "freeOnly")))) {
+    return NextResponse.json({ error: "无效的供应商模型设置。" }, { status: 400 });
+  }
+  try {
+    await saveModelTestPreferences(provider, changes);
+    const preferences = (await getProviderModelPreferences()).get(provider);
+    return NextResponse.json({ preferences }, { headers });
+  } catch {
+    return NextResponse.json({ error: "无法保存模型可见性。" }, { status: 500, headers });
   }
 }
 

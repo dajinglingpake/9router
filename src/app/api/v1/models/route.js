@@ -31,7 +31,7 @@ import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 import { resolveNvidiaModels } from "@/lib/nvidiaModels";
-import { orderModelsByTestResult } from "@/lib/modelTests";
+import { getProviderModelPreferences, orderModelsByTestResult } from "@/lib/modelTests";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 
@@ -353,6 +353,11 @@ export async function buildModelsList(kindFilter, options = {}) {
   // 9router instance's fetchCompatibleModelIds — skip dynamic fetch to break
   // cross-instance recursive loops.
   const skipDynamicFetch = options.skipDynamicFetch === true;
+  const preferences = await getProviderModelPreferences().catch(error => {
+    console.warn("Could not read model preferences:", error.message);
+    return new Map();
+  });
+  const kiloFreeOnly = preferences.get("kilocode")?.freeOnly === true;
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -471,7 +476,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     // DB unavailable -> return static models, filtered by per-model kind
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
-      if (providerId === "codex") continue;
+      if (providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly)) continue;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;
@@ -491,7 +496,8 @@ export async function buildModelsList(kindFilter, options = {}) {
       if (!kindFilter.includes(LLM_KIND)) continue;
       const providerAlias = customModel.providerAlias;
       if (!providerAlias) continue;
-      if (["codex", "cx"].includes(providerAlias)) continue;
+      const providerId = ALIAS_TO_PROVIDER_ID[providerAlias] || providerAlias;
+      if (providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly)) continue;
 
       const modelId = String(customModel.id).trim();
       if (!modelId) continue;
@@ -540,9 +546,11 @@ export async function buildModelsList(kindFilter, options = {}) {
         const catalog = providerId === "codex" ? codexCatalog : await resolveKiloCatalog(
           connections.filter(connection => connection.provider === providerId), { respectEnabledModels: true }
         );
-        rawModelIds = catalog.models.map(model => model.id);
-        liveModelKindById = new Map(catalog.models.map(model => [model.id, modelKind(model)]));
-        liveCapabilitiesById = new Map(catalog.models.map(model => [model.id, model.capabilities]));
+        const catalogModels = providerId === "kilocode" && kiloFreeOnly
+          ? catalog.models.filter(model => model.isFree === true) : catalog.models;
+        rawModelIds = catalogModels.map(model => model.id);
+        liveModelKindById = new Map(catalogModels.map(model => [model.id, modelKind(model)]));
+        liveCapabilitiesById = new Map(catalogModels.map(model => [model.id, model.capabilities]));
       }
 
       if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
@@ -632,7 +640,8 @@ export async function buildModelsList(kindFilter, options = {}) {
         })
         .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "");
 
-      const mergedModelIds = Array.from(new Set(providerId === "codex" ? modelIds : [...modelIds, ...customModelIds, ...aliasModelIds]));
+      const catalogOnly = providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly);
+      const mergedModelIds = Array.from(new Set(catalogOnly ? modelIds : [...modelIds, ...customModelIds, ...aliasModelIds]));
 
       for (const modelId of mergedModelIds) {
         // Resolve kind: prefer custom/live metadata, then static, then ID heuristics.
@@ -715,7 +724,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     dedupedModels.push(model);
   }
 
-  return orderModelsByTestResult(dedupedModels, connections).catch(error => {
+  return orderModelsByTestResult(dedupedModels, connections, preferences).catch(error => {
     console.warn("Could not read model test results:", error.message);
     return dedupedModels;
   });

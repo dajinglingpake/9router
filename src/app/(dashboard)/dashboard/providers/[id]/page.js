@@ -180,8 +180,9 @@ export default function ProviderDetailPage() {
   const hasModelTests = MODEL_TEST_PROVIDERS.includes(providerId);
   const activeTestAccounts = connections.filter(connection => connection.isActive !== false).map(connection => connection.id).sort();
   const modelTests = useModelTests(hasModelTests && !loading ? providerId : null, JSON.stringify([providerId, ...activeTestAccounts]));
+  const kiloFreeOnly = providerId === "kilocode" && modelTests.preferences?.freeOnly === true;
   const models = providerId === "codex" ? codexCatalog.models
-    : providerId === "kilocode" ? kiloCatalog.models
+    : providerId === "kilocode" ? (kiloFreeOnly ? kiloCatalog.models.filter(model => model.isFree === true) : kiloCatalog.models)
     : providerId === "nvidia" ? liveModels
     : LIVE_MODEL_CATALOG_PROVIDERS.has(providerId) && liveModels.length ? liveModels
     : applyQoderModelNames(staticModels, customModels, getProviderAlias(providerId));
@@ -1240,7 +1241,7 @@ export default function ProviderDetailPage() {
     }
     const disabledSet = new Set(disabledModelIds);
     const disabledDisplayModels = chatModels.filter((m) => disabledSet.has(m.id));
-    const customModelRows = providerId === "codex" ? [] : getProviderCustomModelRows({
+    const customModelRows = providerId === "codex" || kiloFreeOnly ? [] : getProviderCustomModelRows({
       customModels,
       modelAliases,
       providerAlias: providerStorageAlias,
@@ -1255,16 +1256,17 @@ export default function ProviderDetailPage() {
       displayModels.sort((a, b) => rank(a) - rank(b));
     }
     const catalogLoading = providerId === "kilocode" ? kiloCatalog.loading : liveModelsLoading;
+    const preferencesDisabled = !modelTests.preferences || modelTests.savingPreferences;
 
     return (
       <div className="flex flex-wrap gap-3">
         {hasModelTests && (
           <div className="w-full space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" icon="science" disabled={catalogLoading || !modelTests.canTest || !displayModels.length || modelTests.testing.size > 0 || modelTests.batch?.running}
+              {providerId !== "kilocode" && <Button size="sm" icon="science" disabled={catalogLoading || !modelTests.canTest || !displayModels.length || modelTests.testing.size > 0 || modelTests.batch?.running}
                 onClick={() => modelTests.testAll(displayModels.map(model => model.id))}>
                 {modelTests.batch?.running ? "正在批量检测…" : "一键检测全部"}
-              </Button>
+              </Button>}
               {modelTests.batch?.running && <Button size="sm" variant="secondary" disabled={modelTests.batch.stopping} onClick={modelTests.stop}>
                 {modelTests.batch.stopping ? "正在停止…" : "停止检测"}
               </Button>}
@@ -1279,12 +1281,30 @@ export default function ProviderDetailPage() {
                 {" · "}未检测 {displayModels.filter(model => !modelTests.results[model.id]).length}
               </span>
             </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-3 py-1">
+              <Toggle
+                label="对外隐藏检测失败的模型"
+                checked={modelTests.preferences?.hideFailedModels === true}
+                onChange={checked => modelTests.savePreferences({ hideFailedModels: checked })}
+                disabled={preferencesDisabled}
+              />
+              {providerId === "kilocode" && <Toggle
+                label="只显示免费模型"
+                description="同时筛选此页和对外 API 的模型列表"
+                checked={kiloFreeOnly}
+                onChange={checked => modelTests.savePreferences({ freeOnly: checked })}
+                disabled={preferencesDisabled}
+              />}
+            </div>
+            {modelTests.preferenceError && <p role="alert" className="text-xs text-red-500">{modelTests.preferenceError}</p>}
             <p className="text-xs text-text-muted">检测结果保留 1 小时，通过的模型在对外列表中优先显示。检测会发出实际请求，可能消耗额度。</p>
             {modelTests.loading && <p role="status" className="text-xs text-text-muted">正在读取检测结果…</p>}
             {modelTests.warning && <p role="status" className="text-xs text-text-muted">
               {!isFreeNoAuth && !activeTestAccounts.length ? `请先启用一个 ${providerInfo.name} 账号。` : modelTests.warning}
             </p>}
-            {modelTests.canTest && !catalogLoading && !liveModelsError && !displayModels.length && <p className="text-xs text-text-muted">暂无启用的模型可检测。</p>}
+            {!catalogLoading && !liveModelsError && !displayModels.length && (kiloFreeOnly || modelTests.canTest) && (
+              <p className="text-xs text-text-muted">{kiloFreeOnly ? "暂无启用的免费模型。" : "暂无启用的模型可检测。"}</p>
+            )}
           </div>
         )}
         {/* Custom models first */}
