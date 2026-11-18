@@ -1297,7 +1297,7 @@ export default function ProviderDetailPage() {
               />}
             </div>
             {modelTests.preferenceError && <p role="alert" className="text-xs text-red-500">{modelTests.preferenceError}</p>}
-            <p className="text-xs text-text-muted">检测结果保留 1 小时，通过的模型在对外列表中优先显示。检测会发出实际请求，可能消耗额度。</p>
+            <p className="text-xs text-text-muted">检测结果会保留到下次检测。通过的模型在对外列表中优先显示。检测会发出实际请求，可能消耗额度。</p>
             {modelTests.loading && <p role="status" className="text-xs text-text-muted">正在读取检测结果…</p>}
             {modelTests.warning && <p role="status" className="text-xs text-text-muted">
               {!isFreeNoAuth && !activeTestAccounts.length ? `请先启用一个 ${providerInfo.name} 账号。` : modelTests.warning}

@@ -1,7 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 
-const RESULT_TTL_MS = 60 * 60 * 1000;
 const PREFERENCES_SCOPE = "modelTestPreferences";
 
 export async function getModelTestPreferences() {
@@ -29,7 +28,7 @@ export async function getModelTests(scopes) {
   for (const row of rows) {
     const result = parseJson(row.value, null);
     if (!result || !["ok", "error"].includes(result.status) || !Number.isFinite(result.testedAt)
-      || result.testedAt > now || now - result.testedAt >= RESULT_TTL_MS) continue;
+      || result.testedAt > now) continue;
     if (!byScope.has(row.scope)) byScope.set(row.scope, new Map());
     byScope.get(row.scope).set(row.key, result);
   }

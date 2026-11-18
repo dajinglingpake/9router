@@ -120,7 +120,7 @@ describe("model tests and public catalog visibility", () => {
     expect(await externalIds()).toEqual(before);
   });
 
-  it("ignores expired failures and keeps one customer's results out of other account pools", async () => {
+  it("keeps older results until the next test and isolates them by account pool", async () => {
     fixture.connections.push({ id: "nvidia-private", provider: "nvidia", isActive: true, exclusiveApiKeyIds: ["owner"] });
     db.prepare("INSERT INTO apiKeys VALUES (?, ?, 1, 0, NULL)").run("owner", "owner-key");
     fixture.settings.hideFailedModels = true;
@@ -130,11 +130,20 @@ describe("model tests and public catalog visibility", () => {
     expect(await externalIds("owner-key")).toContain(failed[1]);
 
     const { scope } = await getModelTestContext("nvidia");
-    await saveModelTest(scope, "deepseek-ai/catalog-model", { status: "error", testedAt: Date.now() - 3600000 });
-    expect(await externalIds()).toContain(failed[1]);
+    const oldFailure = { status: "error", testedAt: Date.now() - 30 * 24 * 3600000 };
+    await saveModelTest(scope, "deepseek-ai/catalog-model", oldFailure);
+    expect(await externalIds()).not.toContain(failed[1]);
+    expect(await externalIds("owner-key")).toContain(failed[1]);
     const reloaded = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
-    expect(reloaded.results).toEqual({});
+    expect(reloaded.results["deepseek-ai/catalog-model"]).toEqual(oldFailure);
     expect(reloaded.preferences.hideFailedModels).toBe(true);
+
+    fixture.ping.mockResolvedValueOnce({ ok: true, status: 200, latencyMs: 5 });
+    expect((await test(failed[1])).status).toBe(200);
+    expect(await externalIds()).toContain(failed[1]);
+    const retested = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
+    expect(retested.results["deepseek-ai/catalog-model"].status).toBe("ok");
+    expect(retested.results["deepseek-ai/catalog-model"].testedAt).toBeGreaterThan(oldFailure.testedAt);
     expect((await update("nvidia", { hideFailedModels: false })).status).toBe(200);
     const overridden = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
     expect(overridden.preferences.hideFailedModels).toBe(false);
