@@ -1263,10 +1263,10 @@ export default function ProviderDetailPage() {
         {hasModelTests && (
           <div className="w-full space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              {providerId !== "kilocode" && <Button size="sm" icon="science" disabled={catalogLoading || !modelTests.canTest || !displayModels.length || modelTests.testing.size > 0 || modelTests.batch?.running}
+              <Button size="sm" icon="science" disabled={catalogLoading || !modelTests.canTest || !displayModels.length || modelTests.testing.size > 0 || modelTests.savingPreferences || modelTests.batch?.running}
                 onClick={() => modelTests.testAll(displayModels.map(model => model.id))}>
                 {modelTests.batch?.running ? "正在批量检测…" : "一键检测全部"}
-              </Button>}
+              </Button>
               {modelTests.batch?.running && <Button size="sm" variant="secondary" disabled={modelTests.batch.stopping} onClick={modelTests.stop}>
                 {modelTests.batch.stopping ? "正在停止…" : "停止检测"}
               </Button>}
@@ -1293,7 +1293,7 @@ export default function ProviderDetailPage() {
                 description="同时筛选此页和对外 API 的模型列表"
                 checked={kiloFreeOnly}
                 onChange={checked => modelTests.savePreferences({ freeOnly: checked })}
-                disabled={preferencesDisabled}
+                disabled={preferencesDisabled || modelTests.batch?.running}
               />}
             </div>
             {modelTests.preferenceError && <p role="alert" className="text-xs text-red-500">{modelTests.preferenceError}</p>}
