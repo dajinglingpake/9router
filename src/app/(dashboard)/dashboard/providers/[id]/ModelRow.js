@@ -46,7 +46,7 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
                 onClick={onTest}
                 disabled={isTesting || testDisabled}
                 aria-label={`Test ${model.id}`}
-                className={`rounded p-0.5 text-text-muted transition-opacity hover:bg-sidebar hover:text-primary ${isTesting ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
+                className={`rounded p-0.5 text-text-muted transition-opacity hover:bg-sidebar hover:text-primary focus-visible:opacity-100 disabled:cursor-not-allowed disabled:text-text-muted/40 ${isTesting || availability ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
               >
                 <span className="material-symbols-outlined text-sm" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
                   {isTesting ? "progress_activity" : "science"}

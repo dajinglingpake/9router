@@ -30,6 +30,8 @@ export default function ProfilePage() {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
   const [loading, setLoading] = useState(true);
+  const [savingModelVisibility, setSavingModelVisibility] = useState(false);
+  const [modelVisibilityError, setModelVisibilityError] = useState("");
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
   const [passLoading, setPassLoading] = useState(false);
@@ -277,6 +279,24 @@ export default function ProfilePage() {
       }
     } catch (err) {
       console.error("Failed to update settings:", err);
+    }
+  };
+
+  const updateModelVisibility = async (hideFailedModels) => {
+    setSavingModelVisibility(true);
+    setModelVisibilityError("");
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hideFailedModels }),
+      });
+      if (!response.ok) throw new Error("Failed to save model visibility");
+      setSettings(previous => ({ ...previous, hideFailedModels }));
+    } catch {
+      setModelVisibilityError("保存失败，请重试。");
+    } finally {
+      setSavingModelVisibility(false);
     }
   };
 
@@ -1450,6 +1470,21 @@ export default function ProfilePage() {
             <h3 className="text-base sm:text-lg font-semibold">Routing Strategy</h3>
           </div>
           <div className="flex flex-col gap-4">
+            <div className="flex items-start sm:items-center justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">对外隐藏检测失败的模型</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  在 API 模型列表中隐藏最近一小时检测失败的 OpenCode Free、NVIDIA NIM 和 Kilo Code 模型。未检测的模型仍会列出。
+                </p>
+                {modelVisibilityError && <p role="alert" className="text-xs text-red-500">{modelVisibilityError}</p>}
+              </div>
+              <Toggle
+                ariaLabel="对外隐藏检测失败的模型"
+                checked={settings.hideFailedModels === true}
+                onChange={updateModelVisibility}
+                disabled={loading || savingModelVisibility}
+              />
+            </div>
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <p className="font-medium text-sm sm:text-base">Round Robin</p>

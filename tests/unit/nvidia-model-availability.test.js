@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseNvidiaModels } from "@/shared/utils/nvidiaModels";
-import { readModelTestResults, runModelTestBatch } from "@/shared/hooks/useNvidiaModelTests";
+import { runModelTestBatch } from "@/shared/hooks/useModelTests";
 
 describe("NVIDIA model availability", () => {
   it("keeps the live catalog without retired seeds, duplicates or non-chat misclassification", () => {
@@ -54,17 +54,4 @@ describe("NVIDIA model availability", () => {
     expect(progress).toEqual([1, 2]);
   });
 
-  it("restores only recent results for the same account scope and tolerates unavailable storage", () => {
-    const now = 10_000_000;
-    const storage = { getItem: key => key.endsWith("account-a") ? JSON.stringify({
-      available: { status: "ok", testedAt: now - 1000 },
-      failed: { status: "error", testedAt: now - 2000 },
-      stale: { status: "ok", testedAt: now - 3_600_000 },
-      future: { status: "ok", testedAt: now + 1000 },
-      invalid: { status: "other", testedAt: now },
-    }) : null };
-    expect(Object.keys(readModelTestResults(storage, "account-a", now))).toEqual(["available", "failed"]);
-    expect(readModelTestResults(storage, "account-b", now)).toEqual({});
-    expect(readModelTestResults({ getItem: () => { throw new Error("blocked"); } }, "account-a", now)).toEqual({});
-  });
 });

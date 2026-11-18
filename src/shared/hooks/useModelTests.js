@@ -2,18 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-const RESULT_TTL_MS = 60 * 60 * 1000;
-const STORAGE_PREFIX = "9router:nvidia-model-tests:";
-
-export function readModelTestResults(storage, scope, now = Date.now()) {
-  try {
-    const results = JSON.parse(storage.getItem(STORAGE_PREFIX + scope) || "{}");
-    return Object.fromEntries(Object.entries(results).filter(([, result]) =>
-      (result?.status === "ok" || result?.status === "error")
-      && Number.isFinite(result.testedAt) && result.testedAt <= now
-      && now - result.testedAt < RESULT_TTL_MS));
-  } catch { return {}; }
-}
+const empty = { results: {}, testing: new Set(), batch: null, canTest: false, warning: null };
 
 // Stop scheduling new probes on cancellation; let in-flight probes finish so
 // their results remain usable. Two workers avoid flooding the provider.
@@ -28,52 +17,63 @@ export async function runModelTestBatch(modelIds, testModel, stopped, onProgress
   }));
 }
 
-export function useNvidiaModelTests(scope) {
+export function useModelTests(provider, scope) {
   const contextRef = useRef(null);
-  const [state, setState] = useState({ scope: "", results: {}, testing: new Set(), batch: null });
+  const [state, setState] = useState(empty);
 
   useEffect(() => {
-    const context = { scope, results: {}, testing: new Set(), controller: new AbortController(), stopped: false, running: false };
-    try { if (scope) context.results = readModelTestResults(window.localStorage, scope); } catch {}
+    if (!provider) return;
+    const context = { scope, testing: new Set(), controller: new AbortController(), stopped: false, running: false, canTest: false };
     contextRef.current = context;
     queueMicrotask(() => {
-      if (contextRef.current === context) setState({ scope, results: context.results, testing: new Set(), batch: null });
+      if (contextRef.current === context) setState({ ...empty, scope, loading: true });
     });
+    async function load() {
+      try {
+        const response = await fetch(`/api/models/test?provider=${encodeURIComponent(provider)}`, { signal: context.controller.signal, cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "无法读取模型测试记录。");
+        if (contextRef.current !== context) return;
+        context.canTest = data.canTest === true;
+        setState({ ...empty, scope, results: data.results || {}, canTest: context.canTest, warning: data.warning || null });
+      } catch (error) {
+        if (contextRef.current === context) setState({ ...empty, scope, warning: error.message });
+      }
+    }
+    void load();
     return () => {
       context.stopped = true;
       context.controller.abort();
       contextRef.current = null;
     };
-  }, [scope]);
+  }, [provider, scope]);
 
   async function testModel(modelId) {
     const context = contextRef.current;
-    if (!scope || context?.scope !== scope || context.testing.has(modelId)) return;
+    if (!context?.canTest || context.scope !== scope || context.testing.has(modelId)) return;
     context.testing.add(modelId);
     setState(previous => ({ ...previous, testing: new Set(context.testing) }));
     let result;
     try {
       const response = await fetch("/api/models/test", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: `nvidia/${modelId}`, kind: "llm" }),
+        body: JSON.stringify({ model: `${provider}/${modelId}`, kind: "llm" }),
         signal: AbortSignal.any([context.controller.signal, AbortSignal.timeout(25000)]),
       });
       const data = await response.json();
-      result = { status: response.ok && data.ok ? "ok" : "error", error: data.error || "", latencyMs: data.latencyMs, testedAt: Date.now() };
+      result = { status: response.ok && data.ok ? "ok" : "error", error: data.error || "", latencyMs: data.latencyMs, testedAt: data.testedAt };
     } catch (error) {
-      result = { status: "error", error: error.name === "TimeoutError" ? "检测超时，请重试。" : "模型检测失败，请稍后重试。", testedAt: Date.now() };
+      result = { status: "error", error: error.name === "TimeoutError" ? "检测超时，请重试。" : "模型检测失败，请稍后重试。" };
     } finally {
       context.testing.delete(modelId);
     }
     if (contextRef.current !== context) return;
-    context.results = { ...context.results, [modelId]: result };
-    try { window.localStorage.setItem(STORAGE_PREFIX + scope, JSON.stringify(context.results)); } catch {}
-    setState(previous => ({ ...previous, results: context.results, testing: new Set(context.testing) }));
+    setState(previous => ({ ...previous, results: { ...previous.results, [modelId]: result }, testing: new Set(context.testing) }));
   }
 
   async function testAll(modelIds) {
     const context = contextRef.current;
-    if (!modelIds.length || !scope || context?.scope !== scope || context.running || context.testing.size) return;
+    if (!modelIds.length || !context?.canTest || context.scope !== scope || context.running || context.testing.size) return;
     context.running = true;
     context.stopped = false;
     setState(previous => ({ ...previous, batch: { completed: 0, total: modelIds.length, running: true, stopping: false } }));
@@ -91,6 +91,6 @@ export function useNvidiaModelTests(scope) {
     setState(previous => ({ ...previous, batch: { ...previous.batch, stopping: true } }));
   }
 
-  const current = state.scope === scope ? state : { results: {}, testing: new Set(), batch: null };
+  const current = state.scope === scope ? state : empty;
   return { ...current, testModel, testAll, stop };
 }

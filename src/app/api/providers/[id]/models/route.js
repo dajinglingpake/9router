@@ -20,7 +20,7 @@ import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
-import { parseNvidiaModels } from "@/shared/utils/nvidiaModels";
+import { resolveNvidiaModels } from "@/lib/nvidiaModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -328,10 +328,7 @@ const PROVIDER_MODELS_CONFIG = {
   // ollama-local: url resolved dynamically below via providerSpecificData.baseUrl
   nanobanana: createOpenAIModelsConfig("https://api.nanobananaapi.ai/v1/models"),
   chutes: createOpenAIModelsConfig("https://llm.chutes.ai/v1/models"),
-  nvidia: {
-    ...createOpenAIModelsConfig("https://integrate.api.nvidia.com/v1/models"),
-    parseResponse: parseNvidiaModels,
-  },
+  nvidia: { customResolver: resolveNvidiaModels },
   synthetic: createOpenAIModelsConfig("https://api.synthetic.new/openai/v1/models"),
   assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
   "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),
@@ -651,7 +648,8 @@ export async function GET(request, { params }) {
 
     // Config-driven custom resolver path (OAuth refresh, non-OpenAI shape, etc.)
     if (typeof config.customResolver === "function") {
-      const result = await config.customResolver(connection);
+      const forceRefresh = request?.url && new URL(request.url).searchParams.get("refresh") === "1";
+      const result = forceRefresh ? await config.customResolver(connection, { forceRefresh }) : await config.customResolver(connection);
       if (result.error) {
         return NextResponse.json({ error: result.error }, { status: result.status || 500 });
       }

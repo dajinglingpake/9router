@@ -30,6 +30,8 @@ import { resolveKimiModels } from "@/lib/kimiModels";
 import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
+import { resolveNvidiaModels } from "@/lib/nvidiaModels";
+import { orderModelsByTestResult } from "@/lib/modelTests";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 
@@ -79,6 +81,7 @@ function comboSeatCapabilities(seat, codexCapabilities = null) {
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
+  nvidia: resolveNvidiaModels,
   openai: resolveOpenAIModels,
   kimi: resolveKimiModels,
   "codebuddy-cn": resolveCodebuddyModels,
@@ -550,7 +553,7 @@ export async function buildModelsList(kindFilter, options = {}) {
       // -thinking/-agentic variants per account). On failure, fall back to
       // whatever rawModelIds already holds.
       const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
-      if (liveResolver && !hasExplicitEnabledModels) {
+      if (liveResolver && !hasExplicitEnabledModels && (providerId !== "nvidia" || kindFilter.includes(LLM_KIND))) {
         try {
           const live = await liveResolver(conn);
           if (live?.models?.length) {
@@ -573,6 +576,8 @@ export async function buildModelsList(kindFilter, options = {}) {
 
       const modelIds = rawModelIds
         .map((modelId) => {
+          // NVIDIA's native IDs can themselves start with nvidia/.
+          if (providerId === "nvidia" && (liveModelKindById.has(modelId) || staticModelKindById.has(modelId))) return modelId;
           if (modelId.startsWith(`${outputAlias}/`)) {
             return modelId.slice(outputAlias.length + 1);
           }
@@ -710,7 +715,10 @@ export async function buildModelsList(kindFilter, options = {}) {
     dedupedModels.push(model);
   }
 
-  return dedupedModels;
+  return orderModelsByTestResult(dedupedModels, connections).catch(error => {
+    console.warn("Could not read model test results:", error.message);
+    return dedupedModels;
+  });
 }
 
 /**

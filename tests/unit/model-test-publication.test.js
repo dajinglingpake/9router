@@ -1,0 +1,102 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+
+const fixture = vi.hoisted(() => ({ connections: [], keys: [], settings: {}, adapter: null, ping: vi.fn() }));
+vi.mock("@/lib/localDb", () => ({
+  getProviderConnections: async ({ provider } = {}) => fixture.connections.filter(connection => !provider || connection.provider === provider),
+  getApiKeys: async () => fixture.keys,
+  getSettings: async () => fixture.settings,
+  getCombos: async () => [],
+  getCustomModels: async () => [],
+  getModelAliases: async () => ({}),
+}));
+vi.mock("@/lib/db/driver.js", () => ({ getAdapter: async () => fixture.adapter }));
+vi.mock("@/app/api/models/test/ping", () => ({ pingModelByKind: fixture.ping }));
+vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: async () => ({}) }));
+vi.mock("@/lib/nvidiaModels", () => ({
+  resolveNvidiaModels: async () => ({ models: [{ id: "nvidia/catalog-model" }, { id: "deepseek-ai/catalog-model" }] }),
+}));
+vi.mock("@/lib/kiloModels", () => ({
+  resolveKiloCatalog: async () => ({ models: [{ id: "openai/catalog-model" }, { id: "anthropic/catalog-model" }] }),
+}));
+
+import { GET as testResults, POST as runTest } from "@/app/api/models/test/route.js";
+import { GET as listModels } from "@/app/api/v1/models/route.js";
+import { GET as geminiModels } from "@/app/api/v1beta/models/route.js";
+import { getModelTestContext } from "@/lib/modelTests";
+import { saveModelTest } from "@/lib/db/repos/modelTestsRepo.js";
+
+const local = "http://127.0.0.1:20128";
+const failed = ["oc/union-alpha", "nvidia/deepseek-ai/catalog-model", "kc/anthropic/catalog-model"];
+const passed = ["oc/muse-spark-1.2-contributor-free", "nvidia/nvidia/catalog-model", "kc/openai/catalog-model"];
+
+let db;
+beforeEach(() => {
+  db = new DatabaseSync(":memory:");
+  db.exec(`CREATE TABLE kv(scope TEXT, key TEXT, value TEXT, PRIMARY KEY(scope, key));
+    CREATE TABLE apiKeys(id TEXT, key TEXT, isActive INTEGER, accessRestricted INTEGER, allowedIps TEXT)`);
+  fixture.adapter = Object.fromEntries(["get", "all", "run"].map(method =>
+    [method, (sql, args = []) => db.prepare(sql)[method](...args)]));
+  fixture.connections = [
+    { id: "nvidia-shared", provider: "nvidia", isActive: true },
+    { id: "kilo-shared", provider: "kilocode", isActive: true },
+  ];
+  fixture.keys = [{ id: "shared", key: "shared-key", isActive: true }];
+  fixture.settings = { requireApiKey: true, hideFailedModels: false };
+  fixture.ping.mockReset().mockImplementation(async model =>
+    passed.includes(model) ? { ok: true, status: 200, latencyMs: 5 } : { ok: false, status: 429, error: "Quota exceeded" });
+});
+afterEach(() => db.close());
+
+const request = (path, apiKey) => new Request(local + path, apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : undefined);
+const test = model => runTest(new Request(local + "/api/models/test", { method: "POST", body: JSON.stringify({ model }) }));
+const externalIds = async apiKey => (await (await listModels(request("/v1/models", apiKey))).json()).data.map(entry => entry.id);
+
+describe("model tests and public catalog visibility", () => {
+  it("persists real probe outcomes and sorts or hides models from all three providers", async () => {
+    for (const model of [...failed, ...passed]) {
+      expect((await test(model)).status).toBe(200);
+    }
+    const available = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
+    expect(available.canTest).toBe(true);
+    expect(available.results["nvidia/catalog-model"].status).toBe("ok");
+    expect(available.results["deepseek-ai/catalog-model"].status).toBe("error");
+
+    const untested = "oc/muse-spark-1.3-contributor-free";
+    const ids = await externalIds();
+    for (const model of passed) expect(ids.indexOf(model)).toBeLessThan(ids.indexOf(untested));
+    for (const model of failed) expect(ids.indexOf(model)).toBeGreaterThan(ids.indexOf(untested));
+
+    fixture.settings.hideFailedModels = true;
+    const filtered = await externalIds();
+    expect(filtered).toEqual(expect.arrayContaining([...passed, untested]));
+    for (const model of failed) expect(filtered).not.toContain(model);
+    const gemini = await (await geminiModels(request("/v1beta/models"))).json();
+    expect(gemini.models.map(model => model.name)).not.toContain("models/oc/union-alpha");
+  });
+
+  it("ignores expired failures and keeps one customer's results out of other account pools", async () => {
+    fixture.connections.push({ id: "nvidia-private", provider: "nvidia", isActive: true, exclusiveApiKeyIds: ["owner"] });
+    db.prepare("INSERT INTO apiKeys VALUES (?, ?, 1, 0, NULL)").run("owner", "owner-key");
+    fixture.settings.hideFailedModels = true;
+
+    expect((await test(failed[1])).status).toBe(200);
+    expect(await externalIds()).not.toContain(failed[1]);
+    expect(await externalIds("owner-key")).toContain(failed[1]);
+
+    const { scope } = await getModelTestContext("nvidia");
+    await saveModelTest(scope, "deepseek-ai/catalog-model", { status: "error", testedAt: Date.now() - 3600000 });
+    expect(await externalIds()).toContain(failed[1]);
+    const reloaded = await (await testResults(request("/api/models/test?provider=nvidia"))).json();
+    expect(reloaded.results).toEqual({});
+  });
+
+  it("does not pollute the catalog when a provider has no testable connection", async () => {
+    fixture.connections = fixture.connections.filter(connection => connection.provider !== "kilocode");
+    const attempted = await test(passed[2]);
+    expect(attempted.status).toBe(409);
+    expect(fixture.ping).not.toHaveBeenCalled();
+    const status = await (await testResults(request("/api/models/test?provider=kilocode"))).json();
+    expect(status).toMatchObject({ canTest: false, results: {} });
+  });
+});

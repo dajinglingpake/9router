@@ -1,6 +1,8 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { getProviderConnections } from "@/lib/localDb";
 import { resolveCodexCatalog } from "@/lib/codexModels";
+import { orderModelsByTestResult } from "@/lib/modelTests";
+import { MODEL_TEST_PROVIDERS } from "@/shared/utils/modelTests";
 import { filterAccountPoolForRequest } from "@/sse/services/accountApiKeyAccess.js";
 
 export const dynamic = "force-dynamic";
@@ -40,9 +42,11 @@ export async function GET(request) {
       });
     }
     
-    const connections = (await getProviderConnections({ provider: "codex", isActive: true }))
-      .filter(connection => connection.provider === "codex" && connection.isActive !== false);
-    const codex = await resolveCodexCatalog(await filterAccountPoolForRequest(connections, request), { respectEnabledModels: true });
+    const connections = await getProviderConnections();
+    const available = (await Promise.all(["codex", ...MODEL_TEST_PROVIDERS].map(provider =>
+      filterAccountPoolForRequest(connections.filter(connection => connection.provider === provider), request)
+    ))).flat().filter(connection => connection.isActive !== false);
+    const codex = await resolveCodexCatalog(available.filter(connection => connection.provider === "codex"), { respectEnabledModels: true });
     const catalog = { ...PROVIDER_MODELS, cx: codex.models };
     delete catalog.codex;
     for (const [provider, providerModels] of Object.entries(catalog)) {
@@ -64,7 +68,8 @@ export async function GET(request) {
       }
     }
 
-    return Response.json({ models });
+    const ordered = await orderModelsByTestResult(models, available, model => model.name.slice("models/".length)).catch(() => models);
+    return Response.json({ models: ordered });
   } catch (error) {
     console.log("Error fetching models:", error);
     return Response.json({ error: { message: error.message } }, { status: 500 });

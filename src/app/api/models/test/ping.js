@@ -40,15 +40,16 @@ function createSilentWavFile() {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-async function getInternalHeaders() {
-  let apiKey = null;
-  try {
-    const keys = await getApiKeys();
-    // Internal probes originate from loopback. Respect each key's IP whitelist
-    // before preferring an unrestricted key for the requested model.
-    const activeKeys = keys.filter((k) => k.isActive !== false && isIpAllowed(k.allowedIps, "127.0.0.1"));
-    apiKey = (activeKeys.find((k) => !k.access?.restricted) || activeKeys[0])?.key || null;
-  } catch {}
+async function getInternalHeaders(apiKey) {
+  if (apiKey === undefined) {
+    try {
+      const keys = await getApiKeys();
+      // Internal probes originate from loopback. Respect each key's IP whitelist
+      // before preferring an unrestricted key for the requested model.
+      const activeKeys = keys.filter((k) => k.isActive !== false && isIpAllowed(k.allowedIps, "127.0.0.1"));
+      apiKey = (activeKeys.find((k) => !k.access?.restricted) || activeKeys[0])?.key;
+    } catch {}
+  }
 
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
@@ -56,8 +57,8 @@ async function getInternalHeaders() {
   return headers;
 }
 
-export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`) {
-  const headers = await getInternalHeaders();
+export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`, { apiKey } = {}) {
+  const headers = await getInternalHeaders(apiKey);
   const start = Date.now();
 
   if (kind === "embedding") {

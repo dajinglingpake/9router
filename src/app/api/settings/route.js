@@ -36,6 +36,9 @@ export async function GET() {
 export async function PATCH(request) {
   try {
     const body = await request.json();
+    if (Object.hasOwn(body, "hideFailedModels") && typeof body.hideFailedModels !== "boolean") {
+      return NextResponse.json({ error: "模型隐藏开关必须为布尔值。" }, { status: 400 });
+    }
 
     // Strip protected secrets before any internal handling sets them
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];

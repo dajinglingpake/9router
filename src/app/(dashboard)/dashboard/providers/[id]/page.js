@@ -16,7 +16,8 @@ import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { useCodexModels } from "@/shared/hooks/useCodexModels";
 import { useKiloModels } from "@/shared/hooks/useKiloModels";
-import { useNvidiaModelTests } from "@/shared/hooks/useNvidiaModelTests";
+import { useModelTests } from "@/shared/hooks/useModelTests";
+import { MODEL_TEST_PROVIDERS, modelTestRank } from "@/shared/utils/modelTests";
 import { applyQoderModelNames, getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
@@ -176,9 +177,9 @@ export default function ProviderDetailPage() {
   const staticModels = getModelsByProviderId(providerId);
   const codexCatalog = useCodexModels(connections, { enabled: providerId === "codex" });
   const kiloCatalog = useKiloModels(connections, providerId === "kilocode" && !loading);
-  const nvidiaTestScope = providerId === "nvidia" ? connections.filter(connection => connection.isActive !== false)
-    .map(connection => connection.id).sort().join(",") : "";
-  const nvidiaTests = useNvidiaModelTests(nvidiaTestScope);
+  const hasModelTests = MODEL_TEST_PROVIDERS.includes(providerId);
+  const activeTestAccounts = connections.filter(connection => connection.isActive !== false).map(connection => connection.id).sort();
+  const modelTests = useModelTests(hasModelTests && !loading ? providerId : null, JSON.stringify([providerId, ...activeTestAccounts]));
   const models = providerId === "codex" ? codexCatalog.models
     : providerId === "kilocode" ? kiloCatalog.models
     : providerId === "nvidia" ? liveModels
@@ -513,7 +514,8 @@ export default function ProviderDetailPage() {
     let cancelled = false;
     const controller = new AbortController();
     setLiveModelsLoading(true);
-    fetch(`/api/providers/${connection.id}/models`, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) })
+    const refresh = providerId === "nvidia" && liveModelsRevision > 0 ? "?refresh=1" : "";
+    fetch(`/api/providers/${connection.id}/models${refresh}`, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) })
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
         if (cancelled) return;
@@ -1197,7 +1199,7 @@ export default function ProviderDetailPage() {
   );
 
   const handleTestModel = async (modelId) => {
-    if (providerId === "nvidia") return nvidiaTests.testModel(modelId);
+    if (hasModelTests) return modelTests.testModel(modelId);
     if (testingModelIds.has(modelId)) return;
     setTestingModelIds((prev) => new Set(prev).add(modelId));
     try {
@@ -1245,44 +1247,48 @@ export default function ProviderDetailPage() {
       builtInModels: models,
       type: "llm",
     });
-    const displayModels = (providerId === "nvidia"
+    const displayModels = (hasModelTests
       ? [...customModelRows.map(model => ({ ...model, customRow: model })), ...chatModels]
       : chatModels).filter(model => !disabledSet.has(model.id));
-    if (providerId === "nvidia") {
-      const rank = model => nvidiaTests.results[model.id]?.status === "ok" ? 0
-        : nvidiaTests.results[model.id]?.status === "error" ? 2 : 1;
+    if (hasModelTests) {
+      const rank = model => modelTestRank(modelTests.results[model.id]?.status);
       displayModels.sort((a, b) => rank(a) - rank(b));
     }
+    const catalogLoading = providerId === "kilocode" ? kiloCatalog.loading : liveModelsLoading;
 
     return (
       <div className="flex flex-wrap gap-3">
-        {providerId === "nvidia" && (
+        {hasModelTests && (
           <div className="w-full space-y-2">
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" icon="science" disabled={liveModelsLoading || !nvidiaTestScope || !displayModels.length || nvidiaTests.testing.size > 0 || nvidiaTests.batch?.running}
-                onClick={() => nvidiaTests.testAll(displayModels.map(model => model.id))}>
-                {nvidiaTests.batch?.running ? "正在批量检测…" : "一键检测全部"}
+              <Button size="sm" icon="science" disabled={catalogLoading || !modelTests.canTest || !displayModels.length || modelTests.testing.size > 0 || modelTests.batch?.running}
+                onClick={() => modelTests.testAll(displayModels.map(model => model.id))}>
+                {modelTests.batch?.running ? "正在批量检测…" : "一键检测全部"}
               </Button>
-              {nvidiaTests.batch?.running && <Button size="sm" variant="secondary" disabled={nvidiaTests.batch.stopping} onClick={nvidiaTests.stop}>
-                {nvidiaTests.batch.stopping ? "正在停止…" : "停止检测"}
+              {modelTests.batch?.running && <Button size="sm" variant="secondary" disabled={modelTests.batch.stopping} onClick={modelTests.stop}>
+                {modelTests.batch.stopping ? "正在停止…" : "停止检测"}
               </Button>}
-              <Button size="sm" variant="secondary" icon="refresh" disabled={liveModelsLoading || nvidiaTests.testing.size > 0 || nvidiaTests.batch?.running}
+              {providerId === "nvidia" && <Button size="sm" variant="secondary" icon="refresh" disabled={catalogLoading || modelTests.testing.size > 0 || modelTests.batch?.running}
                 onClick={() => setLiveModelsRevision(revision => revision + 1)}>
-                {liveModelsLoading ? "正在拉取…" : "刷新模型"}
-              </Button>
+                {catalogLoading ? "正在拉取…" : "刷新模型"}
+              </Button>}
               <span role="status" className="text-xs text-text-muted">
-                {nvidiaTests.batch && `${nvidiaTests.batch.running ? "已检测" : nvidiaTests.batch.stopping ? "已停止" : "检测完成"} ${nvidiaTests.batch.completed}/${nvidiaTests.batch.total} · `}
-                可用 {displayModels.filter(model => nvidiaTests.results[model.id]?.status === "ok").length}
-                {" · "}检测失败 {displayModels.filter(model => nvidiaTests.results[model.id]?.status === "error").length}
-                {" · "}未检测 {displayModels.filter(model => !nvidiaTests.results[model.id]).length}
+                {modelTests.batch && `${modelTests.batch.running ? "已检测" : modelTests.batch.stopping ? "已停止" : "检测完成"} ${modelTests.batch.completed}/${modelTests.batch.total} · `}
+                可用 {displayModels.filter(model => modelTests.results[model.id]?.status === "ok").length}
+                {" · "}检测失败 {displayModels.filter(model => modelTests.results[model.id]?.status === "error").length}
+                {" · "}未检测 {displayModels.filter(model => !modelTests.results[model.id]).length}
               </span>
             </div>
-            <p className="text-xs text-text-muted">模型目录实时拉取，检测通过后自动置顶；检测结果在此浏览器保留 1 小时。</p>
-            {!liveModelsLoading && !liveModelsError && !models.length && <p className="text-xs text-text-muted">{nvidiaTestScope ? "未获取到模型，请刷新重试。" : "请先启用一个 NVIDIA 连接。"}</p>}
+            <p className="text-xs text-text-muted">检测结果保留 1 小时，通过的模型在对外列表中优先显示。检测会发出实际请求，可能消耗额度。</p>
+            {modelTests.loading && <p role="status" className="text-xs text-text-muted">正在读取检测结果…</p>}
+            {modelTests.warning && <p role="status" className="text-xs text-text-muted">
+              {!isFreeNoAuth && !activeTestAccounts.length ? `请先启用一个 ${providerInfo.name} 账号。` : modelTests.warning}
+            </p>}
+            {modelTests.canTest && !catalogLoading && !liveModelsError && !displayModels.length && <p className="text-xs text-text-muted">暂无启用的模型可检测。</p>}
           </div>
         )}
         {/* Custom models first */}
-        {(providerId === "nvidia" ? [] : customModelRows).map((model) => (
+        {(hasModelTests ? [] : customModelRows).map((model) => (
           <ModelRow
             key={`${model.source}-${model.fullModel}`}
             model={{ id: model.id, name: model.name }}
@@ -1327,11 +1333,11 @@ export default function ProviderDetailPage() {
                 ? handleDeleteCustomModel(model.id, "llm", providerStorageAlias) : handleDeleteAlias(model.alias)
                 : () => handleDeleteAlias(existingAlias)}
               isCustom={!!model.customRow}
-              testStatus={providerId === "nvidia" ? nvidiaTests.results[model.id]?.status : modelTestResults[model.id]}
-              availability={providerId === "nvidia" ? nvidiaTests.results[model.id] || {} : undefined}
-              onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
-              isTesting={providerId === "nvidia" ? nvidiaTests.testing.has(model.id) : testingModelIds.has(model.id)}
-              testDisabled={providerId === "nvidia" && (!nvidiaTestScope || nvidiaTests.batch?.running)}
+              testStatus={hasModelTests ? modelTests.results[model.id]?.status : modelTestResults[model.id]}
+              availability={hasModelTests ? modelTests.results[model.id] || {} : undefined}
+              onTest={hasModelTests || connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
+              isTesting={hasModelTests ? modelTests.testing.has(model.id) : testingModelIds.has(model.id)}
+              testDisabled={hasModelTests && (!modelTests.canTest || modelTests.batch?.running)}
               isFree={model.isFree}
               onDisable={() => handleDisableModel(model.id)}
               caps={{ ...getCaps(`${providerId}/${model.id}`), ...model.capabilities }}
