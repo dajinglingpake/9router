@@ -1,17 +1,14 @@
-import OpenAIBalance from "./OpenAIBalance";
-
 const formatNumber = value => value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 const formatMoney = (amount, currency) => `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} ${currency}`;
 const componentLabels = { input: "普通输入", cached: "缓存读取", write30m: "缓存写入（30 分钟）", write12h: "缓存写入（12 小时）", output: "输出" };
 const tierLabels = { default: "标准", flex: "Flex", batch: "Batch", priority: "Fast", fast: "Fast", ultrafast: "Ultrafast" };
 
-export default function OpenAIUsageSummary({ usage, detailUrl, connectionId, onBalanceSaved }) {
+export default function OpenAIUsageSummary({ usage, detailUrl }) {
   const estimate = usage.costs.length === 0 ? usage.estimate : null;
   const amounts = usage.costs.length ? usage.costs : estimate?.amount != null ? [estimate] : [];
   const amountLabel = estimate ? (estimate.unpricedRequests > 0 ? "本月消费（部分估算）" : "本月消费（估算）") : "本月已消费";
   return (
-    <div className="space-y-2">
-      <OpenAIBalance balance={usage.balance} connectionId={connectionId} onSaved={onBalanceSaved} />
+    <div className="mt-2 space-y-2">
       <div className="text-[10px] text-text-muted">组织本月统计 · UTC</div>
       <dl className="space-y-px">
         {amounts.map(cost => (
@@ -30,7 +27,7 @@ export default function OpenAIUsageSummary({ usage, detailUrl, connectionId, onB
           <p>{usage.periodStart.slice(0, 10)} — {usage.periodEnd.slice(0, 16).replace("T", " ")} UTC</p>
           <p>{formatNumber(usage.requests)} 次模型请求 · 输入 {formatNumber(usage.inputTokens)} Token · 输出 {formatNumber(usage.outputTokens)} Token</p>
           {estimate?.breakdown.map(group => (
-            <div key={`${group.model}-${group.tier}`} className="space-y-1 border-t border-black/5 pt-1 dark:border-white/5">
+            <div key={`${group.model}-${group.tier}-${group.components[0].rate}`} className="space-y-1 border-t border-black/5 pt-1 dark:border-white/5">
               <div className="flex flex-wrap justify-between gap-1 font-medium text-text-primary">
                 <span className="break-all">{group.model} · {tierLabels[group.tier]}</span>
                 <span className="tabular-nums">{formatMoney(group.amount, estimate.currency)}</span>

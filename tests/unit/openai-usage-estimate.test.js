@@ -28,9 +28,25 @@ describe("OpenAI monetary usage estimate", () => {
     expect(estimateOpenAIUsage([{ ...row, model: "gpt-6.1-sol-new" }])).toMatchObject({ amount: null, unpricedRequests: 1 });
   });
 
+  it("prices vision input on GPT-6.2 at the model input rate", () => {
+    const result = estimateOpenAIUsage([{ ...row, model: "gpt-6.2-astra-2026-11-12", input_image_tokens: 100 }]);
+    expect(result.amount).toBeCloseTo(12.28);
+    expect(result.unpricedRequests).toBe(0);
+  });
+
+  it("uses the GPT-6.2 Ultrafast rate in effect for each usage bucket", () => {
+    const cutoff = Date.parse("2027-03-01T08:00:00Z") / 1000;
+    const sol = { ...row, model: "gpt-6.2-sol", service_tier: "ultrafast" };
+    const result = estimateOpenAIUsage([
+      { ...sol, bucketStartTime: cutoff - 1 }, { ...sol, bucketStartTime: cutoff },
+    ]);
+    expect(result.amount).toBeCloseTo(3.07 * 9);
+    expect(result.breakdown.map(group => group.components[0].rate)).toEqual([6, 12]);
+  });
+
   it.each([
     { model: "unknown-model" }, { service_tier: "auto" }, { service_tier: null },
-    { input_audio_tokens: 1 }, { input_image_tokens: 1 }, { output_audio_tokens: 1 },
+    { input_audio_tokens: 1 }, { input_cached_audio_tokens: 1 }, { output_image_tokens: 1 }, { output_audio_tokens: 1 },
     { input_cached_tokens: 2_000_000 }, { input_cached_tokens: "200000" },
     { input_cache_write_30m_tokens: 5 }, { input_cache_write_12h_tokens: 500_000 },
     { model: "gpt-6.1-terra", service_tier: "ultrafast" },

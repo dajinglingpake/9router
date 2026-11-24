@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { calculateCostFromTokens, MODEL_PRICING } from "open-sse/providers/pricing.js";
 import OPENAI, { OPENAI_USAGE_CONFIG } from "open-sse/providers/registry/openai.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
-import { estimateOpenAIUsage } from "./openaiUsageEstimate.js";
+import { getPricing } from "./db/repos/pricingRepo.js";
+import { getUsageHistory } from "./db/repos/usageRepo.js";
+import { estimateOpenAIUsage, getOpenAIBaseModel } from "./openaiUsageEstimate.js";
 
 const usageCache = new Map();
 const invalidData = () => new Error("OpenAI 用量接口返回的数据格式无效，请稍后重试。");
@@ -9,6 +12,43 @@ const number = value => {
   if (typeof value !== "number" || !Number.isFinite(value)) throw invalidData();
   return value;
 };
+
+function formatBalance(balance, source, usage) {
+  const spent = usage.estimate?.amount;
+  return { ...balance, source, currency: "USD", ...usage, remaining: spent == null ? null : balance.amount - spent };
+}
+
+async function getLocalOpenAIBalance(connection) {
+  const balance = connection.openaiBalance;
+  const readError = { error: "无法读取 9Router 用量记录，请稍后刷新。" };
+  if (!connection.id) return formatBalance(balance, "local", readError);
+  try {
+    const rows = await getUsageHistory({ provider: "openai", connectionId: connection.id, startDate: balance.recordedAt });
+    const prices = rows.length ? (await getPricing()).openai : null;
+    let amount = 0;
+    let unpricedRequests = 0;
+    for (const row of rows) {
+      // Reprice older rows whose cost was saved before the model had a price.
+      const baseModel = getOpenAIBaseModel(row.model);
+      const pricing = prices?.[row.model] ?? prices?.[baseModel] ?? (Object.hasOwn(MODEL_PRICING, baseModel) ? MODEL_PRICING[baseModel] : null);
+      const cost = row.cost > 0 ? row.cost : calculateCostFromTokens(row.tokens, pricing);
+      if (Number.isFinite(cost) && cost > 0) amount += cost;
+      else unpricedRequests++;
+    }
+    return formatBalance(balance, "local", {
+      estimate: { amount: rows.length === 0 || unpricedRequests < rows.length ? amount : null, unpricedRequests, requests: rows.length },
+    });
+  } catch {
+    return formatBalance(balance, "local", readError);
+  }
+}
+
+export async function getLocalOpenAIUsage(connection, message = OPENAI.display.quotaNotice.message) {
+  return {
+    ...OPENAI.display.quotaNotice, message,
+    ...(connection.openaiBalance ? { openaiUsage: { balance: await getLocalOpenAIBalance(connection) } } : {}),
+  };
+}
 
 async function readUsagePages(endpoint, adminKey, startTime, endTime, proxyOptions, signal, groupBy = []) {
   const url = new URL(endpoint);
@@ -39,7 +79,9 @@ async function readUsagePages(endpoint, adminKey, startTime, endTime, proxyOptio
     if (!Array.isArray(data?.data)) throw invalidData();
     for (const bucket of data.data) {
       if (!Array.isArray(bucket?.results)) throw invalidData();
-      results.push(...bucket.results);
+      for (const row of bucket.results) {
+        results.push(groupBy.length && row ? { ...row, bucketStartTime: bucket.start_time ?? startTime } : row);
+      }
     }
     if (!data.has_more) return results;
     if (typeof data.next_page !== "string" || !data.next_page || cursors.has(data.next_page)) throw invalidData();
@@ -50,17 +92,17 @@ async function readUsagePages(endpoint, adminKey, startTime, endTime, proxyOptio
 
 export async function getOpenAIUsage(connection, proxyOptions = {}, { force = false } = {}) {
   const adminKey = connection.openaiAdminKey;
-  if (!adminKey) return OPENAI.display.quotaNotice;
+  if (!adminKey) return getLocalOpenAIUsage(connection);
   const now = new Date();
   const startTime = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) / 1000;
   const endTime = Math.max(startTime + 1, Math.floor(now.getTime() / 1000));
   // Costs only include complete UTC buckets; include today's bucket through midnight.
   const costsEndTime = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000;
   const balance = connection.openaiBalance;
-  const balanceStartTime = balance ? Date.parse(balance.recordedAt) / 1000 : null;
+  const balanceStartTime = balance ? Math.ceil(Date.parse(balance.recordedAt) / 1000) : null;
   const { signal: callerSignal, ...proxy } = proxyOptions || {};
   // Never cache by the raw secret, or reuse results after changing credentials/proxy.
-  const key = createHash("sha256").update(JSON.stringify([adminKey, proxy, startTime, balance])).digest("hex");
+  const key = createHash("sha256").update(JSON.stringify([connection.id, adminKey, proxy, startTime, balance])).digest("hex");
   for (const [id, cached] of usageCache) if (cached.expiresAt <= Date.now()) usageCache.delete(id);
   if (!force && usageCache.has(key)) return usageCache.get(key).value;
   const timeout = AbortSignal.timeout(OPENAI_USAGE_CONFIG.timeoutMs);
@@ -82,20 +124,25 @@ export async function getOpenAIUsage(connection, proxyOptions = {}, { force = fa
     costs.set(unit, (costs.get(unit) || 0) + number(row.amount.value));
   }
   const sum = field => usageRows.reduce((total, row) => total + number(row?.[field]), 0);
+  let estimatedBalance = balance ? formatBalance(balance, "organization", balanceUsage) : null;
+  if (balance && connection.id && (balanceUsage.error || balanceUsage.estimate.breakdown.length === 0)) {
+    const local = await getLocalOpenAIBalance(connection);
+    if (balanceUsage.error || (local.estimate?.requests > 0 && local.remaining != null)) {
+      estimatedBalance = { ...local, error: local.error ?? balanceUsage.error };
+    }
+  }
   const value = {
     openaiUsage: {
       periodStart: new Date(startTime * 1000).toISOString(), periodEnd: new Date(endTime * 1000).toISOString(),
       costs: [...costs].map(([currency, amount]) => ({ currency, amount })),
       requests: sum("num_model_requests"), inputTokens: sum("input_tokens"), outputTokens: sum("output_tokens"),
       ...(costs.size === 0 ? { estimate: estimateOpenAIUsage(usageRows) } : {}),
-      ...(balance ? { balance: {
-        ...balance, currency: "USD", ...balanceUsage,
-        remaining: balanceUsage.estimate?.amount != null && balanceUsage.estimate.unpricedRequests === 0
-          ? balance.amount - balanceUsage.estimate.amount : null,
-      } } : {}),
+      ...(estimatedBalance ? { balance: estimatedBalance } : {}),
     },
     detailUrl: OPENAI.display.quotaNotice.detailUrl,
   };
-  if (!balanceUsage.error) usageCache.set(key, { value, expiresAt: Date.now() + OPENAI_USAGE_CONFIG.cacheTtlMs });
+  if (!balanceUsage.error && estimatedBalance?.source !== "local") {
+    usageCache.set(key, { value, expiresAt: Date.now() + OPENAI_USAGE_CONFIG.cacheTtlMs });
+  }
   return value;
 }

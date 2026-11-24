@@ -15,6 +15,7 @@ import AccountDegradedMarker from "@/shared/components/AccountDegradedMarker";
 import AccountPlanBadge from "@/shared/components/AccountPlanBadge";
 import QuotaTable from "./QuotaTable";
 import OpenAIUsageSummary from "./OpenAIUsageSummary";
+import OpenAIBalance from "./OpenAIBalance";
 import KiloUsageDetails from "./KiloUsageDetails";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
@@ -1385,6 +1386,10 @@ export default function ProviderLimits() {
               </div>
 
               <div className={`px-2 py-1.5 ${isInactive ? "opacity-60" : ""}`}>
+                {conn.provider === "openai" && (
+                  <OpenAIBalance balance={quota?.raw?.openaiUsage?.balance}
+                    connectionId={conn.id} onSaved={() => refreshProvider(conn.id, conn.provider)} />
+                )}
                 {isLoading ? (
                   <div className="text-center py-5 text-text-muted">
                     <span className="material-symbols-outlined text-[28px] animate-spin">
@@ -1398,9 +1403,8 @@ export default function ProviderLimits() {
                     </span>
                     <p className="mt-1.5 text-xs text-text-muted">{error}</p>
                   </div>
-                ) : quota?.raw?.openaiUsage ? (
-                  <OpenAIUsageSummary usage={quota.raw.openaiUsage} detailUrl={quota.raw.detailUrl}
-                    connectionId={conn.id} onBalanceSaved={() => refreshProvider(conn.id, conn.provider)} />
+                ) : quota?.raw?.openaiUsage?.periodStart ? (
+                  <OpenAIUsageSummary usage={quota.raw.openaiUsage} detailUrl={quota.raw.detailUrl} />
                 ) : quota?.message ? (
                   <div className="text-center py-5">
                     <p className="text-xs text-text-muted">{quota.message}</p>
@@ -1412,7 +1416,7 @@ export default function ProviderLimits() {
                       </a>
                     )}
                   </div>
-                ) : (
+                ) : conn.provider !== "openai" && (
                   <QuotaTable
                     quotas={visibleQuotas}
                     compact

@@ -119,7 +119,7 @@ describe("OpenAI Admin Key settings", () => {
 describe("OpenAI manual balance", () => {
   it("records the current balance with a server timestamp, preserves it on unrelated edits and supports recalibration and clearing", async () => {
     await updateConnection(request(account.id, { openaiAdminKey: adminKey }), context(account.id));
-    const before = Math.floor(Date.now() / 1000) * 1000;
+    const before = Date.now();
     const response = await updateConnection(request(account.id, {
       openaiBalanceAmount: 61.96, recordedAt: "2000-01-01T00:00:00Z",
     }), context(account.id));
@@ -138,15 +138,42 @@ describe("OpenAI manual balance", () => {
     expect(JSON.stringify(connection)).not.toContain(adminKey);
   });
 
-  it("validates the amount and Admin Key without changing stored balance on rejected requests", async () => {
-    expect((await updateConnection(request(account.id, { openaiBalanceAmount: 61.96 }), context(account.id))).status).toBe(400);
-    await updateConnection(request(account.id, { openaiAdminKey: adminKey, openaiBalanceAmount: 61.96 }), context(account.id));
+  it("validates the amount without changing stored balance on rejected requests", async () => {
+    expect((await updateConnection(request(account.id, { openaiBalanceAmount: 61.96 }), context(account.id))).status).toBe(200);
     for (const amount of [-1, "61.96", "", {}, true]) {
       expect((await updateConnection(request(account.id, { openaiBalanceAmount: amount }), context(account.id))).status).toBe(400);
       expect((await db.getProviderConnectionById(account.id)).openaiBalance.amount).toBe(61.96);
     }
     const other = await db.createProviderConnection({ provider: "kimi", authType: "apikey", apiKey: modelKey });
     expect((await updateConnection(request(other.id, { openaiBalanceAmount: 1 }), context(other.id))).status).toBe(400);
+  });
+
+  it("estimates an API-only balance from this account's usage after calibration, including older unpriced snapshots", async () => {
+    await updateConnection(request(account.id, { openaiBalanceAmount: 74.63 }), context(account.id));
+    const connection = await db.getProviderConnectionById(account.id);
+    const start = Date.parse(connection.openaiBalance.recordedAt);
+    const other = await db.createProviderConnection({ provider: "openai", authType: "apikey", apiKey: "other-model-key" });
+    const usage = { provider: "openai", model: "gpt-6.2-sol", tokens: { prompt_tokens: 500_000, cached_tokens: 100_000, completion_tokens: 50_000 } };
+    const save = (connectionId, delta, model = usage.model) => db.saveRequestUsage({
+      ...usage, model, connectionId, timestamp: new Date(start + delta).toISOString(),
+    });
+    await save(account.id, -1);
+    await save(other.id, 1);
+    await save(account.id, 1);
+    await save(account.id, 2, "gpt-6.2-sol-2026-11-12");
+    await save(account.id, 3, "unknown");
+    const { getOpenAIUsage } = await import("@/lib/openaiUsage.js");
+    const { openaiUsage: { balance } } = await getOpenAIUsage(connection);
+    expect(balance).toMatchObject({ source: "local", estimate: { requests: 3, unpricedRequests: 1 } });
+    expect(balance.estimate.amount).toBeCloseTo(2.62);
+    expect(balance.remaining).toBeCloseTo(72.01);
+  });
+
+  it("keeps the calibration when clearing an Admin Key", async () => {
+    await updateConnection(request(account.id, { openaiAdminKey: adminKey, openaiBalanceAmount: 61.96 }), context(account.id));
+    const before = (await db.getProviderConnectionById(account.id)).openaiBalance;
+    expect((await updateConnection(request(account.id, { openaiAdminKey: null }), context(account.id))).status).toBe(200);
+    expect((await db.getProviderConnectionById(account.id)).openaiBalance).toEqual(before);
   });
 
   it("clears the balance when changing Admin credentials so another organization's usage is never deducted", async () => {

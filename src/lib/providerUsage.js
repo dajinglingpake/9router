@@ -8,7 +8,7 @@ import { isUnrecoverableRefreshError } from "open-sse/services/tokenRefresh.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
-import { getOpenAIUsage } from "@/lib/openaiUsage.js";
+import { getLocalOpenAIUsage, getOpenAIUsage } from "@/lib/openaiUsage.js";
 import { isLeaseConnection } from "open-sse/services/minimaxCodeLease.js";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
@@ -133,12 +133,20 @@ export function supportsConnectionUsage(connection) {
 
 export async function loadConnectionUsage(connection, { force = false, signal } = {}) {
   if (!supportsConnectionUsage(connection)) {
+    if (connection.provider === "openai") return getLocalOpenAIUsage(connection);
     return AI_PROVIDERS[connection.provider]?.quotaNotice || { message: "Usage not available for this connection" };
   }
   await ensureOutboundProxyInitialized();
   const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData);
   const proxyOptions = { ...proxyConfig, strictProxy: proxyConfig.strictProxy === true || proxyConfig.connectionProxyEnabled === true, signal };
-  if (connection.provider === "openai") return getOpenAIUsage(connection, proxyOptions, { force });
+  if (connection.provider === "openai") {
+    try {
+      return await getOpenAIUsage(connection, proxyOptions, { force });
+    } catch (error) {
+      if (!connection.openaiBalance) throw error;
+      return getLocalOpenAIUsage(connection, error.message);
+    }
+  }
   if (connection.authType === "oauth") {
     try {
       const result = await refreshAndUpdateCredentials(connection, false, proxyOptions);

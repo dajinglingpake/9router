@@ -129,11 +129,28 @@ describe("OpenAI organization usage", () => {
     expect(proxyAwareFetch).toHaveBeenCalledTimes(13);
   });
 
-  it("withholds a remaining amount when some requests cannot be priced", async () => {
+  it("withholds a remaining amount when no requests can be priced", async () => {
     const balance = { amount: 61.96, recordedAt: "2026-10-28T03:00:00.000Z" };
     const result = (await getOpenAIUsage({ ...account, openaiBalance: balance })).openaiUsage;
     expect(result.balance).toMatchObject({ remaining: null, estimate: { unpricedRequests: 3 } });
     expect(result.costs).toEqual([{ currency: "USD", amount: 1.25 }]);
+  });
+
+  it("deducts GPT-6.2 usage and exposes a partial remaining amount when other models cannot be priced", async () => {
+    const balance = { amount: 74.63, recordedAt: "2026-11-23T05:54:17.000Z" };
+    vi.setSystemTime(new Date("2026-11-24T04:30:00Z"));
+    const astra = { model: "gpt-6.2-astra", service_tier: "default", batch: false,
+      num_model_requests: 19, input_tokens: 50_000, output_tokens: 5_000 };
+    const load = async extra => {
+      proxyAwareFetch.mockImplementation(async url => page(url.includes("/costs") ? [cost(0)] : [astra, ...extra]));
+      return (await getOpenAIUsage({ ...account, openaiBalance: balance }, {}, { force: true })).openaiUsage.balance;
+    };
+    const complete = await load([]);
+    expect(complete).toMatchObject({ source: "organization", estimate: { unpricedRequests: 0 } });
+    expect(complete.remaining).toBeCloseTo(74.03);
+    const partial = await load([{ ...astra, model: "unknown", num_model_requests: 1 }]);
+    expect(partial.remaining).toBeCloseTo(74.03);
+    expect(partial.estimate.unpricedRequests).toBe(1);
   });
 
   it("keeps monthly statistics available on a balance query failure and retries without caching it", async () => {

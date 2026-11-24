@@ -15,6 +15,8 @@ export default function OpenAIBalance({ balance, connectionId, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const invalidAmount = amount.trim() === "" || !Number.isFinite(Number(amount)) || Number(amount) < 0;
+  const unpricedRequests = balance?.estimate?.unpricedRequests ?? 0;
+  const balanceLabel = balance?.remaining != null && unpricedRequests > 0 ? "预计剩余（部分估算）" : "预计剩余";
 
   async function save(value) {
     setSaving(true);
@@ -40,7 +42,7 @@ export default function OpenAIBalance({ balance, connectionId, onSaved }) {
     <div className="space-y-2">
       {balance?.remaining != null ? (
         <QuotaTable compact quotas={[{
-          name: "预计剩余", used: balance.estimate.amount, total: balance.amount,
+          name: balanceLabel, used: balance.estimate.amount, total: balance.amount,
           remainingPercentage: balance.amount > 0 ? Math.max(0, Math.min(100, balance.remaining / balance.amount * 100)) : 0,
           usageLabel: `${formatAmount(balance.remaining)} / ${money(balance.amount)}`,
           emptyMessage: "手动校准",
@@ -54,12 +56,12 @@ export default function OpenAIBalance({ balance, connectionId, onSaved }) {
       )}
       {balance && (
         <div className="space-y-1 px-1.5 text-xs text-text-muted">
-          {balance.remaining != null && <p>预计剩余 {money(balance.remaining)}</p>}
+          {balance.remaining != null && <p>{balanceLabel} {money(balance.remaining)}</p>}
           <p>记录余额 {money(balance.amount)} · {new Date(balance.recordedAt).toLocaleString()}</p>
           {balance.estimate?.amount != null && <p>记录后估算消费 {money(balance.estimate.amount)}</p>}
           {balance.error && <p role="status" className="text-red-600 dark:text-red-400">{balance.error}</p>}
-          {balance.estimate?.unpricedRequests > 0 && <p role="status">有 {balance.estimate.unpricedRequests.toLocaleString()} 次请求缺少适用单价或用量明细，暂无法估算完整余额。</p>}
-          <p>按组织模型用量估算。充值或额度到期后，请重新校准余额。</p>
+          {unpricedRequests > 0 && <p role="status">有 {unpricedRequests.toLocaleString()} 次请求因缺少单价或用量明细，未计入消费。</p>}
+          <p>{balance.source === "local" ? "按此账号在 9Router 的调用记录估算。" : "按组织模型用量估算。"}充值或额度到期后，请重新校准余额。</p>
           {!editing && <Button variant="ghost" size="sm" onClick={() => { setError(""); setEditing(true); }}>校准余额</Button>}
         </div>
       )}

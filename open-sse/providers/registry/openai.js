@@ -13,9 +13,14 @@ export const OPENAI_USAGE_CONFIG = {
   groupBy: ["model", "service_tier", "batch"],
   pricingUrl: "https://developers.openai.com/api/docs/pricing",
   // Verified Standard short-context rates live in MODEL_PRICING.
-  estimatedModels: ["gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],
+  estimatedModels: ["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna"],
   tierMultipliers: { default: 1, flex: 0.5, batch: 0.5, priority: 2, fast: 2, ultrafast: 6 },
   ultrafastModels: ["gpt-6-astra", "gpt-6.1-sol"],
+  ultrafastPromotion: {
+    models: ["gpt-6.2-astra", "gpt-6.2-sol"],
+    multiplier: 3,
+    endTime: Date.parse("2027-03-01T00:00:00-08:00") / 1000,
+  },
   cacheWrite12hMultiplier: 2,
 };
 
@@ -33,7 +38,7 @@ export default {
       apiKeyUrl: "https://platform.openai.com/api-keys",
     },
     quotaNotice: {
-      message: "在编辑账号中配置 Admin Key，即可查询组织本月用量和已消费金额。",
+      message: "配置 Admin Key 后可查询组织本月用量和已消费金额。",
       detailUrl: "https://platform.openai.com/settings/organization/billing/overview",
     },
   },
