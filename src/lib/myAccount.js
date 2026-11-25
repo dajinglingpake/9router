@@ -67,6 +67,22 @@ export async function getMyAccountKey(request) {
 
 function quotaSummary(provider, usage) {
   // Explicit allow-list; never return provider responses, credentials or raw errors.
+  const balance = provider === "openai" ? usage?.openaiUsage?.balance : null;
+  if (Number.isFinite(balance?.amount)) {
+    const remaining = Number.isFinite(balance.remaining) ? balance.remaining : null;
+    const amount = remaining ?? balance.amount;
+    let name = "预计剩余";
+    if (remaining === null) name = "记录余额（剩余暂无法估算）";
+    else if (balance.estimate?.unpricedRequests > 0) name = "预计剩余（部分估算）";
+    return [{
+      name,
+      remainingPercentage: null,
+      resetAt: null,
+      unlimited: false,
+      balance: amount,
+      balanceLabel: `${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD`,
+    }];
+  }
   return parseQuotaData(provider, usage).map(row => ({
     name: row.name,
     remainingPercentage: row.isCreditBalance || row.unlimited ? null : Math.min(100, Math.max(0, getRemainingPercentage(row))),
@@ -90,7 +106,8 @@ async function accountSummary(connection, key, sharedIndex, snapshots) {
     quotas: [],
     message: null,
   };
-  if (!supportsConnectionUsage(connection)) {
+  const hasRecordedOpenAIBalance = connection.provider === "openai" && Number.isFinite(connection.openaiBalance?.amount);
+  if (!hasRecordedOpenAIBalance && !supportsConnectionUsage(connection)) {
     return { ...account, message: "该渠道暂不提供额度查询。" };
   }
   try {

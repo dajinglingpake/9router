@@ -102,6 +102,35 @@ describe("my account data isolation", () => {
     expect(loadConnectionUsage.mock.calls[0][0].id).toBe("account-a");
   });
 
+  it.each([
+    { label: "预计剩余", remaining: 3.28, display: "3.28 USD" },
+    { label: "预计剩余", admin: true, remaining: 0, display: "0.00 USD" },
+    { label: "预计剩余（部分估算）", remaining: -0.5, unpricedRequests: 1, display: "-0.50 USD" },
+    { label: "记录余额（剩余暂无法估算）", remaining: null, display: "5.00 USD" },
+  ])("shows the bound OpenAI balance as $label ($display)", async ({ label, admin, remaining, unpricedRequests = 0, display }) => {
+    const openaiBalance = { amount: 5, recordedAt: "2026-11-25T08:00:00.000Z" };
+    const connection = {
+      id: "openai-account", provider: "openai", authType: "apikey", exclusiveApiKeyIds: [key.id],
+      apiKey: "model-secret", ...(admin ? { openaiAdminKey: "admin-secret" } : {}), openaiBalance,
+    };
+    getProviderConnections.mockResolvedValue([connection, { ...connection, id: "other-openai", exclusiveApiKeyIds: ["key-b"] }]);
+    supportsConnectionUsage.mockReturnValue(Boolean(admin));
+    loadConnectionUsage.mockResolvedValue({
+      message: "upstream-secret", openaiUsage: { balance: { ...openaiBalance, remaining, estimate: { unpricedRequests } } },
+    });
+
+    const response = await GET(request(await viewToken()));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.accounts).toHaveLength(1);
+    expect(body.accounts[0]).toMatchObject({ id: connection.id, message: null, quotas: [{
+      name: label, balance: remaining ?? openaiBalance.amount, balanceLabel: display,
+      remainingPercentage: null, resetAt: null, unlimited: false,
+    }] });
+    expect(loadConnectionUsage).toHaveBeenCalledExactlyOnceWith(connection, { signal: expect.any(AbortSignal) });
+    expect(JSON.stringify(body)).not.toMatch(/model-secret|admin-secret|upstream-secret|openaiUsage|other-openai/);
+  });
+
   it("shows shared Codex quota anonymously when there is no dedicated binding", async () => {
     key.id = "unbound";
     const body = await (await GET(request(await viewToken()))).json();
