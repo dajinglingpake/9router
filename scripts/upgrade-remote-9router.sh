@@ -111,6 +111,7 @@ echo "[1/7] Checking local tools..."
 require_cmd docker
 require_cmd curl
 require_cmd git
+require_cmd flock
 if [ "$LOCAL_DEPLOY" = false ]; then
   require_cmd sshpass
   require_cmd gzip
@@ -129,17 +130,36 @@ echo "[2/7] Checking remote deployment..."
 sudo_remote "mkdir -p $(shell_quote "$REMOTE_DIR/data")"
 
 echo "[3/7] Building local Docker image..."
-BUILD_BASE_IMAGE="${IMAGE_NAME}-build-base"
-BUILD_CODEX_IMAGE="${IMAGE_NAME}-build-codex"
+build_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/9router"
+mkdir -p "$build_cache_dir"
+exec 9>"$build_cache_dir/release.lock"
+flock 9
+
+release_builder=router9-release
+if ! docker buildx inspect "$release_builder" >/dev/null 2>&1; then
+  docker buildx create --name "$release_builder" --driver docker-container \
+    --buildkitd-config "$ROOT/scripts/release-buildkit.toml" >/dev/null
+fi
+builder_info="$(docker buildx inspect --bootstrap "$release_builder")"
+if ! awk '$1 == "9router.release-cache:" && $2 == "true" { owned = 1 } END { exit !owned }' <<< "$builder_info"; then
+  echo "Builder $release_builder is missing the 9router release cache label" >&2
+  exit 1
+fi
+
 SOURCE_REVISION="$(git rev-parse HEAD)"
-docker build -f "$ROOT/Dockerfile.local" --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" -t "$BUILD_BASE_IMAGE" "$ROOT"
-docker build -f "$ROOT/local/codex-trials/Dockerfile" \
-  --build-arg ROUTER_IMAGE="$BUILD_BASE_IMAGE" \
-  --build-context "codex-runtime=$CODEX_RUNTIME_DIR" -t "$BUILD_CODEX_IMAGE" "$ROOT"
-docker build -f "$ROOT/local/account-appeals/Dockerfile" \
-  --build-arg ROUTER_IMAGE="$BUILD_CODEX_IMAGE" \
+build_started="$(date +%s)"
+docker buildx build --builder "$release_builder" --load -f "$ROOT/Dockerfile.local" \
+  --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" --build-arg RUNNER_BASE=release-base \
+  --build-arg NODE_OWNER="${BUILD_NODE_OWNER:-1000:1000}" \
+  --build-context "codex-runtime=$CODEX_RUNTIME_DIR" \
   --label "org.opencontainers.image.revision=$SOURCE_REVISION" -t "$IMAGE_NAME" "$ROOT"
-docker image rm "$BUILD_CODEX_IMAGE" "$BUILD_BASE_IMAGE" >/dev/null
+
+# Keep records used by this build and package download caches in the project builder.
+stale_age="$(( $(date +%s) - build_started + 1 ))s"
+if ! docker buildx prune --builder "$release_builder" --force \
+  --filter "until=$stale_age" --filter 'type!=exec.cachemount'; then
+  echo "Warning: could not expire the old 9router build cache" >&2
+fi
 
 if [ "$LOCAL_DEPLOY" = true ]; then
   echo "[4/7] Using image built on this host..."

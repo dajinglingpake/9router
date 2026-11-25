@@ -1,0 +1,6 @@
+[worker.oci]
+  # The release script expires unused build layers and keeps dependency cache mounts.
+  gc = false
+
+[worker.oci.labels]
+  "9router.release-cache" = "true"

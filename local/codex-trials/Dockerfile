@@ -3,7 +3,7 @@
 # syntax=docker/dockerfile:1.7
 ARG ROUTER_IMAGE=9router:codex-trial-base
 FROM ${ROUTER_IMAGE}
-COPY --from=codex-runtime / /opt/codex/
+COPY --link --from=codex-runtime / /opt/codex/
 RUN test "$(/opt/codex/bin/codex --version)" = "codex-cli 0.169.1"
 ENV CODEX_TRIAL_CLI=/opt/codex/bin/codex
 ENV CODEX_TRIAL_RUNTIME=/opt/codex
