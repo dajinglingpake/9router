@@ -22,7 +22,9 @@ vi.mock("@/sse/local/auth.js", () => ({
 
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
+  getProviderConnections: async () => [],
 }));
+vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: async () => ({}) }));
 
 const { GET } = await import("../../src/app/api/v1beta/models/route.js");
 const { POST } = await import("../../src/app/api/v1beta/models/[...path]/route.js");

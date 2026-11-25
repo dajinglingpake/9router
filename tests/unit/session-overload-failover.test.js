@@ -124,6 +124,46 @@ describe("credits policy during account routing", () => {
   });
 });
 
+describe("Gemini model-scoped availability", () => {
+  const sendModel = model => {
+    const body = { model: `gemini/${model}`, messages: [{ role: "user", content: "hi" }], stream: false };
+    const request = new Request("http://localhost/v1/chat/completions", { method: "POST", body: JSON.stringify(body) });
+    return routing.handleSingleModelChat(body, body.model, { body, headers: {}, endpoint: "/v1/chat/completions" }, request);
+  };
+  const create = () => db.createProviderConnection({ provider: "gemini", authType: "apikey", name: "Google", apiKey: "fixture", isActive: true });
+
+  it("keeps model high demand isolated and preserves the upstream error after exhausting fallback accounts", async () => {
+    const conn = await create();
+    upstream.mockResolvedValueOnce({ success: false, status: 503, error: "This model is currently experiencing high demand.", response: new Response(null, { status: 503 }) });
+    const busy = await sendModel("gemma-4-31b-it");
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get("x-9router-error-source")).toBe("upstream");
+    const saved = await db.getProviderConnectionById(conn.id);
+    expect(Date.parse(saved["modelLock_gemma-4-31b-it"])).toBeGreaterThan(Date.now());
+    expect(saved.modelLock___all).toBeFalsy();
+    const cooldown = await sendModel("gemma-4-31b-it");
+    expect(cooldown.headers.get("x-9router-error-source")).toBe("router");
+    upstream.mockResolvedValueOnce(success());
+    expect(await (await sendModel("gemini-3.8-flash")).json()).toEqual({ ok: true });
+    const message = "This model is no longer available to new users. " + "Detail ".repeat(45) + "end of upstream error";
+    upstream.mockResolvedValueOnce({ success: false, status: 404, error: message, response: new Response(null, { status: 404 }) });
+    const missing = await sendModel("gemini-2.5-flash");
+    expect(missing.status).toBe(404);
+    expect(missing.headers.get("x-9router-error-source")).toBe("upstream");
+    expect((await missing.json()).error.message).toContain("end of upstream error");
+    expect(upstream).toHaveBeenCalledTimes(3);
+  });
+
+  it("still respects a general Google outage across models", async () => {
+    await create();
+    upstream.mockResolvedValueOnce(overloaded());
+    expect((await sendModel("gemma-4-31b-it")).status).toBe(503);
+    const blocked = await sendModel("gemini-3.8-flash");
+    expect(blocked.headers.get("x-9router-error-source")).toBe("router");
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("stable account bindings during overload", () => {
   it("continues a trial request after cooldown without changing its account, model or conversation", async () => {
     await db.updateSettings({ customPromptEnabled: true, customPrompt: "A normal chat-only instruction." });

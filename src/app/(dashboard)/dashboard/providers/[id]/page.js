@@ -17,9 +17,10 @@ import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { useCodexModels } from "@/shared/hooks/useCodexModels";
 import { useKiloModels } from "@/shared/hooks/useKiloModels";
 import { useModelTests } from "@/shared/hooks/useModelTests";
-import { MODEL_TEST_PROVIDERS, modelTestRank } from "@/shared/utils/modelTests";
+import { filterFreeModels, MODEL_TEST_PROVIDERS, modelTestRank } from "@/shared/utils/modelTests";
 import { applyQoderModelNames, getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
 import ModelRow from "./ModelRow";
+import ModelTestFilters from "./ModelTestFilters";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
 import ConnectionRow from "./ConnectionRow";
@@ -40,8 +41,8 @@ const ONE_BY_ONE_DELAY_MS = 1000;
 const MCODE_LEASE_PROVIDERS = new Set(["minimax-code", "minimax-code-global"]);
 // Providers whose registry list is only an offline fallback: the dashboard
 // renders the live per-connection catalog from GET /api/providers/[id]/models
-// when one resolves. NVIDIA uses only live rows; the others retain an offline fallback.
-const LIVE_MODEL_CATALOG_PROVIDERS = new Set(["cursor", "zed", "claude", "commandcode", "codebuddy-cn", "kimi", "openai", "nvidia"]);
+// when one resolves. Gemini and NVIDIA use only live rows.
+const LIVE_MODEL_CATALOG_PROVIDERS = new Set(["cursor", "zed", "claude", "commandcode", "codebuddy-cn", "kimi", "openai", "nvidia", "gemini"]);
 
 const AUTO_PING_SETTINGS_KEYS = {
   claude: "claudeAutoPing",
@@ -86,6 +87,7 @@ export default function ProviderDetailPage() {
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
+  const [geminiStatusFilter, setGeminiStatusFilter] = useState("all");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {}, schedules: {} });
   const [scheduleConnection, setScheduleConnection] = useState(null);
   const [suggestedModels, setSuggestedModels] = useState([]);
@@ -180,12 +182,14 @@ export default function ProviderDetailPage() {
   const hasModelTests = MODEL_TEST_PROVIDERS.includes(providerId);
   const activeTestAccounts = connections.filter(connection => connection.isActive !== false).map(connection => connection.id).sort();
   const modelTests = useModelTests(hasModelTests && !loading ? providerId : null, JSON.stringify([providerId, ...activeTestAccounts]));
-  const kiloFreeOnly = providerId === "kilocode" && modelTests.preferences?.freeOnly === true;
-  const models = providerId === "codex" ? codexCatalog.models
-    : providerId === "kilocode" ? (kiloFreeOnly ? kiloCatalog.models.filter(model => model.isFree === true) : kiloCatalog.models)
-    : providerId === "nvidia" ? liveModels
+  const freeOnly = modelTests.preferences?.freeOnly === true;
+  const liveCatalogOnly = providerId === "gemini" || providerId === "nvidia";
+  const catalogModels = providerId === "codex" ? codexCatalog.models
+    : providerId === "kilocode" ? kiloCatalog.models
+    : liveCatalogOnly ? liveModels
     : LIVE_MODEL_CATALOG_PROVIDERS.has(providerId) && liveModels.length ? liveModels
     : applyQoderModelNames(staticModels, customModels, getProviderAlias(providerId));
+  const models = filterFreeModels(catalogModels, freeOnly);
   const chatModels = models.filter(model => getModelKind(model, "llm") === "llm");
   const providerAlias = getProviderAlias(providerId);
   
@@ -494,11 +498,10 @@ export default function ProviderDetailPage() {
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
-  // Resolve the active account's catalog on entry or connection changes.
-  // NVIDIA reports discovery failures; the other providers retain offline fallbacks.
+  // Resolve the active accounts' catalog on entry or connection changes.
   useEffect(() => {
     const isLiveCatalog = LIVE_MODEL_CATALOG_PROVIDERS.has(providerId);
-    const showWarning = providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai" || providerId === "nvidia";
+    const showWarning = providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai" || liveCatalogOnly;
     const catalogName = providerInfo?.name || providerId;
     setLiveModels([]);
     setLiveModelsError(null);
@@ -515,8 +518,9 @@ export default function ProviderDetailPage() {
     let cancelled = false;
     const controller = new AbortController();
     setLiveModelsLoading(true);
-    const refresh = providerId === "nvidia" && liveModelsRevision > 0 ? "?refresh=1" : "";
-    fetch(`/api/providers/${connection.id}/models${refresh}`, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) })
+    const refresh = liveCatalogOnly && liveModelsRevision > 0 ? "?refresh=1" : "";
+    const path = providerId === "gemini" ? "/api/providers/gemini/models" : `/api/providers/${connection.id}/models`;
+    fetch(path + refresh, { cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) })
       .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
       .then(({ ok, data }) => {
         if (cancelled) return;
@@ -539,7 +543,7 @@ export default function ProviderDetailPage() {
       .finally(() => { if (!cancelled) setLiveModelsLoading(false); });
 
     return () => { cancelled = true; controller.abort(); };
-  }, [providerId, connections, liveModelsRevision, providerInfo?.name]);
+  }, [providerId, connections, liveModelsRevision, providerInfo?.name, liveCatalogOnly]);
 
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
@@ -1241,7 +1245,7 @@ export default function ProviderDetailPage() {
     }
     const disabledSet = new Set(disabledModelIds);
     const disabledDisplayModels = chatModels.filter((m) => disabledSet.has(m.id));
-    const customModelRows = providerId === "codex" || kiloFreeOnly ? [] : getProviderCustomModelRows({
+    const customModelRows = providerId === "codex" || freeOnly ? [] : getProviderCustomModelRows({
       customModels,
       modelAliases,
       providerAlias: providerStorageAlias,
@@ -1251,12 +1255,55 @@ export default function ProviderDetailPage() {
     const displayModels = (hasModelTests
       ? [...customModelRows.map(model => ({ ...model, customRow: model })), ...chatModels]
       : chatModels).filter(model => !disabledSet.has(model.id));
+    const statusOf = model => modelTests.results[model.id]?.status || "untested";
+    const counts = { ok: 0, retry: 0, error: 0, untested: 0 };
     if (hasModelTests) {
-      const rank = model => modelTestRank(modelTests.results[model.id]?.status);
+      const rank = model => modelTestRank(statusOf(model));
       displayModels.sort((a, b) => rank(a) - rank(b));
+      for (const model of displayModels) counts[statusOf(model)]++;
     }
+    const isGemini = providerId === "gemini";
+    const hideFailuresHere = isGemini && modelTests.preferences?.hideFailedModels;
+    const statusFilter = hideFailuresHere && geminiStatusFilter === "error" ? "all" : geminiStatusFilter;
+    const visibleModels = isGemini ? displayModels.filter(model => {
+      const status = statusOf(model);
+      if (hideFailuresHere && status === "error") return false;
+      return statusFilter === "all" || statusFilter === status;
+    }) : displayModels;
     const catalogLoading = providerId === "kilocode" ? kiloCatalog.loading : liveModelsLoading;
-    const preferencesDisabled = !modelTests.preferences || modelTests.savingPreferences;
+    const renderModel = model => {
+      const fullModel = `${providerStorageAlias}/${model.id}`;
+      const oldFormatModel = `${providerId}/${model.id}`;
+      const existingAlias = Object.entries(modelAliases).find(([, m]) => m === fullModel || m === oldFormatModel)?.[0];
+      const freeTierUrl = isGemini && /^https:\/\/(?:aistudio\.google\.com\/docs\/pricing#|console\.cloud\.google\.com\/apis\/api\/generativelanguage\.googleapis\.com\/quotas\?project=)/.test(model.pricingUrl || "")
+        ? model.pricingUrl : undefined;
+      return (
+        <ModelRow
+          key={model.id}
+          model={model}
+          fullModel={`${providerDisplayAlias}/${model.id}`}
+          alias={existingAlias}
+          copied={copied}
+          onCopy={copy}
+          onSetAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
+          onDeleteAlias={model.customRow ? () => model.source === "custom"
+            ? handleDeleteCustomModel(model.id, "llm", providerStorageAlias) : handleDeleteAlias(model.alias)
+            : () => handleDeleteAlias(existingAlias)}
+          isCustom={!!model.customRow}
+          testStatus={hasModelTests ? modelTests.results[model.id]?.status : modelTestResults[model.id]}
+          availability={hasModelTests ? modelTests.results[model.id] || {} : undefined}
+          showTestDetails={isGemini}
+          onTest={hasModelTests || connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
+          isTesting={hasModelTests ? modelTests.testing.has(model.id) : testingModelIds.has(model.id)}
+          testDisabled={hasModelTests && (!modelTests.canTest || modelTests.batch?.running)}
+          isFree={model.isFree}
+          freeTierUrl={freeTierUrl}
+          onDisable={() => handleDisableModel(model.id)}
+          caps={{ ...getCaps(`${providerId}/${model.id}`), ...model.capabilities }}
+          thinkingSuffix={resolveThinkingSuffix(model.id)}
+        />
+      );
+    };
 
     return (
       <div className="flex flex-wrap gap-3">
@@ -1264,46 +1311,35 @@ export default function ProviderDetailPage() {
           <div className="w-full space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" icon="science" disabled={catalogLoading || !modelTests.canTest || !displayModels.length || modelTests.testing.size > 0 || modelTests.savingPreferences || modelTests.batch?.running}
+                title={isGemini ? "检测所有启用的聊天模型，会使用项目额度" : undefined}
                 onClick={() => modelTests.testAll(displayModels.map(model => model.id))}>
                 {modelTests.batch?.running ? "正在批量检测…" : "一键检测全部"}
               </Button>
               {modelTests.batch?.running && <Button size="sm" variant="secondary" disabled={modelTests.batch.stopping} onClick={modelTests.stop}>
                 {modelTests.batch.stopping ? "正在停止…" : "停止检测"}
               </Button>}
-              {providerId === "nvidia" && <Button size="sm" variant="secondary" icon="refresh" disabled={catalogLoading || modelTests.testing.size > 0 || modelTests.batch?.running}
+              {liveCatalogOnly && <Button size="sm" variant="secondary" icon="refresh" disabled={catalogLoading || modelTests.testing.size > 0 || modelTests.batch?.running}
                 onClick={() => setLiveModelsRevision(revision => revision + 1)}>
                 {catalogLoading ? "正在拉取…" : "刷新模型"}
               </Button>}
               <span role="status" className="text-xs text-text-muted">
                 {modelTests.batch && `${modelTests.batch.running ? "已检测" : modelTests.batch.stopping ? "已停止" : "检测完成"} ${modelTests.batch.completed}/${modelTests.batch.total} · `}
-                可用 {displayModels.filter(model => modelTests.results[model.id]?.status === "ok").length}
-                {" · "}检测失败 {displayModels.filter(model => modelTests.results[model.id]?.status === "error").length}
-                {" · "}未检测 {displayModels.filter(model => !modelTests.results[model.id]).length}
+                可用 {counts.ok}{counts.retry > 0 && ` · 待重试 ${counts.retry}`}
+                {" · "}检测失败 {counts.error}{" · "}未检测 {counts.untested}
               </span>
             </div>
-            <div className="flex flex-wrap gap-x-6 gap-y-3 py-1">
-              <Toggle
-                label="对外隐藏检测失败的模型"
-                checked={modelTests.preferences?.hideFailedModels === true}
-                onChange={checked => modelTests.savePreferences({ hideFailedModels: checked })}
-                disabled={preferencesDisabled}
-              />
-              {providerId === "kilocode" && <Toggle
-                label="只显示免费模型"
-                description="同时筛选此页和对外 API 的模型列表"
-                checked={kiloFreeOnly}
-                onChange={checked => modelTests.savePreferences({ freeOnly: checked })}
-                disabled={preferencesDisabled || modelTests.batch?.running}
-              />}
-            </div>
+            <ModelTestFilters provider={providerId} tests={modelTests} statusFilter={statusFilter} onStatusChange={setGeminiStatusFilter} />
             {modelTests.preferenceError && <p role="alert" className="text-xs text-red-500">{modelTests.preferenceError}</p>}
             <p className="text-xs text-text-muted">检测结果会保留到下次检测。通过的模型在对外列表中优先显示。检测会发出实际请求，可能消耗额度。</p>
             {modelTests.loading && <p role="status" className="text-xs text-text-muted">正在读取检测结果…</p>}
             {modelTests.warning && <p role="status" className="text-xs text-text-muted">
               {!isFreeNoAuth && !activeTestAccounts.length ? `请先启用一个 ${providerInfo.name} 账号。` : modelTests.warning}
             </p>}
-            {!catalogLoading && !liveModelsError && !displayModels.length && (kiloFreeOnly || modelTests.canTest) && (
-              <p className="text-xs text-text-muted">{kiloFreeOnly ? "暂无启用的免费模型。" : "暂无启用的模型可检测。"}</p>
+            {!catalogLoading && !displayModels.length && (freeOnly || (!liveModelsError && modelTests.canTest)) && (
+              <p className="text-xs text-text-muted">{freeOnly ? "暂无已确认免费的启用模型。" : "暂无启用的模型可检测。"}</p>
+            )}
+            {displayModels.length > 0 && visibleModels.length === 0 && (
+              <p role="status" className="text-xs text-text-muted">当前筛选条件下没有模型。</p>
             )}
           </div>
         )}
@@ -1334,37 +1370,7 @@ export default function ProviderDetailPage() {
           />
         ))}
 
-        {displayModels.map((model) => {
-          const fullModel = `${providerStorageAlias}/${model.id}`;
-          const oldFormatModel = `${providerId}/${model.id}`;
-          const existingAlias = Object.entries(modelAliases).find(
-            ([, m]) => m === fullModel || m === oldFormatModel
-          )?.[0];
-          return (
-            <ModelRow
-              key={model.id}
-              model={model}
-              fullModel={`${providerDisplayAlias}/${model.id}`}
-              alias={existingAlias}
-              copied={copied}
-              onCopy={copy}
-              onSetAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
-              onDeleteAlias={model.customRow ? () => model.source === "custom"
-                ? handleDeleteCustomModel(model.id, "llm", providerStorageAlias) : handleDeleteAlias(model.alias)
-                : () => handleDeleteAlias(existingAlias)}
-              isCustom={!!model.customRow}
-              testStatus={hasModelTests ? modelTests.results[model.id]?.status : modelTestResults[model.id]}
-              availability={hasModelTests ? modelTests.results[model.id] || {} : undefined}
-              onTest={hasModelTests || connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
-              isTesting={hasModelTests ? modelTests.testing.has(model.id) : testingModelIds.has(model.id)}
-              testDisabled={hasModelTests && (!modelTests.canTest || modelTests.batch?.running)}
-              isFree={model.isFree}
-              onDisable={() => handleDisableModel(model.id)}
-              caps={{ ...getCaps(`${providerId}/${model.id}`), ...model.capabilities }}
-              thinkingSuffix={resolveThinkingSuffix(model.id)}
-            />
-          );
-        })}
+        {visibleModels.map(renderModel)}
 
         {/* Add model button — inline, same style as model chips */}
         {providerId !== "codex" && <button
@@ -1898,7 +1904,7 @@ export default function ProviderDetailPage() {
       {/* Models */}
       <Card>
         <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-lg font-semibold">
               {"Available Models"}
             </h2>
@@ -1907,6 +1913,7 @@ export default function ProviderDetailPage() {
                 value={thinkingMode}
                 onChange={(e) => handleThinkingModeChange(e.target.value)}
                 title="Appends (level) suffix to copied model names"
+                aria-label={translate("Thinking")}
                 className="rounded-md border border-border bg-background px-2 py-1 text-xs focus:border-primary focus:outline-none"
               >
                 {providerThinkingLevels.map((opt) => (
@@ -1918,7 +1925,7 @@ export default function ProviderDetailPage() {
           {!isCompatible && (() => {
             const activeIds = chatModels.map(model => model.id).filter(id => !disabledModelIds.includes(id));
             return (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {providerId === "kilocode" && (
                   <Button size="sm" variant="secondary" icon="refresh" disabled={kiloCatalog.loading} onClick={kiloCatalog.refresh}>
                     {translate(kiloCatalog.loading ? "Fetching..." : "Refresh")}
@@ -1970,7 +1977,7 @@ export default function ProviderDetailPage() {
         {providerId === "codex" && <p className="text-xs text-text-muted mb-3">{codexCatalog.loading ? "正在按账号获取可用模型…" : "以下为启用账号实际可用模型的并集。"}</p>}
         {providerId === "codex" && codexCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{codexCatalog.warning}</p>}
         {providerId === "kilocode" && kiloCatalog.warning && <p role="status" className="text-xs text-red-500 mb-3 break-words">{kiloCatalog.warning}</p>}
-        {(providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai" || providerId === "nvidia") && !!liveModelsError && (
+        {(providerId === "zed" || providerId === "codebuddy-cn" || providerId === "kimi" || providerId === "openai" || liveCatalogOnly) && !!liveModelsError && (
           <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {renderModelsSection()}

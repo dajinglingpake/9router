@@ -13,6 +13,7 @@ import { upstreamResponseHeaders } from "../utils/upstreamHeaders.js";
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
 import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { recordGeminiQuotaResponse } from "@/lib/db/repos/geminiQuotaRepo.js";
 import { getRequestCaller, getRequestLogContext, getRequestTokenEstimates } from "@/lib/requestCaller.js";
 import { estimateInputTokenBreakdown } from "../utils/usageTracking.js";
 import { recordTraffic } from "@/lib/runtimeTraffic.js";
@@ -440,6 +441,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
+  let geminiQuotaRecorded = false;
+  const onUpstreamResponse = provider === "gemini" && connectionId ? async () => {
+    try {
+      await recordGeminiQuotaResponse(connectionId, model);
+      geminiQuotaRecorded = true;
+    } catch (error) {
+      geminiQuotaRecorded = false;
+      log?.warn?.("QUOTA", `Unable to record Gemini response: ${error.message}`);
+    }
+  } : undefined;
   // Most executors return their registry format. Cursor AgentService is an
   // exception: it is decoded by the executor into OpenAI-compatible output.
   let providerResponseFormat = targetFormat;
@@ -448,6 +459,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       diagnosticContext,
       onUpstreamOverload: reportOverload,
       onUpstreamRequest: recordUpstreamTier,
+      onUpstreamResponse,
       model,
       body: translatedBody,
       stream,
@@ -522,7 +534,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           const retryResult = await executor.execute({
             diagnosticContext,
             onUpstreamOverload: reportOverload,
-      onUpstreamRequest: recordUpstreamTier,
+            onUpstreamRequest: recordUpstreamTier,
+            onUpstreamResponse,
             model,
             body: translatedBody,
             stream,
@@ -574,7 +587,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return createErrorResult(statusCode, errMsg, resetsAtMs, upstreamResponseHeaders(providerResponse.headers));
   }
 
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, onRequestComplete, pxpipe: pxpipeSummary, reqTag, log };
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, geminiQuotaRecorded, onRequestSuccess, onRequestComplete, pxpipe: pxpipeSummary, reqTag, log };
 
   try {
     // Responses upstreams also stream when the client requests a JSON response.

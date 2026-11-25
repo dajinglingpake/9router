@@ -6,3 +6,13 @@
 - 部署所需的配置调整应直接修改现有本地配置；不得用临时脚本或远端额外覆盖配置绕过上述规则。
 - 部署保留远端挂载目录中的账号、组合、API Key 和其他业务数据；同步部署配置不等于覆盖业务数据库。
 - 常规部署不额外生成数据库备份、配置副本或部署快照。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

@@ -189,7 +189,7 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, customToolNames, toolNameMap, appendLog, reqTag, log }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, geminiQuotaRecorded, onRequestSuccess, customToolNames, toolNameMap, appendLog, reqTag, log }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
   if (!isSSE) return null; // not handled here
@@ -213,7 +213,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       const usage = jsonResponse.usage || {};
       const totalLatency = Date.now() - requestStartTime;
       appendLog({ tokens: usage, status: "200 OK" });
-      saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, clientIp: clientRawRequest?.clientIp, latency: { ttft: totalLatency, total: totalLatency }, silent: true });
+      saveUsageStats({ provider, model, tokens: usage, geminiQuotaRecorded, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, clientIp: clientRawRequest?.clientIp, latency: { ttft: totalLatency, total: totalLatency }, silent: true });
       if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: totalLatency } }));
 
       // Same cache-inclusive total for the recorded detail, so the DB and the
@@ -324,7 +324,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     const usage = parsed.usage || {};
     const totalLatency = Date.now() - requestStartTime;
     appendLog({ tokens: usage, status: "200 OK" });
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, clientIp: clientRawRequest?.clientIp, latency: { ttft: totalLatency, total: totalLatency }, silent: true });
+    saveUsageStats({ provider, model, tokens: usage, geminiQuotaRecorded, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, clientIp: clientRawRequest?.clientIp, latency: { ttft: totalLatency, total: totalLatency }, silent: true });
     if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: totalLatency } }));
 
     saveRequestDetail(buildRequestDetail({

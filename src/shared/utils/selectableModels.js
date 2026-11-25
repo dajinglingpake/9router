@@ -37,7 +37,7 @@ export const NO_AUTH_PROVIDER_IDS = Object.keys(AI_PROVIDERS)
 // Static registry stays as fallback when live fetch fails or is empty.
 // zed added in #4244: its backend customResolver already returns live models
 // but the frontend omitted it, hiding Zed entirely from the Combo picker.
-export const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "kilocode"];
+export const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "kilocode", "gemini"];
 
 export const ALL_PROVIDERS = { ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...APIKEY_PROVIDERS };
 
@@ -84,6 +84,7 @@ export function buildModelGroups({
   customModels = [],
   disabledModels = {},
   liveModels = {},
+  geminiFreeOnly = false,
   providers = ALL_PROVIDERS,
 } = {}) {
   const filteredActiveProviders = asArray(connections);
@@ -279,7 +280,9 @@ export function buildModelGroups({
     } else {
       const useCodexCatalog = providerId === "codex" && codexModels !== null;
       const liveModels = providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : [];
-      const hardcodedModels = useCodexCatalog ? codexModels : liveModels.length > 0
+      const useGeminiChatCatalog = providerId === "gemini" && (!kindFilter || kindFilter === "llm");
+      const catalogOnly = useCodexCatalog || (useGeminiChatCatalog && geminiFreeOnly);
+      const hardcodedModels = useGeminiChatCatalog ? asArray(live.gemini) : useCodexCatalog ? codexModels : liveModels.length > 0
         ? liveModels
         : getModelsByProviderId(providerId);
       const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
@@ -288,7 +291,7 @@ export function buildModelGroups({
       // Otherwise only show aliases where aliasName === modelId ("Add Model" button pattern)
       const hasHardcoded = hardcodedModels.length > 0;
       // An explicit Codex catalog is authoritative, including when discovery failed.
-      const customAliasModels = useCodexCatalog ? [] : Object.entries(modelAliasesSafe)
+      const customAliasModels = catalogOnly ? [] : Object.entries(modelAliasesSafe)
         .filter(([aliasName, fullModel]) =>
           fullModel.startsWith(`${alias}/`) &&
           (hasHardcoded ? aliasName === fullModel.replace(`${alias}/`, "") : true) &&
@@ -301,7 +304,7 @@ export function buildModelGroups({
 
       // Custom models registered via /api/models/custom (provider "Add Model" button)
       const customAliasIds = new Set(customAliasModels.map((m) => m.id));
-      const customRegisteredModels = useCodexCatalog ? [] : customModelsSafe
+      const customRegisteredModels = catalogOnly ? [] : customModelsSafe
         .filter((m) => m.providerAlias === alias && !hardcodedIds.has(m.id) && !customAliasIds.has(m.id))
         .map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, isCustom: true }));
 

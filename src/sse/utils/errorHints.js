@@ -1,5 +1,7 @@
 import { getRequestPressureSignal } from "@/lib/requestPressureSignals.cjs";
 
+export const CHAT_ERROR_SOURCE_HEADER = "x-9router-error-source";
+
 const HINTS = {
   request: "请求参数或协议格式错误。",
   context: "请求上下文超出模型限制。",

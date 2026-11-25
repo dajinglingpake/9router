@@ -29,11 +29,12 @@ describe("GET /v1/models/{id}", () => {
   it("retrieves a provider-prefixed model ID split across URL path segments", async () => {
     mocks.buildModelsList.mockResolvedValue([chatModel]);
 
-    const response = await GET(new Request("https://router.test/v1/models/cc/claude-sonnet-5"), params(["cc", "claude-sonnet-5"]));
+    const request = new Request("https://router.test/v1/models/cc/claude-sonnet-5");
+    const response = await GET(request, params(["cc", "claude-sonnet-5"]));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(chatModel);
-    expect(mocks.buildModelsList).toHaveBeenCalledWith(["llm"]);
+    expect(mocks.buildModelsList).toHaveBeenCalledWith(["llm"], { request });
   });
 
   it("also handles a decoded slash in a single catch-all segment", async () => {
@@ -49,11 +50,12 @@ describe("GET /v1/models/{id}", () => {
     const imageModel = { id: "image/gpt-image-1", object: "model", owned_by: "image" };
     mocks.buildModelsList.mockResolvedValue([imageModel]);
 
-    const response = await GET(new Request("https://router.test/v1/models/image"), params(["image"]));
+    const request = new Request("https://router.test/v1/models/image");
+    const response = await GET(request, params(["image"]));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ object: "list", data: [imageModel] });
-    expect(mocks.buildModelsList).toHaveBeenCalledWith(["image"]);
+    expect(mocks.buildModelsList).toHaveBeenCalledWith(["image"], { request });
   });
 
   it("returns an OpenAI-style model_not_found response for an unknown model", async () => {

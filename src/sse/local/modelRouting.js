@@ -28,14 +28,14 @@ import { getKeyAccessContext, filterAdapterModels, extractClientApiKey } from ".
 import { acquireAccountSlot, getAccountActiveCount } from "./accountLoad.js";
 import { getApiKeyRoutingKey } from "./apiKeyRouting.js";
 import { filterAccountPoolForRequest, getRequestKeyId, getRequestBoundProviders } from "../services/accountApiKeyAccess.js";
-import { appendChatErrorHint } from "../utils/errorHints.js";
+import { appendChatErrorHint, CHAT_ERROR_SOURCE_HEADER } from "../utils/errorHints.js";
 import { getTrialSession, getTrialCredentials } from "./codexTrialSession.js";
 import { CODEX_TRIAL_IDENTITY } from "@/shared/utils/codexTrialIdentity.js";
 
 /**
  * Handle single model chat request
  */
-export async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set(), deadline = Date.now() + queueTimeoutMs(), retryCount = 0, comboNames = []) {
+export async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, seenModels = new Set(), excludedAccounts = new Set(), deadline = Date.now() + queueTimeoutMs(), retryCount = 0, comboNames = [], lastUpstreamFailure = null) {
   const trial = getTrialSession(request);
   if (seenModels.has(modelStr)) return rejectChatRequest(HTTP_STATUS.BAD_REQUEST, "模型组合存在循环引用。", clientRawRequest, "router");
   seenModels.add(modelStr);
@@ -94,7 +94,16 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   });
   if (!credentials || credentials.sessionUnavailable || credentials.allRateLimited) {
     const status = Number(credentials?.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-    if (!stickyBinding && excludedAccounts.size > 0) return errorResponse(status, appendChatErrorHint(status, credentials?.lastError || "暂无可用账号。", { source: "router" }), clientRawRequest?.upstreamErrorHeaders);
+    if (!stickyBinding && excludedAccounts.size > 0) {
+      // When no further account can run the request, preserve the response to
+      // this model's actual attempt. Another concurrent probe may have updated lastError.
+      const source = lastUpstreamFailure ? "upstream" : "router";
+      const finalStatus = lastUpstreamFailure?.status || status;
+      const message = lastUpstreamFailure?.message || credentials?.lastError || "暂无可用账号。";
+      return errorResponse(finalStatus, appendChatErrorHint(finalStatus, message, { source }), {
+        ...clientRawRequest?.upstreamErrorHeaders, [CHAT_ERROR_SOURCE_HEADER]: source,
+      });
+    }
     return rejectAccountCooldown(status, credentials?.lastError || "暂无可用账号。", credentials?.retryAfter, clientRawRequest, clientRawRequest?.upstreamErrorHeaders, credentials?.quotaDetails);
   }
 
@@ -105,12 +114,12 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
   let responseOwnsPermits = false;
   Object.assign(clientRawRequest, { provider, routingModel: model, connectionId: credentials.connectionId, retryCount, deadline });
   const modelStats = trackModelRequest(request, { connectionId: credentials.connectionId, provider, model, requestId, endpoint: clientRawRequest?.endpoint, caller: clientRawRequest });
-  const retry = async (response = null) => {
+  const retry = async (response = null, failure = lastUpstreamFailure) => {
     await response?.body?.cancel().catch(() => {});
     // Release permits before recursion so the next account can be acquired.
     accountPermit?.release(); accountPermit = null;
     apiKeyPermit?.release(); apiKeyPermit = null;
-    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames);
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, new Set(), excludedAccounts, deadline, retryCount + 1, comboNames, failure);
   };
   try {
     // Account selection shown in the unified "▶" line (acc:...)
@@ -352,7 +361,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
       : !stickyBinding && shouldFallback && result.status !== HTTP_STATUS.SERVICE_UNAVAILABLE && credentials.connectionId !== "noauth";
     if (retryOtherAccount) {
       excludedAccounts.add(credentials.connectionId);
-      return retry(result.response);
+      return retry(result.response, provider === "gemini" ? { status: result.status, message: result.error } : null);
     }
     await result.response?.body?.cancel().catch(() => {});
     let quotaDetails;
@@ -370,7 +379,7 @@ export async function handleSingleModelChat(body, modelStr, clientRawRequest = n
     const response = errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY,
       appendChatErrorHint(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "账号请求失败。", {
         source: "upstream", retryAfterSeconds: seconds, quotaDetails,
-      }), clientRawRequest.upstreamErrorHeaders);
+      }), { ...clientRawRequest.upstreamErrorHeaders, [CHAT_ERROR_SOURCE_HEADER]: "upstream" });
     if (seconds) response.headers.set("Retry-After", String(seconds));
     return response;
   } catch (error) {

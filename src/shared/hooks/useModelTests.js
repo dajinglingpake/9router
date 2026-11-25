@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { GEMINI_PROBE_TIMEOUT_MS } from "@/shared/utils/modelTests";
 
 const empty = { results: {}, testing: new Set(), batch: null, canTest: false, warning: null, preferences: null };
 
@@ -80,12 +81,13 @@ export function useModelTests(provider, scope) {
       const response = await fetch("/api/models/test", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: `${provider}/${modelId}`, kind: "llm" }),
-        signal: AbortSignal.any([context.controller.signal, AbortSignal.timeout(25000)]),
+        signal: AbortSignal.any([context.controller.signal, AbortSignal.timeout(provider === "gemini" ? GEMINI_PROBE_TIMEOUT_MS + 10000 : 25000)]),
       });
       const data = await response.json();
-      result = { status: response.ok && data.ok ? "ok" : "error", error: data.error || "", latencyMs: data.latencyMs, testedAt: data.testedAt };
+      const status = response.ok ? data.testStatus || (data.ok ? "ok" : "error") : provider === "gemini" ? "retry" : "error";
+      result = { status, error: data.error || "", latencyMs: data.latencyMs, testedAt: data.testedAt };
     } catch (error) {
-      result = { status: "error", error: error.name === "TimeoutError" ? "检测超时，请重试。" : "模型检测失败，请稍后重试。" };
+      result = { status: provider === "gemini" ? "retry" : "error", error: error.name === "TimeoutError" ? "检测超时，请重试。" : "模型检测失败，请稍后重试。" };
     } finally {
       context.testing.delete(modelId);
     }

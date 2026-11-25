@@ -27,8 +27,12 @@ export async function getModelTests(scopes) {
   const now = Date.now();
   for (const row of rows) {
     const result = parseJson(row.value, null);
-    if (!result || !["ok", "error"].includes(result.status) || !Number.isFinite(result.testedAt)
+    if (!result || !["ok", "error", "retry"].includes(result.status) || !Number.isFinite(result.testedAt)
       || result.testedAt > now) continue;
+    if (row.scope.startsWith("modelTests:gemini:") && result.status === "error" && !Object.hasOwn(result, "httpStatus")) {
+      result.status = "retry";
+      result.error = "旧版检测未记录错误来源，请重新检测。";
+    }
     if (!byScope.has(row.scope)) byScope.set(row.scope, new Map());
     byScope.get(row.scope).set(row.key, result);
   }

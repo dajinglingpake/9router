@@ -21,6 +21,7 @@ import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
 import { resolveNvidiaModels } from "@/lib/nvidiaModels";
+import { resolveGeminiModels } from "@/lib/geminiModels";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -203,13 +204,7 @@ const PROVIDER_MODELS_CONFIG = {
     authPrefix: "Bearer ",
     parseResponse: (data) => (data.data || []).map((m) => ({ id: m.id, name: m.display_name || m.id }))
   },
-  gemini: {
-    url: "https://generativelanguage.googleapis.com/v1beta/models",
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    authQuery: "key", // Use query param for API key
-    parseResponse: (data) => data.models || []
-  },
+  gemini: { customResolver: resolveGeminiModels },
   codex: {
     customResolver: resolveCodexModels,
   },

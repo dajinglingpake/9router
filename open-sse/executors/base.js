@@ -99,7 +99,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null, diagnosticContext = null, onUpstreamOverload = null, onUpstreamRequest = null, directFetch = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null, diagnosticContext = null, onUpstreamOverload = null, onUpstreamRequest = null, onUpstreamResponse = null, directFetch = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -170,6 +170,7 @@ export class BaseExecutor {
           ...(directFetch ? { directFetch } : {}),
         }, effectiveProxyOptions);
         clearTimeout(connectTimer);
+        if (onUpstreamResponse) await onUpstreamResponse(response);
         if (response.status === HTTP_STATUS.SERVICE_UNAVAILABLE && onUpstreamOverload) {
           onUpstreamOverload({
             ...upstreamResponseDiagnostics(response),

@@ -12,7 +12,7 @@ import { getModelInfo, getComboModels } from "../services/model.js";
 import { getConcurrencySnapshot } from "../services/concurrencyLimiter.js";
 import { extractClientIp } from "../utils/clientIp.js";
 import { filterAccountPoolForRequest } from "../services/accountApiKeyAccess.js";
-import { appendChatErrorHint } from "../utils/errorHints.js";
+import { appendChatErrorHint, CHAT_ERROR_SOURCE_HEADER } from "../utils/errorHints.js";
 import * as log from "../utils/logger.js";
 
 const requestIds = new WeakMap();
@@ -26,7 +26,9 @@ export function rejectChatRequest(status, message, context, source = "client", e
     provider: context?.provider || null, connectionId: context?.connectionId || null, retryCount: context?.retryCount || 0,
     endpoint: context?.endpoint || null,
   }).catch(() => {});
-  return errorResponse(status, appendChatErrorHint(status, message, { ...hintOptions, source, networkCode: context?.networkCode }), extraHeaders);
+  return errorResponse(status, appendChatErrorHint(status, message, { ...hintOptions, source, networkCode: context?.networkCode }), {
+    ...extraHeaders, [CHAT_ERROR_SOURCE_HEADER]: source,
+  });
 }
 
 export function getRequestId(request) {

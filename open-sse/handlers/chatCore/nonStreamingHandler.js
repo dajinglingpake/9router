@@ -236,7 +236,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, appendLog, pxpipe, reqTag, log }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, geminiQuotaRecorded, onRequestSuccess, reqLogger, toolNameMap, customToolNames, appendLog, pxpipe, reqTag, log }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
 
@@ -286,7 +286,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   const usage = extractUsageFromResponse(responseBody);
   const totalLatency = Date.now() - requestStartTime;
   appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, clientIp: clientRawRequest?.clientIp, latency: { ttft: totalLatency, total: totalLatency }, silent: true });
+  saveUsageStats({ provider, model, tokens: usage, geminiQuotaRecorded, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, clientIp: clientRawRequest?.clientIp, latency: { ttft: totalLatency, total: totalLatency }, silent: true });
   if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: totalLatency } }));
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)

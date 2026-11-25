@@ -6,6 +6,7 @@ import ProviderIcon from "@/shared/components/ProviderIcon";
 import AccountExpiry from "@/shared/components/AccountExpiry";
 import AccountApiKeyBindings from "@/shared/components/AccountApiKeyBindings";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
+import { getAccountQualityLabel } from "@/shared/utils/accountQuality.js";
 import CodexReloginButton from "@/shared/components/CodexReloginButton";
 import CodexLogoutAllButton from "@/shared/components/CodexLogoutAllButton";
 import CodexSessionsButton from "@/shared/components/CodexSessionsButton";
@@ -57,6 +58,7 @@ import { ConfirmModal, EditConnectionModal } from "@/shared/components";
 import AutoPingScheduleModal from "@/app/(dashboard)/dashboard/providers/[id]/AutoPingScheduleModal";
 import { getScheduleSlotLabels } from "@/shared/services/quotaPingSchedule";
 import { USAGE_SUPPORTED_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
+import GeminiQuota from "./GeminiQuota";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
 // Maps the stored providerSpecificData.authMethod to a human label for Kiro.
@@ -1144,17 +1146,30 @@ export default function ProviderLimits() {
           const rawQuotas = quota?.quotas || [];
           const visibleQuotas = filterQuotasByVisibility(conn.provider, rawQuotas, quotaVisibility);
           const hiddenQuotaRows = getHiddenQuotaRows(conn.provider, rawQuotas, quotaVisibility);
+          const isGemini = conn.provider === "gemini";
+          const qualityLabel = isGemini && getAccountQualityLabel(conn);
+          const Header = isGemini ? "details" : "div";
 
           return (
             <Card
               key={conn.id}
               padding="none"
-              className="min-w-0"
+              className={isGemini ? "min-w-0 self-start" : "min-w-0"}
             >
-              <div className="px-3 py-2 border-b border-black/10 dark:border-white/10">
+              <Header className={`border-b border-black/10 dark:border-white/10 ${isGemini ? "group/gemini-header px-2" : "px-3 py-2"}`}>
+                {isGemini && <summary className="flex min-h-8 cursor-pointer list-none items-center gap-1.5 text-xs [&::-webkit-details-marker]:hidden">
+                  <ProviderIcon src="/providers/gemini.png" alt="" size={18} className="shrink-0 object-contain" fallbackText="G" />
+                  <strong className="shrink-0">Gemini</strong>
+                  <span className="min-w-0 flex-1 truncate text-text-muted" title={getConnectionLabel(conn)}>{getConnectionLabel(conn)}</span>
+                  <span className="shrink-0 text-text-muted">{getExclusiveApiKeyIds(conn).length ? "专用" : "共享"}</span>
+                  {isInactive && <span className="shrink-0 text-text-muted">已停用</span>}
+                  {qualityLabel && <span className="max-w-16 truncate" title={qualityLabel}>{qualityLabel}</span>}
+                  {conn.overloadWarning?.count > 0 && <span className="shrink-0 text-amber-700 dark:text-amber-400" title="展开查看历史过载记录">过载 {conn.overloadWarning.count}</span>}
+                  <span className="sr-only">连接设置</span><span aria-hidden="true" className="material-symbols-outlined shrink-0 text-text-muted group-open/gemini-header:rotate-180" style={{ fontSize: 16 }}>expand_more</span>
+                </summary>}
                 <div className={`flex flex-wrap items-center justify-between gap-2 ${isInactive ? "opacity-60" : ""}`}>
                   <div className="flex flex-1 basis-48 items-center gap-2 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
+                    {!isGemini && <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
                       <ProviderIcon
                         src={`/providers/${conn.provider}.png`}
                         alt={conn.provider}
@@ -1164,12 +1179,12 @@ export default function ProviderLimits() {
                           conn.provider?.slice(0, 2).toUpperCase() || "PR"
                         }
                       />
-                    </div>
+                    </div>}
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-text-primary truncate">
+                      {!isGemini && <h3 className="text-sm font-semibold text-text-primary truncate">
                         {providerLabel(conn.provider)}
-                      </h3>
-                      {getConnectionLabel(conn) ? (
+                      </h3>}
+                      {!isGemini && getConnectionLabel(conn) ? (
                         <p className="text-xs text-text-muted truncate">
                           {getConnectionLabel(conn)}
                         </p>
@@ -1383,14 +1398,17 @@ export default function ProviderLimits() {
                   onUpdated={(marker) => setConnections(prev => prev.map(c =>
                     c.id === conn.id ? { ...c, ...marker } : c
                   ))} />
-              </div>
+              </Header>
 
               <div className={`px-2 py-1.5 ${isInactive ? "opacity-60" : ""}`}>
                 {conn.provider === "openai" && (
                   <OpenAIBalance balance={quota?.raw?.openaiUsage?.balance}
                     connectionId={conn.id} onSaved={() => refreshProvider(conn.id, conn.provider)} />
                 )}
-                {isLoading ? (
+                {conn.provider === "gemini" && quota?.raw?.geminiUsage && !error ? (
+                  <GeminiQuota connectionId={conn.id} usage={quota.raw.geminiUsage} detailUrl={quota.raw.detailUrl}
+                    onSaved={() => fetchQuota(conn.id, conn.provider, { force: true })} />
+                ) : isLoading ? (
                   <div className="text-center py-5 text-text-muted">
                     <span className="material-symbols-outlined text-[28px] animate-spin">
                       progress_activity

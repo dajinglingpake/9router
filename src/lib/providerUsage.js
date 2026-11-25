@@ -9,6 +9,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { AI_PROVIDERS, USAGE_APIKEY_PROVIDERS, USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { ensureOutboundProxyInitialized } from "@/lib/network/initOutboundProxy";
 import { getLocalOpenAIUsage, getOpenAIUsage } from "@/lib/openaiUsage.js";
+import { getLocalGeminiUsage } from "@/lib/geminiUsage.js";
 import { isLeaseConnection } from "open-sse/services/minimaxCodeLease.js";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
@@ -132,6 +133,7 @@ export function supportsConnectionUsage(connection) {
 }
 
 export async function loadConnectionUsage(connection, { force = false, signal } = {}) {
+  if (connection.provider === "gemini") return getLocalGeminiUsage(connection);
   if (!supportsConnectionUsage(connection)) {
     if (connection.provider === "openai") return getLocalOpenAIUsage(connection);
     return AI_PROVIDERS[connection.provider]?.quotaNotice || { message: "Usage not available for this connection" };

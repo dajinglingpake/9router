@@ -14,6 +14,10 @@ export default {
     notice: {
       apiKeyUrl: "https://aistudio.google.com/app/apikey",
     },
+    quotaNotice: {
+      message: "本站按连接统计用量，项目的实际限额可在 Google AI Studio 查看。",
+      detailUrl: "https://aistudio.google.com/rate-limit",
+    },
   },
   category: "freeTier",
   authType: "apikey",

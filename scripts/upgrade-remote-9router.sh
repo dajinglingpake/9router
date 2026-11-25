@@ -136,8 +136,19 @@ exec 9>"$build_cache_dir/release.lock"
 flock 9
 
 release_builder=router9-release
+driver_proxy_options=()
+build_proxy_args=()
+if [ -n "${BUILD_PROXY_URL:-}" ]; then
+  # The builder fetches base images itself; RUN steps need the proxy separately.
+  release_builder=router9-release-proxy
+  for proxy_name in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
+    driver_proxy_options+=(--driver-opt "env.$proxy_name=$BUILD_PROXY_URL")
+    build_proxy_args+=(--build-arg "$proxy_name=$BUILD_PROXY_URL")
+  done
+fi
 if ! docker buildx inspect "$release_builder" >/dev/null 2>&1; then
   docker buildx create --name "$release_builder" --driver docker-container \
+    "${driver_proxy_options[@]}" \
     --buildkitd-config "$ROOT/scripts/release-buildkit.toml" >/dev/null
 fi
 builder_info="$(docker buildx inspect --bootstrap "$release_builder")"
@@ -149,6 +160,7 @@ fi
 SOURCE_REVISION="$(git rev-parse HEAD)"
 build_started="$(date +%s)"
 docker buildx build --builder "$release_builder" --load -f "$ROOT/Dockerfile.local" \
+  "${build_proxy_args[@]}" \
   --build-arg NODE_IMAGE="$BUILD_NODE_IMAGE" --build-arg RUNNER_BASE=release-base \
   --build-arg NODE_OWNER="${BUILD_NODE_OWNER:-1000:1000}" \
   --build-context "codex-runtime=$CODEX_RUNTIME_DIR" \

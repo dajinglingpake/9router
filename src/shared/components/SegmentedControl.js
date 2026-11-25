@@ -8,6 +8,7 @@ export default function SegmentedControl({
   onChange,
   size = "md",
   className,
+  ariaLabel,
 }) {
   const sizes = {
     sm: "h-7 text-xs",
@@ -17,6 +18,8 @@ export default function SegmentedControl({
 
   return (
     <div
+      role="group"
+      aria-label={ariaLabel}
       className={cn(
         "inline-flex items-center p-1 rounded-[10px] overflow-x-auto",
         "bg-surface-2",
@@ -26,6 +29,8 @@ export default function SegmentedControl({
       {options.map((option) => (
         <button
           key={option.value}
+          type="button"
+          aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
             "shrink-0 px-4 rounded-[8px] font-medium transition-all",

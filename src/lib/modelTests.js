@@ -2,7 +2,7 @@ import { getApiKeys, getProviderConnections, getSettings } from "@/lib/localDb";
 import { getModelTests, getModelTestPreferences } from "@/lib/db/repos/modelTestsRepo.js";
 import { isIpAllowed } from "@/lib/apiKeys/accessPolicy";
 import { FREE_PROVIDERS, resolveProviderId } from "@/shared/constants/providers";
-import { MODEL_TEST_PROVIDERS, modelTestRank } from "@/shared/utils/modelTests";
+import { FREE_MODEL_FILTER_PROVIDERS, MODEL_TEST_PROVIDERS, modelTestRank } from "@/shared/utils/modelTests";
 import { filterAccountPoolByApiKey } from "@/sse/services/accountApiKeyAccess.js";
 
 function testScope(provider, connections) {
@@ -41,7 +41,7 @@ export async function getProviderModelPreferences() {
     const saved = overrides.get(provider);
     return [provider, {
       hideFailedModels: saved?.hideFailedModels ?? (settings.hideFailedModels === true),
-      ...(provider === "kilocode" ? { freeOnly: saved?.freeOnly === true } : {}),
+      ...(FREE_MODEL_FILTER_PROVIDERS.includes(provider) ? { freeOnly: saved?.freeOnly === true } : {}),
     }];
   }));
 }

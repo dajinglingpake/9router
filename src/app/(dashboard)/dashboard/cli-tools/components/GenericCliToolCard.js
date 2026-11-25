@@ -262,6 +262,7 @@ export default function GenericCliToolCard({
     const connections = allConnections.filter((conn) => conn && conn.isActive !== false);
 
     // Live per-account catalogs (cursor/cline/clinepass/zed) are not in the registry.
+    let geminiFreeOnly = false;
     const liveModels = {
       codex: codexCatalog.models.filter(model => model.connectionIds.some(id =>
         connections.some(connection => connection.provider === "codex" && connection.id === id))),
@@ -270,7 +271,9 @@ export default function GenericCliToolCard({
       LIVE_CATALOG_PROVIDERS.map(async (providerId) => {
         const connectionIds = connections.filter((conn) => conn.provider === providerId).map((conn) => conn.id);
         if (connectionIds.length === 0) return;
-        const lists = await Promise.all(connectionIds.map((id) => readJson(`/api/providers/${id}/models`)));
+        const urls = providerId === "gemini" ? ["/api/providers/gemini/models?visible=1"] : connectionIds.map(id => `/api/providers/${id}/models`);
+        const lists = await Promise.all(urls.map(url => readJson(url)));
+        if (providerId === "gemini") geminiFreeOnly = !lists[0] || lists[0].freeOnly === true;
         liveModels[providerId] = lists.flatMap((data) => (Array.isArray(data?.models) ? data.models : []));
       })
     );
@@ -283,6 +286,7 @@ export default function GenericCliToolCard({
         customModels: customData?.models || [],
         disabledModels: disabledData?.disabled || {},
         liveModels,
+        geminiFreeOnly,
       })
     );
   };

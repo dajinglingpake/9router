@@ -4,6 +4,9 @@ import { unwrapClineEnvelope } from "open-sse/shared/clineEnvelope.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { isIpAllowed } from "@/lib/apiKeys/accessPolicy";
+import { describeGeminiProbeError } from "@/lib/geminiProbe";
+import { GEMINI_PROBE_TIMEOUT_MS } from "@/shared/utils/modelTests";
+import { CHAT_ERROR_SOURCE_HEADER } from "@/sse/utils/errorHints.js";
 
 const CLI_TOKEN_SALT = "9r-cli-auth";
 
@@ -167,6 +170,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     return { ok: true, latencyMs, error: null, status: res.status };
   }
 
+  const providerId = resolveProviderId(String(model).split("/")[0]);
   const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
     method: "POST",
     headers,
@@ -180,7 +184,7 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
       stream: false,
       messages: [{ role: "user", content: "hi" }],
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(providerId === "gemini" ? GEMINI_PROBE_TIMEOUT_MS : 15000),
   });
   const latencyMs = Date.now() - start;
 
@@ -190,11 +194,13 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
 
   // Unwrap before the choices checks below. No-op for providers that do not
   // opt in via transport.quirks.clineEnvelope.
-  const providerId = resolveProviderId(String(model).split("/")[0]);
   parsed = unwrapClineEnvelope(parsed, providerId);
 
   if (!res.ok) {
     const detail = parsed?.error?.message || parsed?.msg || parsed?.message || parsed?.error || rawText;
+    if (providerId === "gemini") {
+      return { ok: false, status: res.status, latencyMs, ...describeGeminiProbeError(res.status, detail, res.headers.get(CHAT_ERROR_SOURCE_HEADER)) };
+    }
     return { ok: false, latencyMs, error: `HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 500)}` : ""}`, status: res.status };
   }
 

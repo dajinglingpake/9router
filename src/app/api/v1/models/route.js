@@ -31,6 +31,7 @@ import { resolveKiloCatalog } from "@/lib/kiloModels";
 import { resolveOpenAIModels } from "@/lib/openaiModels";
 import { resolveCodexCatalog } from "@/lib/codexModels";
 import { resolveNvidiaModels } from "@/lib/nvidiaModels";
+import { resolveGeminiChatCatalog } from "@/lib/geminiModels";
 import { getProviderModelPreferences, orderModelsByTestResult } from "@/lib/modelTests";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
@@ -358,6 +359,8 @@ export async function buildModelsList(kindFilter, options = {}) {
     return new Map();
   });
   const kiloFreeOnly = preferences.get("kilocode")?.freeOnly === true;
+  const geminiFreeOnly = kindFilter.includes(LLM_KIND) && preferences.get("gemini")?.freeOnly === true;
+  const usesCatalogOnly = providerId => providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly) || (providerId === "gemini" && geminiFreeOnly);
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -476,9 +479,10 @@ export async function buildModelsList(kindFilter, options = {}) {
     // DB unavailable -> return static models, filtered by per-model kind
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
-      if (providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly)) continue;
+      if (usesCatalogOnly(providerId)) continue;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
+        if (providerId === "gemini" && modelKind(model) === LLM_KIND) continue;
         if (!kindFilter.includes(modelKind(model))) continue;
         if (isDisabled(alias, model.id) || isDisabled(providerId, model.id)) continue;
         models.push({
@@ -497,7 +501,7 @@ export async function buildModelsList(kindFilter, options = {}) {
       const providerAlias = customModel.providerAlias;
       if (!providerAlias) continue;
       const providerId = ALIAS_TO_PROVIDER_ID[providerAlias] || providerAlias;
-      if (providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly)) continue;
+      if (usesCatalogOnly(providerId)) continue;
 
       const modelId = String(customModel.id).trim();
       if (!modelId) continue;
@@ -542,6 +546,12 @@ export async function buildModelsList(kindFilter, options = {}) {
           )
         : providerModels.map((model) => model.id);
 
+      if (providerId === "gemini" && kindFilter.includes(LLM_KIND)) {
+        const { models: chatModels } = await resolveGeminiChatCatalog(connections, { freeOnly: geminiFreeOnly });
+        rawModelIds = chatModels.map(m => m.id);
+        liveModelKindById = new Map(chatModels.map(m => [m.id, LLM_KIND]));
+        liveCapabilitiesById = new Map(chatModels.map(m => [m.id, m.capabilities]));
+      }
       if (providerId === "codex" || providerId === "kilocode") {
         const catalog = providerId === "codex" ? codexCatalog : await resolveKiloCatalog(
           connections.filter(connection => connection.provider === providerId), { respectEnabledModels: true }
@@ -640,8 +650,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         })
         .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "");
 
-      const catalogOnly = providerId === "codex" || (providerId === "kilocode" && kiloFreeOnly);
-      const mergedModelIds = Array.from(new Set(catalogOnly ? modelIds : [...modelIds, ...customModelIds, ...aliasModelIds]));
+      const mergedModelIds = Array.from(new Set(usesCatalogOnly(providerId) ? modelIds : [...modelIds, ...customModelIds, ...aliasModelIds]));
 
       for (const modelId of mergedModelIds) {
         // Resolve kind: prefer custom/live metadata, then static, then ID heuristics.
@@ -724,6 +733,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     dedupedModels.push(model);
   }
 
+  if (!kindFilter.includes(LLM_KIND)) return dedupedModels;
   return orderModelsByTestResult(dedupedModels, connections, preferences).catch(error => {
     console.warn("Could not read model test results:", error.message);
     return dedupedModels;

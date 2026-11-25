@@ -3,6 +3,7 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { recordAccountOverloadWarning } from "./accountOverloadWarningsRepo.js";
 import { assertExclusiveApiKeyBindings } from "@/lib/accountApiKeyBindings.js";
+import { geminiQuotaOverrides } from "../../geminiQuotaLimits.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -307,6 +308,24 @@ export async function updateProviderConnection(id, data, { resetHealthState = tr
     result = merged;
   });
   return result;
+}
+
+export async function setGeminiModelQuota(id, model, limits, partial = false) {
+  const db = await getAdapter();
+  let saved = false;
+  db.transaction(() => {
+    const row = db.get("SELECT * FROM providerConnections WHERE id = ? AND provider = 'gemini'", [id]);
+    if (!row) return;
+    const connection = rowToConn(row);
+    const settings = connection.providerSpecificData || {};
+    const quotas = { ...settings.geminiQuotaLimits };
+    const overrides = geminiQuotaOverrides(model, partial ? { ...quotas[model], ...limits } : limits);
+    if (Object.keys(overrides).length) quotas[model] = overrides;
+    else delete quotas[model];
+    upsert(db, { ...connection, providerSpecificData: { ...settings, geminiQuotaLimits: quotas }, updatedAt: new Date().toISOString() });
+    saved = true;
+  });
+  return saved;
 }
 
 export async function deleteProviderConnection(id) {

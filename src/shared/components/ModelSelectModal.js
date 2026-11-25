@@ -58,50 +58,53 @@ function getCircularComboNames(combos, comboContext) {
 // Static registry stays as fallback when live fetch fails or is empty.
 // zed added in #4244: its backend customResolver already returns live models
 // but the frontend omitted it, hiding Zed entirely from the Combo picker.
-const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "openai", "kimi", "kilocode"];
+const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "openai", "kimi", "kilocode", "gemini"];
 
 // Fetch a provider's account-scoped catalog for every active connection and merge
 // the results. Entries collapse by model id on purpose: two connections of the
 // same provider produce the same picker value (`alias/id`), so keeping the first
 // avoids duplicate rows. There is no per-connection metadata to preserve beyond
 // {id,name}. Empty array means "nothing live" so callers keep the static fallback.
-function useLiveProviderModels(isOpen, connectionIds, label) {
-  const [models, setModels] = useState([]);
+const emptyLiveCatalog = { models: [], freeOnly: null };
+
+function useLiveProviderCatalog(isOpen, connectionIds, label, catalogUrl) {
+  const [catalog, setCatalog] = useState(emptyLiveCatalog);
   const idsKey = (connectionIds ?? []).join("|");
 
   useEffect(() => {
     const ids = idsKey ? idsKey.split("|") : [];
     if (!isOpen || ids.length === 0) {
-      setModels([]);
+      setCatalog(emptyLiveCatalog);
       return undefined;
     }
 
     let cancelled = false;
-    Promise.all(ids.map(async (connectionId) => {
-      const response = await fetch(`/api/providers/${connectionId}/models`, { cache: "no-store" });
-      if (!response.ok) return [];
-      const data = await response.json();
-      return Array.isArray(data.models) ? data.models : [];
+    const urls = catalogUrl ? [catalogUrl] : ids.map(id => `/api/providers/${id}/models`);
+    Promise.all(urls.map(async url => {
+      const response = await fetch(url, { cache: "no-store" });
+      return response.ok ? response.json() : null;
     }))
-      .then((modelLists) => {
+      .then((catalogs) => {
         if (cancelled) return;
         const seen = new Set();
-        setModels(modelLists.flat().filter((model) => {
+        const available = catalogs.filter(data => Array.isArray(data?.models));
+        const models = available.flatMap(data => data.models).filter((model) => {
           if (!model?.id || seen.has(model.id)) return false;
           seen.add(model.id);
           return true;
-        }));
+        });
+        setCatalog(available.length ? { models, freeOnly: available.some(data => data.freeOnly === true) } : emptyLiveCatalog);
       })
       .catch((error) => {
         // Do not hide the static fallback when the account catalog is unavailable.
         console.warn(`Unable to load ${label} models for selector:`, error);
-        if (!cancelled) setModels([]);
+        if (!cancelled) setCatalog(emptyLiveCatalog);
       });
 
     return () => { cancelled = true; };
-  }, [isOpen, idsKey, label]);
+  }, [isOpen, idsKey, label, catalogUrl]);
 
-  return models;
+  return catalog;
 }
 
 export default function ModelSelectModal({
@@ -190,14 +193,16 @@ export default function ModelSelectModal({
   const clinepassConnectionIds = liveConnectionIdsByProvider.clinepass;
   const zedConnectionIds = liveConnectionIdsByProvider.zed;
 
-  const cursorModels = useLiveProviderModels(isOpen, cursorConnectionIds, "Cursor");
-  const clineModels = useLiveProviderModels(isOpen, clineConnectionIds, "Cline");
-  const clinepassModels = useLiveProviderModels(isOpen, clinepassConnectionIds, "ClinePass");
-  const zedModels = useLiveProviderModels(isOpen, zedConnectionIds, "Zed");
-  const openaiModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.openai, "OpenAI");
-  const kimiModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.kimi, "Kimi");
+  const { models: cursorModels } = useLiveProviderCatalog(isOpen, cursorConnectionIds, "Cursor");
+  const { models: clineModels } = useLiveProviderCatalog(isOpen, clineConnectionIds, "Cline");
+  const { models: clinepassModels } = useLiveProviderCatalog(isOpen, clinepassConnectionIds, "ClinePass");
+  const { models: zedModels } = useLiveProviderCatalog(isOpen, zedConnectionIds, "Zed");
+  const { models: openaiModels } = useLiveProviderCatalog(isOpen, liveConnectionIdsByProvider.openai, "OpenAI");
+  const { models: kimiModels } = useLiveProviderCatalog(isOpen, liveConnectionIdsByProvider.kimi, "Kimi");
   const codexCatalog = useCodexModels(filteredActiveProviders, { enabled: isOpen, respectEnabledModels: true });
-  const kiloModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.kilocode, "Kilo Code");
+  const { models: kiloModels } = useLiveProviderCatalog(isOpen, liveConnectionIdsByProvider.kilocode, "Kilo Code");
+  const useChatCatalog = !kindFilter || kindFilter === "llm";
+  const geminiCatalog = useLiveProviderCatalog(isOpen && useChatCatalog, liveConnectionIdsByProvider.gemini, "Gemini", "/api/providers/gemini/models?visible=1");
 
   const fetchCombos = async () => {
     try {
@@ -443,7 +448,9 @@ export default function ModelSelectModal({
         };
       } else {
         const liveModels = providerId === "codex" ? codexCatalog.models : providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : providerId === "openai" ? openaiModels : providerId === "kimi" ? kimiModels : [];
-        const hardcodedModels = providerId === "codex" || liveModels.length > 0
+        const useGeminiChatCatalog = providerId === "gemini" && useChatCatalog;
+        const catalogOnly = providerId === "codex" || (useGeminiChatCatalog && geminiCatalog.freeOnly !== false);
+        const hardcodedModels = useGeminiChatCatalog ? geminiCatalog.models : providerId === "codex" || liveModels.length > 0
           ? liveModels
           : getModelsByProviderId(providerId);
         const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
@@ -470,8 +477,8 @@ export default function ModelSelectModal({
 
         const merged = [
           ...applyQoderModelNames(hardcodedModels, customModels, alias).map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) })),
-          ...(providerId === "codex" ? [] : customAliasModels),
-          ...(providerId === "codex" ? [] : customRegisteredModels),
+          ...(catalogOnly ? [] : customAliasModels),
+          ...(catalogOnly ? [] : customRegisteredModels),
         ];
         // Dedupe by value (alias may equal hardcoded id, causing React key collision)
         const seen = new Set();
@@ -538,7 +545,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, openaiModels, kimiModels, kiloModels, codexCatalog.models, providerFilter]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, openaiModels, kimiModels, kiloModels, geminiCatalog, useChatCatalog, codexCatalog.models, providerFilter]);
 
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);

@@ -136,7 +136,7 @@ function normalizeLiveModel(model, connection) {
   let requestModel = rawId;
   const isCompatible = isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider);
   // Kilo IDs already contain an upstream vendor (e.g. openai/gpt-4.1).
-  if (connection.provider === "kilocode" || ((isCompatible || connection.provider === "codex") && !rawId.includes("/"))) {
+  if (connection.provider === "kilocode" || ((isCompatible || connection.provider === "codex" || connection.provider === "gemini") && !rawId.includes("/"))) {
     requestModel = `${connection.provider}/${rawId}`;
   }
 
@@ -259,18 +259,22 @@ export default function BasicChatPageClient() {
           group.providerType = group.providerType || providerType;
           group.connections.push(connection);
 
-          const staticModels = (["codex", "kilocode"].includes(providerId) ? [] : getModelsByProviderId(providerId))
+          const staticModels = (["codex", "kilocode", "gemini"].includes(providerId) ? [] : getModelsByProviderId(providerId))
             .map((model) => normalizeStaticModel(model, connection))
             .filter(Boolean);
           group.models.push(...staticModels);
         }
 
+        // Gemini's endpoint already merges the active connections.
+        const firstGemini = connections.find(c => c.provider === "gemini");
+        const catalogConnections = connections.filter(c => c.provider !== "gemini" || c === firstGemini);
         const liveResults = await Promise.all(
-          connections.map(async (connection) => {
+          catalogConnections.map(async (connection) => {
             try {
-              const response = await fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" });
-              const data = await response.json().catch(() => ({}));
+              const url = connection.provider === "gemini" ? "/api/providers/gemini/models?visible=1" : `/api/providers/${connection.id}/models`;
+              const response = await fetch(url, { cache: "no-store" });
               if (!response.ok) throw new Error("模型列表查询失败");
+              const data = await response.json();
               const enabled = connection.providerSpecificData?.enabledModels;
               const models = parseProviderModelsPayload(data)
                 .filter(model => connection.provider !== "codex" || !Array.isArray(enabled) || !enabled.length

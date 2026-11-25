@@ -371,7 +371,7 @@ export async function saveRequestUsage(entry) {
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           entry.clientIp || null, promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({ latency: entry.latency || null }),
+          stringifyJson(tokens), stringifyJson({ latency: entry.latency || null, ...(entry.geminiQuotaRecorded && { geminiQuotaRecorded: true }) }),
         ]
       );
 

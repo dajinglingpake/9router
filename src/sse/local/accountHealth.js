@@ -28,8 +28,8 @@ function githubMonthlyResetMs(status, errorText, provider) {
 }
 
 /**
- * Mark an account/model as unavailable. Overload and GitHub monthly quota
- * lock the whole account; other errors lock the affected model.
+ * Mark an account/model as unavailable. An explicit Gemini model capacity
+ * error only cools that model; general overload still pauses the account.
  * @param {string} connectionId
  * @param {number} status - HTTP status code from upstream
  * @param {string} errorText
@@ -74,7 +74,10 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Provider error";
   const overloaded = status === 503 || /overloaded/i.test(reason);
-  const lockUpdate = buildModelLockUpdate(githubResetAtMs || overloaded ? null : model, cooldownMs);
+  const modelCapacity = resolveProviderId(provider) === "gemini" && model && status === 503
+    && /\b(?:this|the) model is (?:currently )?(?:experiencing high demand|overloaded)\b/i.test(errorText);
+  const accountOverload = overloaded && !modelCapacity;
+  const lockUpdate = buildModelLockUpdate(githubResetAtMs || accountOverload ? null : model, cooldownMs);
 
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
@@ -84,7 +87,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     lastErrorAt: new Date().toISOString(),
     backoffLevel: newBackoffLevel ?? backoffLevel
   });
-  if (overloaded) pauseAccountQueue(connectionId, new Date(lockUpdate.modelLock___all).getTime());
+  if (accountOverload) pauseAccountQueue(connectionId, new Date(lockUpdate.modelLock___all).getTime());
 
   const lockKey = Object.keys(lockUpdate)[0];
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
