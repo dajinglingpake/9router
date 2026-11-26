@@ -1,13 +1,15 @@
 import { CODEX_QUOTA_WINDOW_SECONDS } from "open-sse/config/local/codexQuotaWindows.js";
 import { getExclusiveApiKeyIds } from "@/shared/utils/accountApiKeyBindings.js";
 
+export const normalizeCodexPlan = plan => typeof plan === "string" ? plan.trim().toLowerCase() || "unknown" : "unknown";
+
 export function remainingFraction(quota, now) {
   if (!quota || quota.unlimited || !Number.isFinite(quota.used) || quota.used < 0 || !Number.isFinite(quota.total) || quota.total <= 0) return null;
   if (quota.resetAt && new Date(quota.resetAt).getTime() <= now) return null;
   return Math.max(0, Math.min(1, (quota.total - quota.used) / quota.total));
 }
 
-function metric(values) {
+function metric(values, estimates) {
   const known = values.map(value => value.remaining).filter(Number.isFinite);
   const resets = values.map(value => value.resetAt).filter(Boolean).sort();
   const equivalentAccounts = known.reduce((sum, value) => sum + value, 0);
@@ -19,12 +21,26 @@ function metric(values) {
     knownResetAccounts: resets.length,
     earliestResetAt: resets[0] || null,
     latestResetAt: resets.at(-1) || null,
+    ...(estimates && { dollars: dollarMetric(values) }),
+  };
+}
+
+function dollarMetric(values) {
+  const applicable = values.filter(value => !value.sharedWith);
+  const estimated = applicable.filter(value => Number.isFinite(value.fullUsd));
+  const withBalance = estimated.filter(value => Number.isFinite(value.remaining));
+  return {
+    accountCount: applicable.length,
+    estimatedAccounts: estimated.length,
+    remainingAccounts: withBalance.length,
+    fullUsd: estimated.length ? estimated.reduce((sum, value) => sum + value.fullUsd, 0) : null,
+    remainingUsd: withBalance.length ? withBalance.reduce((sum, value) => sum + value.fullUsd * value.remaining, 0) : null,
   };
 }
 
 // Percent quotas are comparable within a plan, not absolute token/request balances.
 // Count only applicable windows: some accounts have one weekly limit and no 5h limit.
-export function buildCodexQuotaSummary(connections, snapshots, now = Date.now()) {
+export function buildCodexQuotaSummary(connections, snapshots, now = Date.now(), estimates = null) {
   const accounts = connections.filter(connection => connection.provider === "codex" && connection.isActive !== false && connection.authType === "oauth");
   const groups = new Map();
   let unknownAccounts = 0;
@@ -42,10 +58,12 @@ export function buildCodexQuotaSummary(connections, snapshots, now = Date.now())
       row[name] = {
         applicable, remaining,
         resetAt: remaining !== null && Number.isFinite(resetMs) && resetMs > now ? new Date(resetMs).toISOString() : null,
+        sharedWith: quotas[name]?.sharedWith,
+        fullUsd: estimates?.get(connection.id)?.[name],
       };
     }
     if (periods.some(name => row[name].applicable && row[name].remaining === null)) unknownAccounts++;
-    const plan = typeof usage?.plan === "string" ? usage.plan.trim().toLowerCase() || "unknown" : "unknown";
+    const plan = normalizeCodexPlan(usage?.plan);
     const ids = getExclusiveApiKeyIds(connection);
     const scope = ids.length ? "dedicated" : "shared";
     const key = scope === "dedicated" ? `dedicated:${connection.id}` : `shared:${plan}`;
@@ -71,8 +89,8 @@ export function buildCodexQuotaSummary(connections, snapshots, now = Date.now())
       accountCount: rows.length,
       depletedAccounts: rows.filter(row => row.session.remaining === 0 || row.weekly.remaining === 0).length,
       sharedWeeklyAccounts: rows.filter(row => row.sharedWeekly).length,
-      session: metric(rows.filter(row => row.session.applicable).map(row => row.session)),
-      weekly: metric(rows.filter(row => row.weekly.applicable).map(row => row.weekly)),
+      session: metric(rows.filter(row => row.session.applicable).map(row => row.session), estimates),
+      weekly: metric(rows.filter(row => row.weekly.applicable).map(row => row.weekly), estimates),
     })).sort((a, b) => b.scope.localeCompare(a.scope) || a.plan.localeCompare(b.plan) || a.key.localeCompare(b.key)),
   };
 }

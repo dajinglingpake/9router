@@ -132,7 +132,7 @@ export function supportsConnectionUsage(connection) {
     (["apikey", "api_key"].includes(connection.authType) && USAGE_APIKEY_PROVIDERS.includes(connection.provider)));
 }
 
-export async function loadConnectionUsage(connection, { force = false, signal } = {}) {
+export async function loadConnectionUsage(connection, { force = false, signal, refreshCredentials = true } = {}) {
   if (connection.provider === "gemini") return getLocalGeminiUsage(connection);
   if (!supportsConnectionUsage(connection)) {
     if (connection.provider === "openai") return getLocalOpenAIUsage(connection);
@@ -149,7 +149,7 @@ export async function loadConnectionUsage(connection, { force = false, signal } 
       return getLocalOpenAIUsage(connection, error.message);
     }
   }
-  if (connection.authType === "oauth") {
+  if (refreshCredentials && connection.authType === "oauth") {
     try {
       const result = await refreshAndUpdateCredentials(connection, false, proxyOptions);
       connection = result.connection;
@@ -158,7 +158,7 @@ export async function loadConnectionUsage(connection, { force = false, signal } 
     }
   }
   let usage = await getUsageForProvider(connection, proxyOptions, { force });
-  if (connection.authType === "oauth" && isAuthExpiredMessage(usage) && connection.refreshToken) {
+  if (refreshCredentials && connection.authType === "oauth" && isAuthExpiredMessage(usage) && connection.refreshToken) {
     try {
       const result = await refreshAndUpdateCredentials(connection, true, proxyOptions);
       usage = await getUsageForProvider(result.connection, proxyOptions, { force });

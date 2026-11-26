@@ -8,22 +8,7 @@ export default function RequestLogger() {
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  useEffect(() => {
-    fetchLogs();
-  }, []);
-
-  useEffect(() => {
-    let interval;
-    if (autoRefresh) {
-      interval = setInterval(() => {
-        fetchLogs(false);
-      }, 3000);
-    }
-    return () => clearInterval(interval);
-  }, [autoRefresh]);
-
-  const fetchLogs = async (showLoading = true) => {
-    if (showLoading) setLoading(true);
+  async function fetchLogs() {
     try {
       const res = await fetch("/api/usage/request-logs");
       if (res.ok) {
@@ -33,9 +18,20 @@ export default function RequestLogger() {
     } catch (error) {
       console.error("Failed to fetch logs:", error);
     } finally {
-      if (showLoading) setLoading(false);
+      setLoading(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    const initialFetch = setTimeout(fetchLogs, 0);
+    return () => clearTimeout(initialFetch);
+  }, []);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(fetchLogs, 3000);
+    return () => clearInterval(interval);
+  }, [autoRefresh]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -74,7 +70,8 @@ export default function RequestLogger() {
                   <th className="px-3 py-2 border-r border-border">Account</th>
                   <th className="px-3 py-2 border-r border-border">In</th>
                   <th className="px-3 py-2 border-r border-border">Out</th>
-                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2 border-r border-border">Status</th>
+                  <th className="px-3 py-2">Codex Remaining</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
@@ -99,12 +96,13 @@ export default function RequestLogger() {
                       <td className="px-3 py-1.5 border-r border-border truncate max-w-[150px]" title={parts[3]}>{parts[3]}</td>
                       <td className="px-3 py-1.5 border-r border-border text-right text-primary">{parts[4]}</td>
                       <td className="px-3 py-1.5 border-r border-border text-right text-success">{parts[5]}</td>
-                      <td className={`px-3 py-1.5 font-bold ${isSuccess ? 'text-success' :
+                      <td className={`px-3 py-1.5 border-r border-border font-bold ${isSuccess ? 'text-success' :
                           isFailed ? 'text-error' :
                             'text-primary animate-pulse'
                         }`}>
                         {status}
                       </td>
+                      <td className="px-3 py-1.5 tabular-nums text-text-muted">{parts[7] || "—"}</td>
                     </tr>
                   );
                 })}

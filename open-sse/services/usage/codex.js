@@ -30,7 +30,7 @@ function errorMessage(value, fallback) {
 }
 
 function getCodexAccountId(providerSpecificData) {
-  return providerSpecificData?.workspaceId || providerSpecificData?.accountId || providerSpecificData?.chatgptAccountId || null;
+  return providerSpecificData?.workspaceId || providerSpecificData?.chatgptAccountId || providerSpecificData?.accountId || null;
 }
 
 function getCodexRateLimitBody(snapshot) {
@@ -41,11 +41,12 @@ function getCodexRateLimitBody(snapshot) {
 }
 
 function formatCodexWindow(window) {
-  const used = Math.max(0, Math.min(100, toFiniteNumber(window?.used_percent ?? window?.percent_used, 0)));
+  const percent = toFiniteNumber(window?.used_percent ?? window?.percent_used, null);
+  const used = percent === null ? null : Math.max(0, Math.min(100, percent));
   return {
     used,
     total: 100,
-    remaining: Math.max(0, 100 - used),
+    remaining: used === null ? null : 100 - used,
     resetAt: parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null),
     unlimited: false,
     windowSeconds: toFiniteNumber(window?.limit_window_seconds ?? window?.window_seconds, 0),
@@ -106,13 +107,15 @@ function getCodexSparkRateLimit(data) {
   }) || null;
 }
 
-export async function getCodexUsage(accessToken, proxyOptions = null) {
+export async function getCodexUsage(accessToken, proxyOptions = null, providerSpecificData = null) {
   try {
+    const accountId = getCodexAccountId(providerSpecificData);
     const response = await proxyAwareFetch(CODEX_CONFIG.usageUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Accept": "application/json",
+        ...(accountId && { "ChatGPT-Account-ID": accountId }),
       },
     }, proxyOptions);
 

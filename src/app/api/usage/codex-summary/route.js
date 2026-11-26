@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request) {
   try {
     const force = new URL(request.url).searchParams.get("force") === "1";
-    const summary = await loadCodexQuotaSummary({ force });
+    const summary = await loadCodexQuotaSummary({ force, includeEstimates: true });
     void notifyCodexQuotaSummary(summary).catch(() => console.warn("[Alerts] Unable to evaluate total quota"));
     return Response.json(summary, { headers: { "Cache-Control": "no-store" } });
   } catch {

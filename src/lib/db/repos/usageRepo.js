@@ -337,6 +337,8 @@ export async function saveRequestUsage(entry) {
     const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
 
     let inserted = false;
+    let rowId = null;
+    const meta = { latency: entry.latency || null, ...(entry.geminiQuotaRecorded && { geminiQuotaRecorded: true }) };
 
     // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
@@ -365,13 +367,13 @@ export async function saveRequestUsage(entry) {
         return;
       }
 
-      db.run(
+      const result = db.run(
         `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           entry.clientIp || null, promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({ latency: entry.latency || null, ...(entry.geminiQuotaRecorded && { geminiQuotaRecorded: true }) }),
+          stringifyJson(tokens), stringifyJson(meta),
         ]
       );
 
@@ -388,12 +390,18 @@ export async function saveRequestUsage(entry) {
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
       db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
+      rowId = result?.lastInsertRowid;
       inserted = true;
     });
 
     if (inserted) {
       pushToRing(entry);
       scheduleStatsEvent("update", 250);
+      if (rowId != null && entry.provider === "codex" && entry.connectionId && (!entry.status || ["ok", "success"].includes(entry.status))) {
+        const { sampleCodexQuota } = await import("../../local/sampleCodexQuota.js");
+        const codexQuota = await sampleCodexQuota(entry.connectionId);
+        if (codexQuota) db.run("UPDATE usageHistory SET meta = ? WHERE id = ?", [stringifyJson({ ...meta, codexQuota }), rowId]);
+      }
     }
   } catch (e) {
     console.error("Failed to save usage stats:", e);
@@ -448,6 +456,19 @@ export async function getUsageHistory(filter = {}) {
   const { where, params } = buildUsageHistoryWhere(filter);
   const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, clientIp, cost, status, tokens, meta FROM usageHistory ${where} ORDER BY id ASC`, params);
   return rows.map(mapUsageHistoryRow);
+}
+
+export async function getCodexQuotaUsageRows(connectionIds, startDate) {
+  if (!connectionIds.length) return [];
+  const db = await getAdapter();
+  const ids = connectionIds.map(() => "?").join(", ");
+  const rows = db.all(
+    `SELECT connectionId, model, cost, meta FROM usageHistory
+     WHERE connectionId IN (${ids}) AND provider = 'codex' AND status IN ('ok', 'success') AND timestamp >= ?
+     ORDER BY id ASC`,
+    [...connectionIds, new Date(startDate).toISOString()],
+  );
+  return rows.map(({ meta, ...row }) => ({ ...row, codexQuota: parseJson(meta)?.codexQuota }));
 }
 
 export async function getUsageLatencyByBucket(start, bucketSize, bucketCount) {
@@ -1061,7 +1082,7 @@ export async function getRecentLogs(limit = 200) {
   try {
     const db = await getAdapter();
     const rows = db.all(
-      `SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`,
+      `SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens, meta FROM usageHistory ORDER BY id DESC LIMIT ?`,
       [limit],
     );
     if (!rows.length) return [];
@@ -1081,7 +1102,14 @@ export async function getRecentLogs(limit = 200) {
       const tk = r.tokens ? parseJson(r.tokens, {}) : {};
       const sent = r.promptTokens ?? tk.prompt_tokens ?? "-";
       const received = r.completionTokens ?? tk.completion_tokens ?? "-";
-      return `${ts} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${r.status || "-"}`;
+      const windows = r.provider === "codex" ? parseJson(r.meta)?.codexQuota?.windows : null;
+      const quota = windows && [["session", "5h"], ["weekly", "7d"]].flatMap(([key, label]) => {
+        const window = windows[key];
+        return !window?.sharedWith && Number.isFinite(window?.remainingPercent)
+          ? [`${label} ${window.remainingPercent.toFixed(1)}%`]
+          : [];
+      }).join(" · ");
+      return `${ts} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${r.status || "-"}${quota ? ` | ${quota}` : ""}`;
     });
   } catch (e) {
     console.error("[usageRepo] getRecentLogs failed:", e.message);
