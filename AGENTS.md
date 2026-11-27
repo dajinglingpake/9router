@@ -7,6 +7,10 @@
 - 部署保留远端挂载目录中的账号、组合、API Key 和其他业务数据；同步部署配置不等于覆盖业务数据库。
 - 常规部署不额外生成数据库备份、配置副本或部署快照。
 
+# 团队 AI 月报
+
+- 用户要求生成或更新团队 AI 费用月报时，按 `scripts/monthly-ai-cost-report.md` 采集 9router 用量并生成 Word。平台计费口径沿用本地配置，独立账号与例外按本期确认信息录入。
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

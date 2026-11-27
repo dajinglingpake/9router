@@ -458,6 +458,25 @@ export async function getUsageHistory(filter = {}) {
   return rows.map(mapUsageHistoryRow);
 }
 
+export async function getPlatformEstimateUsage(start, endExclusive) {
+  const db = await getAdapter();
+  return db.all(`
+    WITH ids AS (
+      SELECT MIN(id) AS firstId, MAX(id) AS lastId
+      FROM usageHistory WHERE timestamp >= ? AND timestamp < ?
+    )
+    SELECT COALESCE(NULLIF(TRIM(a.name), ''), '') AS name,
+           COALESCE(NULLIF(u.provider, ''), 'unknown') AS provider,
+           COUNT(*) AS calls, COALESCE(SUM(u.cost), 0) AS estimatedUsd
+    FROM ids CROSS JOIN usageHistory u NOT INDEXED
+    LEFT JOIN apiKeys a ON a.key = u.apiKey
+    WHERE u.id BETWEEN ids.firstId AND ids.lastId
+      AND u.timestamp >= ? AND u.timestamp < ?
+      AND LOWER(TRIM(COALESCE(u.status, ''))) IN ('', 'ok', 'success', '200')
+    GROUP BY 1, 2
+  `, [start, endExclusive, start, endExclusive]);
+}
+
 export async function getCodexQuotaUsageRows(connectionIds, startDate) {
   if (!connectionIds.length) return [];
   const db = await getAdapter();
